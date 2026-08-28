@@ -1,5 +1,4 @@
 import type { Timeline } from './timeline.svelte';
-import type { Viewport } from './viewport.svelte';
 
 export interface ScaledSegment {
   key: string;
@@ -12,29 +11,45 @@ export interface ScaledSegment {
 }
 
 const DEFAULT_COLLAPSED_WIDTH_PX = 48;
+export const DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS = 60_000;
 
 export class TimelineScale {
   private _timeline: Timeline;
-  private _viewport: Viewport;
+  private _getViewportWidthPx: () => number;
+  private _getExpandedDurationPerViewportMs: () => number;
   private _getCollapsedPx: () => number;
 
   constructor(init: {
     timeline: Timeline;
-    viewport: Viewport;
+    getViewportWidthPx: () => number;
+    getExpandedDurationPerViewportMs?: () => number;
     getCollapsedPx?: () => number;
   }) {
     this._timeline = init.timeline;
-    this._viewport = init.viewport;
+    this._getViewportWidthPx = init.getViewportWidthPx;
+    this._getExpandedDurationPerViewportMs =
+      init.getExpandedDurationPerViewportMs ??
+      (() => DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS);
     this._getCollapsedPx =
       init.getCollapsedPx ?? (() => DEFAULT_COLLAPSED_WIDTH_PX);
   }
 
+  readonly expandedPxPerMs = $derived.by(
+    () =>
+      Math.max(this._getViewportWidthPx(), 0) /
+      Math.max(this._getExpandedDurationPerViewportMs(), 1),
+  );
+
   readonly segments = $derived.by<ScaledSegment[]>(() =>
     buildScaledSegments({
       timeline: this._timeline,
-      widthPx: this._viewport.widthPx,
+      expandedPxPerMs: this.expandedPxPerMs,
       collapsedPx: this._getCollapsedPx(),
     }),
+  );
+
+  readonly totalWorldWidthPx = $derived(
+    this.segments[this.segments.length - 1]?.endPx ?? 0,
   );
 
   project(timeMs: number): number {
@@ -112,11 +127,11 @@ function firstIndexReaching(
 
 function buildScaledSegments({
   timeline,
-  widthPx,
+  expandedPxPerMs,
   collapsedPx,
 }: {
   timeline: Timeline;
-  widthPx: number;
+  expandedPxPerMs: number;
   collapsedPx: number;
 }): ScaledSegment[] {
   const segments = timeline.segments;
@@ -124,22 +139,12 @@ function buildScaledSegments({
     return [];
   }
 
-  let collapsedTotalPx = 0;
-  let expandedDurationMs = 0;
   const collapsedBySegmentKey: Record<string, boolean> = {};
 
   for (const segment of segments) {
     const isCollapsed = timeline.isTimeSegmentCollapsed(segment);
     collapsedBySegmentKey[segment.timespan.key] = isCollapsed;
-
-    if (isCollapsed) {
-      collapsedTotalPx += collapsedPx;
-    } else {
-      expandedDurationMs += segment.timespan.durationMs;
-    }
   }
-
-  const availablePx = Math.max(widthPx - collapsedTotalPx, 0);
 
   const scaled: ScaledSegment[] = [];
   let cursorPx = 0;
@@ -149,9 +154,7 @@ function buildScaledSegments({
 
     const segmentWidthPx = isCollapsed
       ? collapsedPx
-      : expandedDurationMs > 0
-        ? (segment.timespan.durationMs / expandedDurationMs) * availablePx
-        : 0;
+      : segment.timespan.durationMs * expandedPxPerMs;
 
     scaled.push({
       key: segment.timespan.key,

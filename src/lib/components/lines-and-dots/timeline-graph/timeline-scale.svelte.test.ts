@@ -6,18 +6,20 @@ import type { TimeSegment } from './types';
 
 import { TimelineScale } from './timeline-scale.svelte';
 import type { Timeline } from './timeline.svelte';
-import { Viewport } from './viewport.svelte';
 
 function makeScale({
   segments,
   collapsedKeys = [],
   widthPx = 200,
+  expandedDurationPerViewportMs = 100,
 }: {
   segments: TimeSegment[];
   collapsedKeys?: string[];
   widthPx?: number;
+  expandedDurationPerViewportMs?: number;
 }) {
   const collapsed = new Set(collapsedKeys);
+  let viewportWidthPx = $state(widthPx);
   const timeline = {
     segments,
     isTimeSegmentCollapsed: (segment: TimeSegment) =>
@@ -25,10 +27,18 @@ function makeScale({
     isTimeSegmentCollapsible: (segment: TimeSegment) =>
       segment.kind === 'inactive',
   } as unknown as Timeline;
-  const viewport = new Viewport({ startTimeMs: 0, endTimeMs: 0, widthPx });
-  const scale = new TimelineScale({ timeline, viewport });
+  const scale = new TimelineScale({
+    timeline,
+    getViewportWidthPx: () => viewportWidthPx,
+    getExpandedDurationPerViewportMs: () => expandedDurationPerViewportMs,
+  });
 
-  return { scale, viewport };
+  return {
+    scale,
+    setViewportWidthPx: (value: number) => {
+      viewportWidthPx = value;
+    },
+  };
 }
 
 function segment(
@@ -60,10 +70,10 @@ describe('TimelineScale', () => {
         collapsedKeys: [idle.timespan.key],
       });
 
-      expect(scale.project(20)).toBe(76);
-      expect(scale.project(50)).toBe(100);
-      expect(scale.project(80)).toBe(124);
-      expect(scale.unproject(100)).toBe(50);
+      expect(scale.project(20)).toBe(40);
+      expect(scale.project(50)).toBe(64);
+      expect(scale.project(80)).toBe(88);
+      expect(scale.unproject(64)).toBe(50);
       expect(scale.segments[1].endPx - scale.segments[1].startPx).toBe(48);
     });
     cleanup();
@@ -96,17 +106,73 @@ describe('TimelineScale', () => {
 
   it('reprojects proportionally after a resize', () => {
     const cleanup = $effect.root(() => {
-      const { scale, viewport } = makeScale({
+      const { scale, setViewportWidthPx } = makeScale({
         segments: [segment(0, 100)],
       });
 
       expect(scale.project(50)).toBe(100);
 
-      viewport.setSize(400, 0);
+      setViewportWidthPx(400);
       flushSync();
 
       expect(scale.project(50)).toBe(200);
       expect(scale.unproject(200)).toBe(50);
+    });
+    cleanup();
+  });
+
+  it('maps one minute of expanded time to one viewport width', () => {
+    const cleanup = $effect.root(() => {
+      const { scale } = makeScale({
+        segments: [segment(0, 120_000)],
+        widthPx: 600,
+        expandedDurationPerViewportMs: 60_000,
+      });
+
+      expect(scale.expandedPxPerMs).toBe(0.01);
+      expect(scale.project(60_000)).toBe(600);
+      expect(scale.totalWorldWidthPx).toBe(1_200);
+    });
+    cleanup();
+  });
+
+  it('adds collapsed widths independently of expanded duration', () => {
+    const cleanup = $effect.root(() => {
+      const idle = segment(60_000, 120_000, 'inactive');
+      const { scale } = makeScale({
+        segments: [segment(0, 60_000), idle, segment(120_000, 180_000)],
+        collapsedKeys: [idle.timespan.key],
+        widthPx: 600,
+        expandedDurationPerViewportMs: 60_000,
+      });
+
+      expect(scale.segments[0].endPx).toBe(600);
+      expect(scale.segments[1].endPx - scale.segments[1].startPx).toBe(48);
+      expect(scale.totalWorldWidthPx).toBe(1_248);
+    });
+    cleanup();
+  });
+
+  it('recalculates world coordinates deterministically after resizing', () => {
+    const cleanup = $effect.root(() => {
+      const idle = segment(60_000, 120_000, 'inactive');
+      const { scale, setViewportWidthPx } = makeScale({
+        segments: [segment(0, 60_000), idle, segment(120_000, 180_000)],
+        collapsedKeys: [idle.timespan.key],
+        widthPx: 600,
+        expandedDurationPerViewportMs: 60_000,
+      });
+
+      expect(scale.segments.map(({ endPx }) => endPx)).toEqual([
+        600, 648, 1_248,
+      ]);
+
+      setViewportWidthPx(300);
+      flushSync();
+
+      expect(scale.segments.map(({ endPx }) => endPx)).toEqual([300, 348, 648]);
+      expect(scale.project(60_000)).toBe(300);
+      expect(scale.unproject(300)).toBe(60_000);
     });
     cleanup();
   });

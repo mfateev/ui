@@ -28,7 +28,6 @@
   import TimelineIconDefs from './timeline-icon-defs.svelte';
   import { TimelineScale } from './timeline-scale.svelte';
   import { Timeline } from './timeline.svelte';
-  import { Viewport } from './viewport.svelte';
   import WorkflowRow from './workflow-row.svelte';
 
   interface Props {
@@ -105,15 +104,13 @@
     getShouldCollapseByDefault: () => $collapseIdleTime === 'on',
   });
 
-  const viewport = new Viewport({ startTimeMs: 0, endTimeMs: 0 });
-  const scale = new TimelineScale({ timeline, viewport });
-
-  $effect(() => {
-    onTimelineInit?.(timeline);
+  const scale = new TimelineScale({
+    timeline,
+    getViewportWidthPx: () => timelineWidth,
   });
 
   $effect(() => {
-    viewport.setSize(timelineWidth, 0);
+    onTimelineInit?.(timeline);
   });
 
   const projectX = (time: ValidTime | undefined | null): number => {

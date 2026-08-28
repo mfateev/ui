@@ -10,7 +10,7 @@ export interface ScaledSegment {
   isCollapsible: boolean;
 }
 
-const DEFAULT_COLLAPSED_WIDTH_PX = 48;
+export const DEFAULT_COLLAPSED_WIDTH_PX = 48;
 export const DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS = 60_000;
 
 export class TimelineScale {

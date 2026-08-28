@@ -237,6 +237,7 @@
 -->
   {#if workflow}
     <TimelineGraph
+      displayMode="fixed-window"
       {workflow}
       {groups}
       {reverseSort}

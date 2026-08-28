@@ -14,12 +14,14 @@
 
   import EndTimeInterval from '../end-time-interval.svelte';
   import { GUTTER, RADIUS, ROW_HEIGHT } from './constants';
+  import { expandedDurationPerViewportMs } from './timeline-display-mode';
   import {
     getDescStart,
     getPendingBlockY,
     getRowY,
     getTotalForY,
   } from './timeline-positioning';
+  import type { TimelineDisplayMode } from './types';
 
   import GroupDetailsRow from './group-details-row.svelte';
   import TimelineAxis from './timeline-axis.svelte';
@@ -28,6 +30,7 @@
   import TimelineIconDefs from './timeline-icon-defs.svelte';
   import { TimelineScale } from './timeline-scale.svelte';
   import { Timeline } from './timeline.svelte';
+  import { Viewport } from './viewport.svelte';
   import WorkflowRow from './workflow-row.svelte';
 
   interface Props {
@@ -40,6 +43,7 @@
     totalExpectedEvents?: number;
     descMinId?: number;
     panelHeight?: number;
+    displayMode?: TimelineDisplayMode;
     onTimelineInit?: (timeline: Timeline) => void;
   }
 
@@ -53,6 +57,7 @@
     totalExpectedEvents = 0,
     descMinId = 0,
     panelHeight = $bindable(0),
+    displayMode = 'full-duration',
     onTimelineInit,
   }: Props = $props();
 
@@ -104,18 +109,44 @@
     getShouldCollapseByDefault: () => $collapseIdleTime === 'on',
   });
 
+  const collapsedSegmentCount = $derived(
+    timeline.segments.filter((segment) =>
+      timeline.isTimeSegmentCollapsed(segment),
+    ).length,
+  );
+
   const scale = new TimelineScale({
     timeline,
     getViewportWidthPx: () => timelineWidth,
+    getExpandedDurationPerViewportMs: () =>
+      expandedDurationPerViewportMs({
+        displayMode,
+        viewportWidthPx: timelineWidth,
+        expandedDurationMs: timeline.expandedDurationMs,
+        collapsedSegmentCount,
+      }),
   });
+
+  const viewport = new Viewport();
 
   $effect(() => {
     onTimelineInit?.(timeline);
   });
 
+  $effect(() => {
+    viewport.setGeometry({
+      widthPx: timelineWidth,
+      totalWorldWidthPx: scale.totalWorldWidthPx,
+    });
+  });
+
   const projectX = (time: ValidTime | undefined | null): number => {
     if (!time) return GUTTER;
-    return scale.project(validTimeToDate(time).getTime()) + GUTTER;
+    return (
+      scale.project(validTimeToDate(time).getTime()) -
+      viewport.offsetPx +
+      GUTTER
+    );
   };
 
   const toggleSegment = (segmentKey: string) => {
@@ -449,6 +480,8 @@
 
 <div
   id="event-history-timeline-graph"
+  data-display-mode={displayMode}
+  data-viewport-offset={viewport.offsetPx}
   class={twMerge(
     'relative overflow-hidden border border-t-0 border-subtle bg-primary',
     error && 'bg-danger',

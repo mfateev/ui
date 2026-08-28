@@ -74,6 +74,7 @@
     style:max-height="{viewportHeight}px"
   >
     <TimelineGraph
+      displayMode="full-duration"
       workflow={snapshot.workflow}
       groups={snapshot.groups}
       readOnly

@@ -15,6 +15,7 @@
   import EndTimeInterval from '../end-time-interval.svelte';
   import { GUTTER, RADIUS, ROW_HEIGHT } from './constants';
   import { expandedDurationPerViewportMs } from './timeline-display-mode';
+  import { timelineGroupIntersectsViewport } from './timeline-group-window';
   import {
     getDescStart,
     getPendingBlockY,
@@ -160,6 +161,23 @@
 
   const filteredGroups = $derived(
     getFailedOrPendingGroups(groups, $eventStatusFilter),
+  );
+
+  const visibleGroups = $derived(
+    displayMode === 'full-duration'
+      ? filteredGroups
+      : filteredGroups.filter((group) =>
+          timelineGroupIntersectsViewport({
+            group,
+            currentTimeMs: nowMs,
+            project: (timeMs) => scale.project(timeMs),
+            visibleRange: viewport.visibleRange,
+          }),
+        ),
+  );
+
+  const visibleGroupIds = $derived(
+    new Set(visibleGroups.map((group) => group.id)),
   );
 
   // Unfetched skeleton rows. totalExpectedEvents is already a density-adjusted
@@ -451,6 +469,7 @@
     for (let index = windowStart; index < end; index++) {
       const slot = index % poolSize;
       const group = filteredGroups[index];
+      if (!visibleGroupIds.has(group.id)) continue;
       const prev = prevSlots[slot];
       if (prev && prev.index === index && prev.group === group) {
         slots[slot] = prev;

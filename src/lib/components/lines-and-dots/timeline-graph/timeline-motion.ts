@@ -51,6 +51,10 @@ export class TimelineMotion {
     return this._frameOffsetPx;
   }
 
+  reset(committedOffsetPx = 0): void {
+    this._reset(committedOffsetPx);
+  }
+
   private _reset(committedOffsetPx: number): void {
     this._baseTimeMs = null;
     this._baseOffsetPx = committedOffsetPx;

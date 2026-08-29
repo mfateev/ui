@@ -17,6 +17,16 @@ export function syncTimelineViewport({
   workflowIsLive,
   totalWorldWidthPx,
 }: TimelineViewportLifecycleOptions): void {
+  if (displayMode === 'full-duration') {
+    viewport.freeze();
+    viewport.setGeometry({
+      widthPx: viewport.widthPx,
+      totalWorldWidthPx,
+      anchoredOffsetPx: 0,
+    });
+    return;
+  }
+
   if (displayMode === 'fixed-window' && paused && workflowIsLive) {
     viewport.freeze();
     return;

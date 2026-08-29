@@ -32,7 +32,7 @@ describe('TimelineRowHeightRetention', () => {
     ).toBe(10);
   });
 
-  it('refreshes the retention period whenever the peak is visible', () => {
+  it('does not refresh the retention period when the peak is unchanged', () => {
     const retention = new TimelineRowHeightRetention();
     const update = (visibleRowCount: number, nowMs: number) =>
       retention.update({
@@ -45,8 +45,8 @@ describe('TimelineRowHeightRetention', () => {
     expect(update(10, 1_000)).toBe(10);
     expect(update(8, 60_000)).toBe(10);
     expect(update(10, 61_000)).toBe(10);
-    expect(update(8, 121_999)).toBe(10);
-    expect(update(8, 122_000)).toBe(8);
+    expect(update(8, 61_999)).toBe(10);
+    expect(update(8, 62_000)).toBe(8);
   });
 
   it('shrinks immediately when retention is disabled', () => {
@@ -66,5 +66,42 @@ describe('TimelineRowHeightRetention', () => {
         retentionDurationMs: RETENTION_DURATION_MS,
       }),
     ).toBe(4);
+  });
+
+  it('clears retained height for a new lifecycle', () => {
+    const retention = new TimelineRowHeightRetention();
+
+    retention.update({
+      visibleRowCount: 10,
+      nowMs: 1_000,
+      retain: true,
+      retentionDurationMs: RETENTION_DURATION_MS,
+    });
+    retention.reset();
+
+    expect(
+      retention.update({
+        visibleRowCount: 4,
+        nowMs: 2_000,
+        retain: true,
+        retentionDurationMs: RETENTION_DURATION_MS,
+      }),
+    ).toBe(4);
+  });
+
+  it('starts a new retention lifecycle when its key changes', () => {
+    const retention = new TimelineRowHeightRetention();
+    const update = (visibleRowCount: number, retentionKey: string) =>
+      retention.update({
+        visibleRowCount,
+        nowMs: 1_000,
+        retain: true,
+        retentionDurationMs: RETENTION_DURATION_MS,
+        retentionKey,
+      });
+
+    expect(update(10, 'run-a:all')).toBe(10);
+    expect(update(4, 'run-a:all')).toBe(10);
+    expect(update(4, 'run-b:all')).toBe(4);
   });
 });

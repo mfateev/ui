@@ -64,4 +64,15 @@ describe('TimelineMotion', () => {
 
     expect(frame(motion, { nowMs: 1_500, animate: false })).toBe(0);
   });
+
+  it('can be reset before animation resumes after an inactive period', () => {
+    const motion = new TimelineMotion();
+    frame(motion);
+    frame(motion, { nowMs: 1_500 });
+
+    motion.reset(105);
+
+    expect(frame(motion, { nowMs: 10_000, committedOffsetPx: 105 })).toBe(0);
+    expect(frame(motion, { nowMs: 10_250, committedOffsetPx: 105 })).toBe(2.5);
+  });
 });

@@ -6,11 +6,16 @@ import { Viewport } from './viewport.svelte';
 
 const sync = (
   viewport: Viewport,
-  options: { paused: boolean; workflowIsLive?: boolean; total: number },
+  options: {
+    paused: boolean;
+    workflowIsLive?: boolean;
+    total: number;
+    displayMode?: 'fixed-window' | 'full-duration';
+  },
 ) =>
   syncTimelineViewport({
     viewport,
-    displayMode: 'fixed-window',
+    displayMode: options.displayMode ?? 'fixed-window',
     paused: options.paused,
     workflowIsLive: options.workflowIsLive ?? true,
     totalWorldWidthPx: options.total,
@@ -54,6 +59,34 @@ describe('syncTimelineViewport', () => {
     sync(viewport, { paused: true, workflowIsLive: false, total: 280 });
 
     expect(viewport.offsetPx).toBe(180);
+    expect(viewport.isFollowing).toBe(true);
+  });
+
+  it('anchors full-duration timelines at zero when content exceeds the viewport', () => {
+    const viewport = new Viewport({ widthPx: 100, totalWorldWidthPx: 200 });
+
+    sync(viewport, {
+      paused: false,
+      total: 280,
+      displayMode: 'full-duration',
+    });
+
+    expect(viewport.offsetPx).toBe(0);
+    expect(viewport.totalWorldWidthPx).toBe(280);
+    expect(viewport.isFollowing).toBe(false);
+  });
+
+  it('resumes right-edge following when switching back to fixed-window mode', () => {
+    const viewport = new Viewport({ widthPx: 100, totalWorldWidthPx: 200 });
+    sync(viewport, {
+      paused: false,
+      total: 280,
+      displayMode: 'full-duration',
+    });
+
+    sync(viewport, { paused: false, total: 320 });
+
+    expect(viewport.offsetPx).toBe(220);
     expect(viewport.isFollowing).toBe(true);
   });
 });

@@ -1,10 +1,13 @@
 interface ViewportGeometry {
   widthPx: number;
   totalWorldWidthPx: number;
-  offsetPx?: number;
+  anchoredOffsetPx?: number;
 }
 
-interface ViewportInit extends Partial<ViewportGeometry> {
+interface ViewportInit {
+  widthPx?: number;
+  totalWorldWidthPx?: number;
+  offsetPx?: number;
   following?: boolean;
 }
 
@@ -56,13 +59,13 @@ export class Viewport {
   setGeometry({
     widthPx,
     totalWorldWidthPx,
-    offsetPx,
+    anchoredOffsetPx,
   }: ViewportGeometry): void {
     this.widthPx = nonNegative(widthPx);
     this._totalWorldWidthPx = nonNegative(totalWorldWidthPx);
     this.offsetPx = this._isFollowing
       ? this._rightEdgeOffset()
-      : this._clampOffset(offsetPx ?? this.offsetPx);
+      : this._clampOffset(anchoredOffsetPx ?? this.offsetPx);
   }
 
   followRightEdge(totalWorldWidthPx = this._totalWorldWidthPx): void {

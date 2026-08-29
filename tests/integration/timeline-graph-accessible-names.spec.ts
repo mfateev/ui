@@ -38,7 +38,7 @@ test.describe('Timeline graph node accessible names', () => {
     const event = page.getByRole('button', {
       name: 'Event LongActivity: Scheduled',
     });
-    const timeline = page.locator('#event-history-timeline-graph');
+    const timeline = page.getByRole('region', { name: 'Timeline' });
 
     await page.locator('button[aria-controls="status-menu"]').click();
     const activityFilter = page.getByTestId('Activity');

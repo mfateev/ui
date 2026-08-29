@@ -52,6 +52,10 @@ export class TimelineScale {
     this.segments[this.segments.length - 1]?.endPx ?? 0,
   );
 
+  readonly liveEdgePxPerMs = $derived(
+    this.segments.at(-1)?.isCollapsed ? 0 : this.expandedPxPerMs,
+  );
+
   project(timeMs: number): number {
     const segments = this.segments;
     if (!segments.length) {
@@ -139,18 +143,11 @@ function buildScaledSegments({
     return [];
   }
 
-  const collapsedBySegmentKey: Record<string, boolean> = {};
-
-  for (const segment of segments) {
-    const isCollapsed = timeline.isTimeSegmentCollapsed(segment);
-    collapsedBySegmentKey[segment.timespan.key] = isCollapsed;
-  }
-
   const scaled: ScaledSegment[] = [];
   let cursorPx = 0;
 
   for (const segment of segments) {
-    const isCollapsed = collapsedBySegmentKey[segment.timespan.key];
+    const isCollapsed = timeline.isTimeSegmentCollapsed(segment);
 
     const segmentWidthPx = isCollapsed
       ? collapsedPx

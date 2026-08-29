@@ -6,6 +6,7 @@ describe('shouldMoveFocusToTimeline', () => {
   it('moves focus when the focused group leaves the window', () => {
     expect(
       shouldMoveFocusToTimeline({
+        focusWithinTimeline: true,
         focusedGroupId: 'old-group',
         focusedSlotIndex: 0,
         visibleGroupIds: new Set(['new-group']),
@@ -17,6 +18,7 @@ describe('shouldMoveFocusToTimeline', () => {
   it('moves focus before a pooled row is repointed', () => {
     expect(
       shouldMoveFocusToTimeline({
+        focusWithinTimeline: true,
         focusedGroupId: 'visible-group',
         focusedSlotIndex: 0,
         visibleGroupIds: new Set(['visible-group', 'replacement-group']),
@@ -28,6 +30,7 @@ describe('shouldMoveFocusToTimeline', () => {
   it('keeps focus when the slot retains the same group', () => {
     expect(
       shouldMoveFocusToTimeline({
+        focusWithinTimeline: true,
         focusedGroupId: 'visible-group',
         focusedSlotIndex: 1,
         visibleGroupIds: new Set(['visible-group']),
@@ -39,10 +42,23 @@ describe('shouldMoveFocusToTimeline', () => {
   it('does nothing when no pooled row owns focus', () => {
     expect(
       shouldMoveFocusToTimeline({
+        focusWithinTimeline: true,
         focusedGroupId: null,
         focusedSlotIndex: null,
         visibleGroupIds: new Set(),
         slotGroupIds: [],
+      }),
+    ).toBe(false);
+  });
+
+  it('does not steal focus after focus has left the timeline', () => {
+    expect(
+      shouldMoveFocusToTimeline({
+        focusWithinTimeline: false,
+        focusedGroupId: 'stale-group',
+        focusedSlotIndex: 0,
+        visibleGroupIds: new Set(['replacement-group']),
+        slotGroupIds: ['replacement-group'],
       }),
     ).toBe(false);
   });

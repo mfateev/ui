@@ -140,7 +140,7 @@ describe('Viewport', () => {
     viewport.setGeometry({
       widthPx: 1_500,
       totalWorldWidthPx: 4_000,
-      offsetPx: 2_000,
+      anchoredOffsetPx: 2_000,
     });
 
     expect(viewport.widthPx).toBe(1_500);
@@ -163,7 +163,7 @@ describe('Viewport', () => {
     viewport.setGeometry({
       widthPx: 1_000,
       totalWorldWidthPx: 1_200,
-      offsetPx: 900,
+      anchoredOffsetPx: 900,
     });
 
     expect(viewport.offsetPx).toBe(200);

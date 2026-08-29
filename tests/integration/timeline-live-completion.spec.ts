@@ -204,7 +204,13 @@ test.describe('Timeline live completion', () => {
         new Promise<number[]>((resolve) => {
           const offsets: number[] = [];
           const sample = () => {
-            offsets.push(Number((element as HTMLElement).dataset.frameOffset));
+            offsets.push(
+              Number.parseFloat(
+                getComputedStyle(element).getPropertyValue(
+                  '--timeline-frame-offset',
+                ),
+              ),
+            );
             if (offsets.length === 4) resolve(offsets);
             else requestAnimationFrame(sample);
           };
@@ -240,13 +246,16 @@ test.describe('Timeline live completion', () => {
     await expect(timeline).toHaveAttribute('data-live-paused', 'true');
     await expect(timeline).toHaveAttribute('data-viewport-following', 'false');
     const frozenOffset = await viewportOffset();
-    const frozenFrameOffset = await timeline.getAttribute('data-frame-offset');
+    const frozenFrameOffset = await timeline.evaluate((element) =>
+      getComputedStyle(element).getPropertyValue('--timeline-frame-offset'),
+    );
     await page.waitForTimeout(1_200);
     expect(await viewportOffset()).toBe(frozenOffset);
-    await expect(timeline).toHaveAttribute(
-      'data-frame-offset',
-      frozenFrameOffset ?? '0',
-    );
+    expect(
+      await timeline.evaluate((element) =>
+        getComputedStyle(element).getPropertyValue('--timeline-frame-offset'),
+      ),
+    ).toBe(frozenFrameOffset);
 
     await page.getByTestId('pause').click();
     await expect(timeline).toHaveAttribute('data-live-paused', 'false');

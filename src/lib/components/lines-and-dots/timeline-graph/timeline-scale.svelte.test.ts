@@ -153,6 +153,34 @@ describe('TimelineScale', () => {
     cleanup();
   });
 
+  it('stops live-edge interpolation while the final segment is collapsed', () => {
+    const cleanup = $effect.root(() => {
+      const idle = segment(60_000, 120_000, 'inactive');
+      const { scale } = makeScale({
+        segments: [segment(0, 60_000), idle],
+        collapsedKeys: [idle.timespan.key],
+        widthPx: 600,
+        expandedDurationPerViewportMs: 60_000,
+      });
+
+      expect(scale.liveEdgePxPerMs).toBe(0);
+    });
+    cleanup();
+  });
+
+  it('uses the expanded rate while the final segment is active', () => {
+    const cleanup = $effect.root(() => {
+      const { scale } = makeScale({
+        segments: [segment(0, 60_000)],
+        widthPx: 600,
+        expandedDurationPerViewportMs: 60_000,
+      });
+
+      expect(scale.liveEdgePxPerMs).toBe(0.01);
+    });
+    cleanup();
+  });
+
   it('recalculates world coordinates deterministically after resizing', () => {
     const cleanup = $effect.root(() => {
       const idle = segment(60_000, 120_000, 'inactive');

@@ -2,18 +2,19 @@
   import { twMerge } from 'tailwind-merge';
 
   import { timestamp } from '$lib/components/timestamp.svelte';
+  import { translate } from '$lib/i18n/translate';
   import type { EventGroups } from '$lib/models/event-groups/event-groups';
   import { activeGroups, clearActiveGroups } from '$lib/stores/active-events';
   import { collapseIdleTime } from '$lib/stores/event-view';
   import { fullEventHistory, pauseLiveUpdates } from '$lib/stores/events';
-  import { eventStatusFilter } from '$lib/stores/filters';
+  import { eventStatusFilter, eventTypeFilter } from '$lib/stores/filters';
   import type { WorkflowExecution } from '$lib/types/workflows';
   import { isWorkflowDelayed } from '$lib/utilities/delayed-workflows';
   import { type ValidTime, validTimeToDate } from '$lib/utilities/format-time';
   import { getFailedOrPendingGroups } from '$lib/utilities/get-failed-or-pending';
 
   import EndTimeInterval from '../end-time-interval.svelte';
-  import { GUTTER, RADIUS, ROW_HEIGHT } from './constants';
+  import { DOT_STROKE, GUTTER, RADIUS, ROW_HEIGHT } from './constants';
   import {
     DEFAULT_TIMELINE_DISPLAY_MODE,
     expandedDurationPerViewportMs,
@@ -72,7 +73,6 @@
     onTimelineInit,
   }: Props = $props();
 
-  const DOT_STROKE = 2; // dot border
   // Dot geometry, published as CSS vars on .canvas (consumed by every row's dot).
   const dotSize = 2 * RADIUS + DOT_STROKE;
   const dotRadius = RADIUS * 0.3 + DOT_STROKE / 2;
@@ -142,27 +142,48 @@
   });
 
   const viewport = new Viewport();
-  const timelineMotion = new TimelineMotion();
+  const viewportMotion = new TimelineMotion();
+  const liveEdgeMotion = new TimelineMotion();
+  const workflowIsLive = $derived(workflow.isRunning || workflow.isPaused);
+  const shouldAnimateTimeline = $derived(
+    displayMode === 'fixed-window' &&
+      workflowIsLive &&
+      viewport.isFollowing &&
+      !$pauseLiveUpdates &&
+      scale.liveEdgePxPerMs > 0,
+  );
+  let frozenAnchorTimeMs: number | null = null;
 
   $effect(() => {
     onTimelineInit?.(timeline);
   });
 
   $effect(() => {
+    const anchoredOffsetPx =
+      !viewport.isFollowing && frozenAnchorTimeMs !== null
+        ? scale.project(frozenAnchorTimeMs)
+        : undefined;
     viewport.setGeometry({
       widthPx: timelineWidth,
       totalWorldWidthPx: scale.totalWorldWidthPx,
+      anchoredOffsetPx,
     });
   });
 
   $effect(() => {
+    const shouldFreeze =
+      displayMode === 'fixed-window' && $pauseLiveUpdates && workflowIsLive;
+    if (shouldFreeze && viewport.isFollowing) {
+      frozenAnchorTimeMs = scale.unproject(viewport.offsetPx);
+    }
     syncTimelineViewport({
       viewport,
       displayMode,
       paused: $pauseLiveUpdates,
-      workflowIsLive: workflow.isRunning || workflow.isPaused,
+      workflowIsLive,
       totalWorldWidthPx: scale.totalWorldWidthPx,
     });
+    if (viewport.isFollowing) frozenAnchorTimeMs = null;
   });
 
   // Smooth only the already-rendered world layers. Membership, ticks, and the
@@ -171,30 +192,38 @@
     const element = containerEl;
     if (!element) return;
 
+    if (!shouldAnimateTimeline) {
+      viewportMotion.reset();
+      liveEdgeMotion.reset();
+      element.style.setProperty('--timeline-frame-offset', '0px');
+      element.style.setProperty('--timeline-live-edge-extension', '0');
+      return;
+    }
+
     let animationFrame = 0;
     const renderFrame = (frameTimeMs: number) => {
-      const workflowIsLive = workflow.isRunning || workflow.isPaused;
-      const frameOffsetPx = timelineMotion.nextFrame({
+      const frameOffsetPx = viewportMotion.nextFrame({
         nowMs: frameTimeMs,
         committedOffsetPx: viewport.offsetPx,
-        expandedPxPerMs: scale.expandedPxPerMs,
-        animate:
-          displayMode === 'fixed-window' &&
-          workflowIsLive &&
-          viewport.isFollowing &&
-          viewport.offsetPx > 0,
-        freeze:
-          displayMode === 'fixed-window' && workflowIsLive && $pauseLiveUpdates,
+        expandedPxPerMs: scale.liveEdgePxPerMs,
+        animate: viewport.offsetPx > 0,
+        freeze: false,
+      });
+      const liveEdgeExtensionPx = liveEdgeMotion.nextFrame({
+        nowMs: frameTimeMs,
+        committedOffsetPx: scale.totalWorldWidthPx,
+        expandedPxPerMs: scale.liveEdgePxPerMs,
+        animate: true,
+        freeze: false,
       });
       element.style.setProperty(
         '--timeline-frame-offset',
         `${frameOffsetPx}px`,
       );
       element.style.setProperty(
-        '--timeline-frame-offset-value',
-        String(Math.max(0, frameOffsetPx)),
+        '--timeline-live-edge-extension',
+        String(Math.max(0, liveEdgeExtensionPx)),
       );
-      element.dataset.frameOffset = String(frameOffsetPx);
       animationFrame = requestAnimationFrame(renderFrame);
     };
 
@@ -250,6 +279,7 @@
         displayMode === 'fixed-window' &&
         (workflow.isRunning || workflow.isPaused),
       retentionDurationMs: durationPerViewportMs + TIMELINE_ROW_HEIGHT_GRACE_MS,
+      retentionKey: `${workflow.runId}:${$eventStatusFilter}:${$eventTypeFilter.join(',')}`,
     }),
   );
 
@@ -572,6 +602,9 @@
 
   $effect.pre(() => {
     const moveFocus = shouldMoveFocusToTimeline({
+      focusWithinTimeline: Boolean(
+        containerEl?.contains(document.activeElement),
+      ),
       focusedGroupId,
       focusedSlotIndex,
       visibleGroupIds,
@@ -602,12 +635,12 @@
 
 <div
   id="event-history-timeline-graph"
-  data-display-mode={displayMode}
+  role="region"
+  aria-label={translate('workflows.timeline-tab')}
   data-viewport-offset={viewport.offsetPx}
   data-viewport-following={viewport.isFollowing}
   data-live-paused={$pauseLiveUpdates}
-  data-visible-group-count={visibleGroups.length}
-  data-height-row-count={heightRowCount}
+  class:timeline-motion-active={shouldAnimateTimeline}
   class={twMerge(
     'timeline-height-shell relative overflow-hidden border border-t-0 border-subtle bg-primary',
     error && 'bg-danger',
@@ -703,8 +736,6 @@
         <ul class="pointer-events-none absolute inset-0 m-0 list-none p-0">
           {#each pool as slot, slotIndex (slotIndex)}
             <li
-              data-group-id={slot?.group.id}
-              data-slot-index={slotIndex}
               class="absolute left-0 right-0 top-0"
               style:display={slot ? 'block' : 'none'}
               style:height="{ROW_HEIGHT}px"
@@ -778,24 +809,11 @@
     color: rgb(var(--color-text-primary));
   }
 
-  .timeline-height-shell,
-  .canvas,
-  .timeline-height-rail {
-    transition-property: height;
-    transition-duration: 240ms;
-    transition-timing-function: ease-out;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .timeline-height-shell,
-    .canvas,
-    .timeline-height-rail {
-      transition-duration: 0ms;
-    }
-  }
-
   .canvas :global(.timeline-motion-layer) {
     transform: translateX(calc(-1 * var(--timeline-frame-offset, 0px)));
+  }
+
+  .timeline-motion-active .canvas :global(.timeline-motion-layer) {
     will-change: transform;
   }
 
@@ -810,7 +828,7 @@
      painted endpoint by the inter-tick offset while the layer translates left,
      keeping the edge stationary without recomputing row geometry per frame. */
   .canvas :global(.tl-live-edge-extension) {
-    transform: scaleX(var(--timeline-frame-offset-value, 0));
+    transform: scaleX(var(--timeline-live-edge-extension, 0));
     transform-origin: left center;
   }
 

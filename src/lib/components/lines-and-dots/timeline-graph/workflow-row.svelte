@@ -53,6 +53,7 @@
     }),
   );
   const colors = $derived(dotColors(workflow.status));
+  const workflowIsLive = $derived(workflow.isRunning || workflow.isPaused);
 
   const accessibleName = $derived(
     translate('workflows.row-accessible-name', {
@@ -74,15 +75,15 @@
   {#if lineBounds}
     <div
       class="tl-line absolute"
-      class:tl-line--dashed={workflow.isRunning}
-      class:tl-line--animate={workflow.isRunning}
+      class:tl-line--dashed={workflowIsLive}
+      class:tl-line--animate={workflowIsLive}
       style:left="{lineBounds.left}px"
       style:top="{lineBounds.top}px"
       style:width="{lineBounds.width}px"
       style:height="{lineBounds.height}px"
       style:--tl-line-color={color}
     ></div>
-    {#if workflow.isRunning}
+    {#if workflowIsLive}
       <div
         class="tl-line tl-line--dashed tl-live-edge-extension absolute"
         style:left="{lineBounds.left + lineBounds.width}px"
@@ -97,7 +98,7 @@
     {@const dotBounds = dotBox(pointX, centerY)}
     <div
       class="absolute h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"
-      class:timeline-live-edge-anchor={workflow.isRunning &&
+      class:timeline-live-edge-anchor={workflowIsLive &&
         pointX === geometry.endDotPx}
       style:left="{dotBounds.left}px"
       style:top="{dotBounds.top}px"

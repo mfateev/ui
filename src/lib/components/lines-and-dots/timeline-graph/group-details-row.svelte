@@ -23,6 +23,8 @@
     y: number;
     // Reports panel height so timeline-graph can shift the rows below it.
     onHeight?: (h: number) => void;
+    timelineKey?: string;
+    active?: boolean;
   };
 
   let {
@@ -32,6 +34,8 @@
     x = 0,
     y,
     onHeight,
+    timelineKey = group.id,
+    active = true,
   }: Props = $props();
 
   // ResizeObserver so the height re-measures when CodeMirror lazily swaps in.
@@ -63,7 +67,7 @@
   );
 
   const status = $derived.by(() => {
-    const pending = group?.pendingActivity;
+    const pending = active ? group?.pendingActivity : undefined;
     if (pending) {
       if (pending.paused) return translate('workflows.paused');
       if ((pending.attempt ?? 0) > 1) {
@@ -98,7 +102,10 @@
         {/if}
       </div>
       <div class="flex items-center gap-4">
-        <Button variant="ghost" size="xs" onclick={() => setActiveGroup(group)}
+        <Button
+          variant="ghost"
+          size="xs"
+          onclick={() => setActiveGroup(group, timelineKey)}
           >{translate('common.close')} <Icon name="close" /></Button
         >
       </div>

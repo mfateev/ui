@@ -16,10 +16,17 @@
     HISTORY_CTX,
     type HistoryContext,
   } from '$lib/contexts/history-context';
+  import {
+    WORKFLOW_RUN_CTX,
+    type WorkflowRunContext,
+  } from '$lib/contexts/workflow-run-context';
   import ToggleButton from '$lib/holocene/toggle-button/toggle-button.svelte';
   import ToggleButtons from '$lib/holocene/toggle-button/toggle-buttons.svelte';
   import { translate } from '$lib/i18n/translate';
-  import type { EventGroup } from '$lib/models/event-groups/event-groups';
+  import {
+    type TimelineRun,
+    toTimelineGroups,
+  } from '$lib/services/chain-workflow-session';
   import {
     enrichGroups,
     getWorkflowTaskFailedEvent as getBufferWftFailedEvent,
@@ -40,6 +47,7 @@
   } from '$lib/utilities/event-filter-params';
 
   const historyCtx = getContext<HistoryContext>(HISTORY_CTX);
+  const workflowRunCtx = getContext<WorkflowRunContext>(WORKFLOW_RUN_CTX);
 
   const namespace = $derived(page.params.namespace);
   const workflow = $derived($workflowRun.workflow);
@@ -60,11 +68,41 @@
 
   const reverseSort = $derived($eventFilterSort === 'descending');
 
-  let bufferGroups = $state.raw<EventGroup[]>([]);
-
   const filteredBufferGroups = $derived.by(() => {
+    void $bufferVersion;
+    // The buffer owns its run identity. Never infer that identity from the
+    // independently refreshed workflow model: a stale Describe response must
+    // not be able to relabel one run's groups as another run.
+    if (workflowRunCtx.activeBufferRunId !== workflow?.runId) return [];
+    if (historyCtx.fetchComplete) {
+      enrichGroups(
+        $workflowRun.workflow?.pendingActivities ?? [],
+        $workflowRun.workflow?.pendingNexusOperations ?? [],
+      );
+    }
     const active = $eventTypeFilter;
-    return bufferGroups.filter((g) => active.includes(g.category));
+    return getGroupArray({ excludeWorkflowTasks: true }).filter((group) =>
+      active.includes(group.category),
+    );
+  });
+
+  const timelineRuns = $derived.by<TimelineRun[]>(() => {
+    const retained = workflowRunCtx.retainedRuns.map((run) => ({
+      ...run,
+      active: false,
+    }));
+    if (!workflow) return retained;
+    return [
+      ...retained,
+      {
+        runId: workflow.runId,
+        status: workflow.status,
+        startTimeMs: Date.parse(workflow.startTime),
+        endTimeMs: workflow.endTime ? Date.parse(workflow.endTime) : Date.now(),
+        groups: toTimelineGroups(workflow.runId, filteredBufferGroups),
+        active: true,
+      },
+    ];
   });
 
   const workflowTaskFailedError = $derived.by(() => {
@@ -103,27 +141,6 @@
 
   onMount(() => {
     historyCtx.resume();
-    bufferGroups = getGroupArray({ excludeWorkflowTasks: true });
-  });
-
-  $effect(() => {
-    void $bufferVersion;
-    const fetchComplete = historyCtx.fetchComplete;
-    const pendingActivities = $workflowRun.workflow?.pendingActivities ?? [];
-    const pendingNexusOperations =
-      $workflowRun.workflow?.pendingNexusOperations ?? [];
-
-    let frame: number | null = requestAnimationFrame(() => {
-      frame = null;
-      if (fetchComplete) {
-        enrichGroups(pendingActivities, pendingNexusOperations);
-      }
-      bufferGroups = getGroupArray({ excludeWorkflowTasks: true });
-    });
-
-    return () => {
-      if (frame !== null) cancelAnimationFrame(frame);
-    };
   });
 
   let timeline = $state<Timeline>();
@@ -236,7 +253,17 @@
       descMinId={historyCtx.descMinId}
       error={Boolean(workflowTaskFailedError)}
       onTimelineInit={handleTimelineInit}
+      onRetentionWindow={workflowRunCtx.pruneRetainedRuns}
+      rowHeightRetentionScopeId={workflowRunCtx.following
+        ? workflowRunCtx.chainRunId
+        : workflow.runId}
+      {timelineRuns}
     />
+    {#if workflowRunCtx.truncation?.affectsVisibleInterval}
+      <p class="text-muted mt-2 text-sm" role="status">
+        {translate('workflows.chained-timeline-truncated')}
+      </p>
+    {/if}
   {/if}
 </div>
 <!-- end wrapper -->

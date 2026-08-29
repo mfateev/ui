@@ -212,6 +212,10 @@ func getTemporalClientMux(c echo.Context, temporalConn *grpc.ClientConn, apiMidd
 		)...,
 	)
 
+	if err := RegisterWorkflowExecutionIdentityHandler(tMux, workflowservice.NewWorkflowServiceClient(temporalConn)); err != nil {
+		return nil, err
+	}
+
 	if wfErr := workflowservice.RegisterWorkflowServiceHandler(context.Background(), tMux, temporalConn); wfErr != nil {
 		return nil, wfErr
 	}

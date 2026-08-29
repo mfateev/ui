@@ -1,11 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  getSharedFilterParams,
   parseEventFilterParams,
   updateEventFilterParams,
 } from './event-filter-params';
 
 describe('parseEventFilterParams', () => {
+  it('preserves following mode with shared workflow filters', () => {
+    const url = new URL(
+      'http://localhost/?follow_continues=on&sort=ascending&unrelated=value',
+    );
+
+    expect(getSharedFilterParams(url)).toEqual({
+      sort: 'ascending',
+      follow_continues: 'on',
+    });
+  });
+
   it('defaults refresh_off to false when param absent', () => {
     const url = new URL('http://localhost/');
     const params = parseEventFilterParams(url);

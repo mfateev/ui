@@ -21,9 +21,9 @@ export const clearActiveGroups = () => {
   activeGroupHeight.set(0);
 };
 
-export const setActiveGroup = (group: EventGroup) => {
-  if (!get(activeGroups).includes(group.id)) {
-    activeGroups.set([group.id]);
+export const setActiveGroup = (group: EventGroup, key = group.id) => {
+  if (!get(activeGroups).includes(key)) {
+    activeGroups.set([key]);
   } else {
     activeGroupHeight.set(0);
     activeGroups.set([]);

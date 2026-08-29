@@ -126,4 +126,15 @@ describe('getTimelineGroupWorldRange', () => {
       }),
     ).toEqual({ startPx: 50, endPx: 175 });
   });
+
+  it('caps a retained pending group at its run boundary', () => {
+    expect(
+      getTimelineGroupWorldRange({
+        group: group({ startMs: 50, endMs: 75, isPending: true }),
+        currentTimeMs: T0 + 250,
+        retainedEndTimeMs: T0 + 125,
+        project,
+      }),
+    ).toEqual({ startPx: 50, endPx: 125 });
+  });
 });

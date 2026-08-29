@@ -52,7 +52,23 @@ export type TaskQueueParameters = Pick<RouteParameters, 'namespace' | 'queue'>;
 export type WorkflowParameters = Pick<
   RouteParameters,
   'namespace' | 'workflow' | 'run'
->;
+> & {
+  queryParams?: Record<string, string>;
+};
+
+export type WorkflowModeQuery = {
+  followContinues?: boolean;
+};
+
+export const FOLLOW_CONTINUES_PARAM = 'follow_continues';
+
+export const workflowModeQueryParams = ({
+  followContinues,
+}: WorkflowModeQuery): Record<string, string> =>
+  followContinues ? { [FOLLOW_CONTINUES_PARAM]: 'on' } : {};
+
+export const isFollowingContinues = (url: URL): boolean =>
+  url.searchParams.get(FOLLOW_CONTINUES_PARAM) === 'on';
 export type ScheduleParameters = Pick<
   RouteParameters,
   'namespace' | 'scheduleId'
@@ -308,6 +324,22 @@ export const baseRouteForWorkflow = ({
   return `${routeForWorkflows(parameters)}/${id}/${run}`;
 };
 
+export const workflowRouteParameters = (
+  namespace: string,
+  workflow: import('$lib/types/workflows').WorkflowExecution,
+): WorkflowParameters => {
+  const followContinues = workflow.isRunning || workflow.isPaused;
+  return {
+    namespace,
+    workflow: workflow.id,
+    run:
+      followContinues && workflow.firstExecutionRunId
+        ? workflow.firstExecutionRunId
+        : workflow.runId,
+    queryParams: workflowModeQueryParams({ followContinues }),
+  };
+};
+
 export const routeForSchedules = (
   parameters: NamespaceParameter,
 ): ResolvedPathname => {
@@ -429,7 +461,10 @@ export const routeForWorkersWithQuery = ({
 export const routeForWorkflowWorkers = (
   parameters: WorkflowParameters,
 ): ResolvedPathname => {
-  return `${baseRouteForWorkflow(parameters)}/workers`;
+  return toURL(
+    `${baseRouteForWorkflow(parameters)}/workers`,
+    parameters.queryParams,
+  );
 };
 
 export const routeForWorkerDeployments = ({
@@ -539,7 +574,10 @@ export const routeForWorkerDeploymentCreate = ({
 export const routeForRelationships = (
   parameters: WorkflowParameters,
 ): ResolvedPathname => {
-  return `${baseRouteForWorkflow(parameters)}/relationships`;
+  return toURL(
+    `${baseRouteForWorkflow(parameters)}/relationships`,
+    parameters.queryParams,
+  );
 };
 
 export const routeForTaskQueue = (
@@ -555,49 +593,73 @@ export const routeForTaskQueue = (
 export const routeForCallStack = (
   parameters: WorkflowParameters,
 ): ResolvedPathname => {
-  return `${baseRouteForWorkflow(parameters)}/call-stack`;
+  return toURL(
+    `${baseRouteForWorkflow(parameters)}/call-stack`,
+    parameters.queryParams,
+  );
 };
 
 export const routeForWorkflowQuery = (
   parameters: WorkflowParameters,
 ): ResolvedPathname => {
-  return `${baseRouteForWorkflow(parameters)}/query`;
+  return toURL(
+    `${baseRouteForWorkflow(parameters)}/query`,
+    parameters.queryParams,
+  );
 };
 
 export const routeForUserMetadata = (
   parameters: WorkflowParameters,
 ): ResolvedPathname => {
-  return `${baseRouteForWorkflow(parameters)}/user-metadata`;
+  return toURL(
+    `${baseRouteForWorkflow(parameters)}/user-metadata`,
+    parameters.queryParams,
+  );
 };
 
 export const routeForWorkflowSearchAttributes = (
   parameters: WorkflowParameters,
 ): ResolvedPathname => {
-  return `${baseRouteForWorkflow(parameters)}/search-attributes`;
+  return toURL(
+    `${baseRouteForWorkflow(parameters)}/search-attributes`,
+    parameters.queryParams,
+  );
 };
 
 export const routeForWorkflowMemo = (
   parameters: WorkflowParameters,
 ): ResolvedPathname => {
-  return `${baseRouteForWorkflow(parameters)}/memo`;
+  return toURL(
+    `${baseRouteForWorkflow(parameters)}/memo`,
+    parameters.queryParams,
+  );
 };
 
 export const routeForWorkflowUpdate = (
   parameters: WorkflowParameters,
 ): ResolvedPathname => {
-  return `${baseRouteForWorkflow(parameters)}/update`;
+  return toURL(
+    `${baseRouteForWorkflow(parameters)}/update`,
+    parameters.queryParams,
+  );
 };
 
 export const routeForPendingActivities = (
   parameters: WorkflowParameters,
 ): ResolvedPathname => {
-  return `${baseRouteForWorkflow(parameters)}/pending-activities`;
+  return toURL(
+    `${baseRouteForWorkflow(parameters)}/pending-activities`,
+    parameters.queryParams,
+  );
 };
 
 export const routeForNexusLinks = (
   parameters: WorkflowParameters,
 ): ResolvedPathname => {
-  return `${baseRouteForWorkflow(parameters)}/nexus-links`;
+  return toURL(
+    `${baseRouteForWorkflow(parameters)}/nexus-links`,
+    parameters.queryParams,
+  );
 };
 
 export const routeForAuthentication = (

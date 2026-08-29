@@ -22,6 +22,13 @@ describe('routeForApi', () => {
     );
   });
 
+  it('should return a route for latest workflow identity', () => {
+    const route = routeForApi('workflow.latest-execution', parameters);
+    expect(route).toBe(
+      `${origin}${base}/api/v1/namespaces/namespace/workflows/workflow/latest-execution`,
+    );
+  });
+
   it('should return a route for events', () => {
     const route = routeForApi('events.ascending', parameters);
     expect(route).toBe(

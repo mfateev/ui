@@ -105,6 +105,7 @@ export const toWorkflowExecution = (
   const name = info?.type?.name ?? '';
   const id = info?.execution?.workflowId ?? '';
   const runId = info?.execution?.runId ?? '';
+  const firstExecutionRunId = info?.firstRunId || undefined;
   const startTime = info?.startTime ?? '';
   const endTime = info?.closeTime ?? '';
   const executionTime = info?.executionTime ?? '';
@@ -159,6 +160,7 @@ export const toWorkflowExecution = (
     name,
     id,
     runId,
+    firstExecutionRunId,
     startTime,
     endTime,
     executionTime,

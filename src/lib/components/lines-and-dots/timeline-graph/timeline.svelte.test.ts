@@ -12,10 +12,12 @@ function makeTimeline({
   fullEventHistory = [],
   currentTimeMs = T0 + 100_000,
   workflow,
+  startTimeMs,
 }: {
   fullEventHistory?: WorkflowEvents;
   currentTimeMs?: number;
   workflow?: Partial<WorkflowExecution>;
+  startTimeMs?: number;
 } = {}): Timeline {
   const resolvedWorkflow = {
     executionTime: iso(0),
@@ -29,6 +31,7 @@ function makeTimeline({
     getWorkflow: () => resolvedWorkflow,
     getEventGroups: () => [],
     getCurrentTimeMs: () => currentTimeMs,
+    getStartTimeMs: () => startTimeMs,
   });
 }
 
@@ -36,6 +39,18 @@ const eventAt = (offsetMs: number) =>
   ({ eventTime: iso(offsetMs) }) as unknown as WorkflowEvents[number];
 
 describe('Timeline.workflowTimespan', () => {
+  it('extends the start to an earlier retained run', () => {
+    const cleanup = $effect.root(() => {
+      const timeline = makeTimeline({
+        workflow: { executionTime: iso(20_000) },
+        startTimeMs: T0 + 1_000,
+      });
+
+      expect(timeline.workflowTimespan.startTimeMs).toBe(T0 + 1_000);
+    });
+    cleanup();
+  });
+
   it('starts at the earliest of the event history and executionTime', () => {
     const cleanup = $effect.root(() => {
       const timeline = makeTimeline({

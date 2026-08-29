@@ -6,8 +6,10 @@ import { toEventHistory } from '$lib/models/event-history';
 import {
   _debugEventSlots,
   _debugState,
+  activeBufferHandle,
   appendLiveEvent,
   assignTrackIndices,
+  createGroupedEventBuffer,
   enrichGroups,
   getAscGroupCount,
   getDescGroupCount,
@@ -25,6 +27,7 @@ import {
   mergeHeads,
   onLatestGroup,
   processEvent,
+  replaceActiveBuffer,
   reset,
   resetLive,
   setEstimatedGroupCount,
@@ -72,7 +75,41 @@ function tick() {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
+  replaceActiveBuffer(createGroupedEventBuffer());
   reset(0);
+});
+
+describe('buffer instances', () => {
+  it('isolates overlapping event ids and listeners', () => {
+    const first = createGroupedEventBuffer();
+    const second = createGroupedEventBuffer();
+    const firstListener = vi.fn();
+    const secondListener = vi.fn();
+    first.reset(10);
+    second.reset(10);
+    first.onLatestGroup(firstListener);
+    second.onLatestGroup(secondListener);
+
+    first.processEvent(makeActivityScheduled(1), true);
+
+    expect(first.getGroupCount()).toBe(1);
+    expect(second.getGroupCount()).toBe(0);
+    expect(firstListener).toHaveBeenCalledOnce();
+    expect(secondListener).not.toHaveBeenCalled();
+  });
+
+  it('replaces the compatibility buffer and version synchronously', () => {
+    const next = createGroupedEventBuffer();
+    next.reset(10);
+    next.processEvent(makeActivityScheduled(1), true);
+    const previousVersion = activeBufferHandle.version;
+
+    replaceActiveBuffer(next);
+
+    expect(activeBufferHandle.current).toBe(next);
+    expect(activeBufferHandle.version).toBe(previousVersion + 1);
+    expect(getGroupCount()).toBe(1);
+  });
 });
 
 afterEach(() => {

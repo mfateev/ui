@@ -7,6 +7,7 @@ export type WorkflowsAPIRoutePath =
 
 export type WorkflowAPIRoutePath =
   | 'workflow'
+  | 'workflow.latest-execution'
   | 'workflow.terminate'
   | 'workflow.cancel'
   | 'workflow.reset'

@@ -62,6 +62,7 @@ export type WorkflowExecutionInfo = Replace<
     historyLength: string;
     searchAttributes?: WorkflowSearchAttributes;
     memo?: Memo;
+    firstRunId?: string;
   }
 >;
 
@@ -187,6 +188,7 @@ export type WorkflowExecution = {
   name: string;
   id: string;
   runId: string;
+  firstExecutionRunId?: string;
   startTime: string;
   endTime: string;
   executionTime: string;

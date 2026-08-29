@@ -35,9 +35,11 @@ function getGroupEndMs(group: EventGroup, pendingTimestampMs: number): number {
 export function buildTimeSegments({
   workflowTimespan,
   eventGroups,
+  getEventGroupEndMs,
 }: {
   workflowTimespan: Timespan;
   eventGroups: EventGroups;
+  getEventGroupEndMs?: (group: EventGroup) => number | undefined;
 }): TimeSegment[] {
   const groupTimespans: Timespan[] = [];
 
@@ -55,7 +57,11 @@ export function buildTimeSegments({
     }
 
     groupTimespans.push(
-      new Timespan(startMs, getGroupEndMs(group, workflowTimespan.endTimeMs)),
+      new Timespan(
+        startMs,
+        getEventGroupEndMs?.(group) ??
+          getGroupEndMs(group, workflowTimespan.endTimeMs),
+      ),
     );
 
     prevStartTimeMs = startMs;

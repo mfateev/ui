@@ -17,10 +17,12 @@ interface TimelineInit {
   getFullEventHistory: () => WorkflowEvents;
   getWorkflow: () => WorkflowExecution;
   getEventGroups: () => EventGroups;
+  getEventGroupEndMs?: (group: EventGroups[number]) => number | undefined;
   getCurrentTimeMs: () => number;
   getDurationThresholdRatio?: () => number;
   getLoading?: () => boolean;
   getShouldCollapseByDefault?: () => boolean;
+  getStartTimeMs?: () => number | undefined;
 }
 
 export class Timeline {
@@ -30,29 +32,37 @@ export class Timeline {
   private _getFullEventHistory: () => WorkflowEvents;
   private _getWorkflow: () => WorkflowExecution;
   private _getEventGroups: () => EventGroups;
+  private _getEventGroupEndMs?: (
+    group: EventGroups[number],
+  ) => number | undefined;
   private _getCurrentTimeMs: () => number;
   private _getDurationThresholdRatio: () => number;
   private _getLoading: () => boolean;
   private _getShouldCollapseByDefault: () => boolean;
+  private _getStartTimeMs: () => number | undefined;
 
   constructor({
     getFullEventHistory,
     getWorkflow,
     getEventGroups,
+    getEventGroupEndMs,
     getCurrentTimeMs,
     getDurationThresholdRatio,
     getLoading,
     getShouldCollapseByDefault,
+    getStartTimeMs,
   }: TimelineInit) {
     this._getFullEventHistory = getFullEventHistory;
     this._getWorkflow = getWorkflow;
     this._getEventGroups = getEventGroups;
+    this._getEventGroupEndMs = getEventGroupEndMs;
     this._getCurrentTimeMs = getCurrentTimeMs;
     this._getDurationThresholdRatio =
       getDurationThresholdRatio ?? (() => DEFAULT_DURATION_THRESHOLD_RATIO);
     this._getLoading = getLoading ?? (() => false);
     this._getShouldCollapseByDefault =
       getShouldCollapseByDefault ?? (() => false);
+    this._getStartTimeMs = getStartTimeMs ?? (() => undefined);
 
     // Finalize once the fetch completes: releasing the freeze (see `segments`)
     // builds the real segment set, and collapsing the idle gaps by default is
@@ -83,6 +93,7 @@ export class Timeline {
     const startCandidates = [
       firstEventTime,
       this.workflow.executionTime,
+      this._getStartTimeMs(),
     ].filter(isNotNullish);
 
     const earliestStartTime = startCandidates.length
@@ -121,6 +132,7 @@ export class Timeline {
     return buildTimeSegments({
       workflowTimespan: this.workflowTimespan,
       eventGroups: this.eventGroups,
+      getEventGroupEndMs: this._getEventGroupEndMs,
     });
   });
 

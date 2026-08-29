@@ -2,8 +2,11 @@
 
 ## Status
 
-Ready for implementation after the latest-run compatibility gate in
-`Server compatibility gate` passes for the supported server matrix.
+Implemented in the playground POC. The latest-run compatibility gate is
+resolved by the bounded ui-server endpoint described in
+`Server compatibility and resolution`; the remaining live server-version and
+chain-type matrix in that section is regression coverage, not a runtime client
+fallback.
 
 This feature makes the workflow timeline follow an execution chain without
 changing its canonical route. A chain includes runs created by Continue-As-New,
@@ -84,8 +87,11 @@ inspect `isRunning` or `isPaused` and, when either is true, use that first run I
 in the path and add `follow_continues=on`. This applies to workflow-list Type,
 Workflow ID, and Run ID cells; schedule and relationship views; parent and child
 workflow links; search results; and other internal links backed by a complete
-execution record. The link is canonical when created and does not require an
-intermediate navigation through the active run ID.
+execution record. When an open list record omits `firstExecutionRunId`, the link
+uses its known run ID with `follow_continues=on`. Before loading history, the
+workflow layout reads that run's execution info and replace-navigates to the
+reported first run ID. The canonical address therefore remains the first-run
+URL without adding a Describe request for every row in the list.
 
 Links that carry only an explicit workflow ID and run ID, such as event-attribute
 execution references, remain bare pinned-run links because they do not know the
@@ -325,7 +331,9 @@ Instead:
 
 1. Treat the path run ID as the expected `firstExecutionRunId` for the requested
    chain.
-2. Resolve the latest execution for `workflowId` without specifying a run ID.
+2. Resolve the latest execution and its chain identity through
+   `GET /api/v1/namespaces/{namespace}/workflows/{workflow}/latest-execution`,
+   where `workflow` is the workflow ID.
 3. Compare the resolved execution's `firstExecutionRunId` with the path run ID.
    If they differ, reject following and show a chain-identity error with an
    action that removes `follow_continues=on` and opens the path run pinned. Do
@@ -347,13 +355,18 @@ Instead:
    deleted or inaccessible, or a hard limit is reached. Do not replace a missing
    predecessor with a list query or an unbounded history scan.
 
-The list and detail workflow responses expose `firstExecutionRunId`, and the UI
+When list and detail workflow responses expose `firstExecutionRunId`, the UI
 `WorkflowExecution` model must preserve it. Following links and the follow
-toggle use this field to construct the canonical path. History still validates
-the value when staging a successor. The client fetches the first and boundary
-history pages when predecessor or successor chain-link metadata is required,
-but it does not fetch `WorkflowExecutionStarted` merely to build an initial
-link. The first run ID is not used as a traversal starting point.
+toggle use this field to construct the canonical path. Older server responses
+may omit it; resolving it for every record in a list would require one history
+request per record and is not allowed. An open record without the field opts
+into following with its current run ID; after navigation, a single explicit-run
+Describe resolves and validates the first run ID before a replace-navigation to
+the canonical URL. History still validates the value when staging a successor.
+The client fetches the first and boundary history pages when predecessor or
+successor chain-link metadata is required, but it does not fetch
+`WorkflowExecutionStarted` merely to enrich an entire list. The first run ID is
+not used as a traversal starting point.
 
 When `follow_continues=on` is absent, load the path run directly and remain
 pinned. A closed path run is never treated as an instruction to find or display
@@ -395,6 +408,8 @@ Handoff uses a staged, generation-guarded transaction:
    clear old-run selection, focus, decoded caches, and auxiliary state; and
    increment the single active-state version. Read-only compatibility stores
    derive from the newly published session rather than being assigned separately.
+   Reset compositor motion offsets in the successor's retained-timeline
+   coordinate basis so interpolation from the predecessor is not applied twice.
 9. Svelte may render only before or after this commit; no awaited operation or
    reactive publication occurs inside it.
 10. Start the successor's bidirectional fetch and live poll.
@@ -425,21 +440,59 @@ If the server can resolve the latest run directly, catch-up should jump to that
 run and backfill only the visible window instead of replaying intermediate
 handoffs.
 
-### Server compatibility gate
+### Server compatibility and resolution
 
-Before behavioral implementation begins, run a compatibility test against every
-supported Temporal server version proving that describing a workflow execution
-by namespace and workflow ID with no run ID resolves the latest execution. The
-test must cover open and fully closed chains created by Continue-As-New, retry,
-reset, and cron, plus workflow ID reuse where the latest execution belongs to a
-different chain.
+The compatibility audit produced the following matrix. “Source-audited” means
+the relevant server and API implementation was inspected; it does not claim
+that every chain scenario was exercised against a live server image.
 
-If any supported version cannot resolve the latest execution reliably, the
-feature requires a bounded ui-server endpoint before client following is
-implemented. That endpoint must return the latest execution identity directly;
-the client must not substitute an unbounded list query or forward traversal.
-Record the supported matrix and chosen resolution path in this document, then
-change the status to unconditionally ready.
+| Server range                                                                   | Finding                                                                                                                                                                                         | Resolution path                                            |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 1.16.0, source-audited                                                         | An empty run ID is resolved through the current-execution record before Describe loads mutable state. `WorkflowExecutionStarted.firstExecutionRunId` is present in the API used by this server. | No-run Describe, then one explicit-run first history page. |
+| Later servers whose Describe response omits `workflowExecutionInfo.firstRunId` | The start event remains the compatible chain-identity source. Individual intermediate releases were not all exercised live.                                                                     | No-run Describe, then one explicit-run first history page. |
+| Servers whose Describe response includes `workflowExecutionInfo.firstRunId`    | Describe supplies both the resolved run and chain identity. Support is detected from the response rather than inferred from a version threshold.                                                | No-run Describe only.                                      |
+| Current API contract, source-audited                                           | The native Describe field is defined. The endpoint fast path and legacy fallback are covered by focused ui-server tests, not a live chain matrix.                                               | No-run Describe only when the response contains the field. |
+
+The UI uses this bounded ui-server endpoint:
+
+```text
+GET /api/v1/namespaces/{namespace}/workflows/{workflow}/latest-execution
+```
+
+It returns:
+
+```ts
+type LatestWorkflowExecutionIdentity = {
+  workflowId: string;
+  runId: string;
+  firstExecutionRunId: string;
+};
+```
+
+The endpoint has an exact two-RPC maximum:
+
+1. Call `DescribeWorkflowExecution` with namespace and workflow ID and no run
+   ID. Read the resolved workflow ID, run ID, and, when present,
+   `workflowExecutionInfo.firstRunId`.
+2. If `firstRunId` is absent, request the first ascending history page for the
+   explicit run ID returned by Describe, with `maximumPageSize=1`, no page
+   token, and no long poll. Require event 1 to be
+   `WorkflowExecutionStarted` and return its `firstExecutionRunId`.
+
+The endpoint never issues a visibility/list query, follows a chain, or requests
+a second history page. Pinning the fallback history request to Describe's run ID
+makes a concurrent transition safe: the result is the execution that Describe
+resolved, and a later poll can observe its successor. Missing execution fields,
+a missing or wrong first event, and an empty chain ID fail closed instead of
+guessing that the active run is the first run. Existing ui-server authentication,
+forwarded gRPC metadata, and Temporal-to-HTTP error mapping apply to the custom
+route.
+
+The source audit makes this resolution path ready for the supported `>=1.16`
+contract without an unbounded client fallback. A live compatibility suite
+across maintained server minors remains required regression coverage. It should
+exercise open and fully closed Continue-As-New, retry, reset, and cron chains,
+plus workflow ID reuse where the latest execution belongs to another chain.
 
 ## Bounded Memory
 

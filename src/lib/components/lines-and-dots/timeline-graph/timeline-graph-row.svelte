@@ -55,6 +55,9 @@
     // Reactive event count so the row recomputes on streamed appends (eventList
     // is mutated in place) and on pooled re-point.
     eventCount?: number;
+    timelineKey?: string;
+    active?: boolean;
+    retainedEndTimeMs?: number;
   };
 
   let {
@@ -63,10 +66,14 @@
     project,
     readOnly = false,
     eventCount = 0,
+    timelineKey = group.id,
+    active = true,
+    retainedEndTimeMs,
   }: Props = $props();
 
   const timelineWidth = $derived(canvasWidth - 2 * GUTTER);
-  const pendingActivity = $derived(group?.pendingActivity);
+  const isLivePending = $derived(active && group.isPending);
+  const pendingActivity = $derived(active ? group?.pendingActivity : undefined);
 
   // Reactive (not untrack) so a re-pointed pooled row relabels for its new group.
   const accessibleName = $derived(
@@ -116,6 +123,7 @@
     timelineWidth: number,
     events: EventGroup['eventList'],
     count: number,
+    retainedEndTimeMs: number | undefined,
   ) => {
     // Loop to `count` (not events.map) to depend on eventCount without allocating.
     const points: number[] = [];
@@ -126,24 +134,35 @@
     if (pauseTime) {
       points.push(Math.round(project(pauseTime)));
     }
+    if (!active && group.isPending && retainedEndTimeMs !== undefined) {
+      const retainedEndX = Math.round(project(retainedEndTimeMs));
+      if (retainedEndX > (points.at(-1) ?? -Infinity)) {
+        points.push(retainedEndX);
+      }
+    }
     const { textAnchor, textPosition } = timelineTextPosition(
       points,
       ROW_HEIGHT / 2,
       timelineWidth,
-      group.isPending,
+      isLivePending,
     );
     return { points, textAnchor, textPosition };
   };
 
   const { points, textAnchor, textPosition } = $derived(
-    getDistancePointsAndPositions(timelineWidth, group.eventList, eventCount),
+    getDistancePointsAndPositions(
+      timelineWidth,
+      group.eventList,
+      eventCount,
+      retainedEndTimeMs,
+    ),
   );
   const rowGeometry = $derived(
     getTimelineRowGeometry({
       points,
       viewportStartPx: GUTTER,
       viewportEndPx: canvasWidth - GUTTER,
-      isPending: group.isPending,
+      isPending: isLivePending,
       hasPauseTime: Boolean(pauseTime),
       haloPx: HALO,
     }),
@@ -172,7 +191,7 @@
 
   const onClick = () => {
     if (readOnly) return;
-    setActiveGroup(group);
+    setActiveGroup(group, timelineKey);
   };
 
   // Only activity groups carry an ActivityTaskStarted event; guard so other
@@ -317,22 +336,24 @@
       {#each rowGeometry.dots as visibleDot (visibleDot.index)}
         {@const localX = visibleDot.xPx - spanLeft}
         {@const index = visibleDot.index}
-        {#if index === points.length - 1 && group.isPending && !pauseTime}
+        {#if index === points.length - 1 && isLivePending && !pauseTime}
           {@render dot(
             localX,
             dotColors(group.lastEvent.classification),
             'retry',
           )}
         {/if}
-        {@render dot(
-          localX,
-          dotColors(group.eventList[index]?.classification),
-          pauseTime && index !== 0
-            ? 'pause'
-            : decodedLocalActivity
-              ? CategoryIcon['local-activity'].name
-              : CategoryIcon[group.category].name,
-        )}
+        {#if index < group.eventList.length || pauseTime}
+          {@render dot(
+            localX,
+            dotColors(group.eventList[index]?.classification),
+            pauseTime && index !== 0
+              ? 'pause'
+              : decodedLocalActivity
+                ? CategoryIcon['local-activity'].name
+                : CategoryIcon[group.category].name,
+          )}
+        {/if}
       {/each}
       <!-- Inside the button so hovering/clicking the label hits the same target;
          positioned button-local (offset by spanLeft), may overflow the box. -->

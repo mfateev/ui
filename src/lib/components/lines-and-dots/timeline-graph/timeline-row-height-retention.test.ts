@@ -104,4 +104,19 @@ describe('TimelineRowHeightRetention', () => {
     expect(update(4, 'run-a:all')).toBe(10);
     expect(update(4, 'run-b:all')).toBe(4);
   });
+
+  it('preserves height across a run handoff when the key is chain-scoped', () => {
+    const retention = new TimelineRowHeightRetention();
+    const update = (visibleRowCount: number, nowMs: number) =>
+      retention.update({
+        visibleRowCount,
+        nowMs,
+        retain: true,
+        retentionDurationMs: RETENTION_DURATION_MS,
+        retentionKey: 'first-run:all',
+      });
+
+    expect(update(10, 1_000)).toBe(10);
+    expect(update(2, 2_000)).toBe(10);
+  });
 });

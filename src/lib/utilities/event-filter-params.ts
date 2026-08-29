@@ -10,6 +10,7 @@ export const SHARED_FILTER_PARAMS = [
   'category',
   'status',
   'refresh_off',
+  'follow_continues',
 ] as const;
 
 export function getSharedFilterParams(url: URL): Record<string, string> {

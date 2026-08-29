@@ -13,7 +13,7 @@
     unpauseActivity,
   } from '$lib/services/workflow-activities-service';
   import { toaster } from '$lib/stores/toaster';
-  import { triggerRefresh } from '$lib/stores/workflow-run';
+  import { triggerRefresh, workflowRun } from '$lib/stores/workflow-run';
   import type { PendingActivity } from '$lib/types/events';
   import { getIdentity } from '$lib/utilities/core-context';
 
@@ -28,10 +28,10 @@
   };
 
   let { activity, class: className = '' }: Props = $props();
-  const { namespace, workflow, run } = $derived(page.params);
+  const namespace = $derived(page.params.namespace);
   const execution: WorkflowExecution = $derived({
-    workflowId: workflow,
-    runId: run,
+    workflowId: $workflowRun.workflow?.id ?? page.params.workflow,
+    runId: $workflowRun.workflow?.runId ?? page.params.run,
   });
 
   const identity = getIdentity();

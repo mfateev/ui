@@ -24,12 +24,11 @@
   import { encodePayloads } from '$lib/utilities/encode-payload';
   import { stringifyWithBigInt } from '$lib/utilities/parse-with-big-int';
 
-  const { namespace, workflow: workflowId, run: runId } = page.params;
-
-  const params = {
-    id: workflowId,
-    runId,
-  };
+  const namespace = $derived(page.params.namespace);
+  const params = $derived({
+    id: $workflowRun.workflow?.id ?? page.params.workflow,
+    runId: $workflowRun.workflow?.runId ?? page.params.run,
+  });
 
   let queryType = $state('');
   let initialQueryType = $state('');
@@ -84,10 +83,7 @@
   const fetchCurrentDetails = async () => {
     const metadata = await getWorkflowMetadata({
       namespace,
-      workflow: {
-        id: workflowId,
-        runId: runId,
-      },
+      workflow: params,
     });
     $workflowRun.metadata = metadata;
   };

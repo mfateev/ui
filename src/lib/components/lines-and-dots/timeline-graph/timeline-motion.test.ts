@@ -47,6 +47,27 @@ describe('TimelineMotion', () => {
     expect(frame(motion, { nowMs: 1_750, committedOffsetPx: 108 })).toBe(-0.5);
   });
 
+  it('snaps instead of preserving a large coordinate-system rebase', () => {
+    const motion = new TimelineMotion();
+    frame(motion);
+    frame(motion, { nowMs: 1_500 });
+
+    expect(
+      frame(motion, {
+        nowMs: 1_500,
+        committedOffsetPx: 2_000,
+        snapThresholdPx: 20,
+      }),
+    ).toBe(0);
+    expect(
+      frame(motion, {
+        nowMs: 1_750,
+        committedOffsetPx: 2_000,
+        snapThresholdPx: 20,
+      }),
+    ).toBe(2.5);
+  });
+
   it('holds the current frame offset while paused', () => {
     const motion = new TimelineMotion();
     frame(motion);

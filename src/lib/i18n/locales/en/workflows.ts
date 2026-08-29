@@ -42,6 +42,8 @@ export const Strings = {
     'Add (<1></1>), re-arrange (<2></2>), and remove (<3></3>), {{type}} to personalize the {{title}} Table.',
   'all-statuses': 'All Statuses',
   'row-accessible-name': 'Workflow {{workflowId}}: {{status}}',
+  'chain-row-accessible-name':
+    'Workflow {{workflowId}}, run {{runId}}: {{status}}',
   running: 'Running',
   'timed-out': 'Timed Out',
   completed: 'Completed',
@@ -358,6 +360,12 @@ export const Strings = {
   'scheduled-by': 'Scheduled By',
   'auto-refresh-on': 'Auto Refresh On',
   'auto-refresh-off': 'Auto Refresh Off',
+  'follow-chained-runs': 'Follow chained runs',
+  'copy-pinned-run-link': 'Copy pinned run link',
+  'chained-timeline-truncated':
+    'Older chained-run timeline data was omitted for performance.',
+  'waiting-for-next-run': 'Waiting for next run',
+  'open-pinned-run': 'Open pinned run',
   minimized: 'Minimized',
   expanded: 'Expanded',
   'timeline-minimized':

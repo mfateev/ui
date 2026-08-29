@@ -328,6 +328,32 @@ export async function fetchWorkflow(
     });
 }
 
+export type LatestWorkflowExecutionIdentity = {
+  workflowId: string;
+  runId: string;
+  firstExecutionRunId: string;
+};
+
+export async function fetchLatestWorkflowExecutionIdentity(
+  parameters: Omit<GetWorkflowExecutionRequest, 'runId'>,
+  request = fetch,
+): Promise<{
+  identity?: LatestWorkflowExecutionIdentity;
+  error?: NetworkError;
+}> {
+  const route = routeForApi('workflow.latest-execution', {
+    namespace: parameters.namespace,
+    workflowId: parameters.workflowId,
+  });
+
+  return requestFromAPI<LatestWorkflowExecutionIdentity>(route, {
+    request,
+    notifyOnError: false,
+  })
+    .then((identity) => ({ identity }))
+    .catch((error: NetworkError) => ({ error }));
+}
+
 export async function terminateWorkflow({
   workflow,
   namespace,

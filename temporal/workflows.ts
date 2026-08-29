@@ -26,6 +26,13 @@ const { double } = workflow.proxyActivities<typeof activities>({
   },
 });
 
+const { delayedDouble } = workflow.proxyActivities<typeof activities>({
+  startToCloseTimeout: '1 hour',
+  retry: {
+    maximumAttempts: 1,
+  },
+});
+
 const { longSleep } = workflow.proxyActivities<typeof activities>({
   startToCloseTimeout: '30 minutes',
   heartbeatTimeout: '2 minutes',
@@ -78,6 +85,74 @@ export async function CompletedWorkflow(
   }
 
   return await double(amount);
+}
+
+export async function BatchedContinueAsNewWorkflow(
+  amount: number,
+  iterations = 0,
+  activitiesPerRun = 9,
+  activityDurationMs = 10_000,
+  delayBetweenActivitiesMs = 0,
+  parallelActivityDurationMs = 90_000,
+): Promise<number> {
+  const runTrack = async ({
+    label,
+    activityCount,
+    durationMs,
+    delayMs,
+  }: {
+    label: string;
+    activityCount: number;
+    durationMs: number;
+    delayMs: number;
+  }): Promise<number> => {
+    let trackResult = amount;
+    for (let activity = 1; activity <= activityCount; activity++) {
+      trackResult = await delayedDouble.executeWithOptions(
+        { summary: `${label} ${activity} of ${activityCount}` },
+        [amount, durationMs],
+      );
+      if (activity < activityCount && delayMs > 0) {
+        await workflow.sleep(delayMs);
+      }
+    }
+    return trackResult;
+  };
+
+  const fastTrackDurationMs =
+    activitiesPerRun * activityDurationMs +
+    Math.max(0, activitiesPerRun - 1) * delayBetweenActivitiesMs;
+  const slowActivityCount =
+    parallelActivityDurationMs > 0
+      ? Math.max(1, Math.ceil(fastTrackDurationMs / parallelActivityDurationMs))
+      : 0;
+  const [result] = await Promise.all([
+    runTrack({
+      label: 'Fast track activity',
+      activityCount: activitiesPerRun,
+      durationMs: activityDurationMs,
+      delayMs: delayBetweenActivitiesMs,
+    }),
+    runTrack({
+      label: 'Slow track activity',
+      activityCount: slowActivityCount,
+      durationMs: parallelActivityDurationMs,
+      delayMs: 0,
+    }),
+  ]);
+
+  if (iterations) {
+    await workflow.continueAsNew<typeof BatchedContinueAsNewWorkflow>(
+      amount,
+      iterations - 1,
+      activitiesPerRun,
+      activityDurationMs,
+      delayBetweenActivitiesMs,
+      parallelActivityDurationMs,
+    );
+  }
+
+  return result;
 }
 
 export async function RunningWorkflow(): Promise<void> {

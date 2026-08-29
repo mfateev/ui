@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import { onMount, setContext, untrack } from 'svelte';
 
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
 
   import WorkflowError from '$lib/components/workflow/workflow-error.svelte';
@@ -9,24 +10,45 @@
     HISTORY_CTX,
     type HistoryContext,
   } from '$lib/contexts/history-context';
+  import {
+    WORKFLOW_RUN_CTX,
+    type WorkflowRunContext,
+  } from '$lib/contexts/workflow-run-context';
+  import Button from '$lib/holocene/button.svelte';
   import CopyButton from '$lib/holocene/copyable/button.svelte';
   import SkeletonWorkflow from '$lib/holocene/skeleton/workflow.svelte';
   import { translate } from '$lib/i18n/translate';
   import WorkflowHeader from '$lib/layouts/workflow-header.svelte';
-  import { throttleRefresh } from '$lib/services/events-service';
+  import {
+    type ChainTransition,
+    type ChainTruncationState,
+    getPredecessorFromEvents,
+    getSuccessorFromEvents,
+    limitRetainedRuns,
+    type RetainedTimelineRun,
+    retainRunsWithinWindow,
+    toTimelineGroups,
+  } from '$lib/services/chain-workflow-session';
+  import {
+    fetchPartialRawEvents,
+    throttleRefresh,
+  } from '$lib/services/events-service';
   import type { PauseHandle } from '$lib/services/fetch-bidirectional';
   import { fetchBidirectional } from '$lib/services/fetch-bidirectional';
   import {
     appendLiveEvent,
-    enrichGroups,
+    createGroupedEventBuffer,
     getEventArray,
-    processEvent,
-    reset as resetBuffer,
+    getGroupArray,
+    replaceActiveBuffer,
   } from '$lib/services/grouped-event-buffer';
   import { runLivePoll } from '$lib/services/live-poll';
   import { getPollers } from '$lib/services/pollers-service';
   import { getWorkflowMetadata } from '$lib/services/query-service';
-  import { fetchWorkflow } from '$lib/services/workflow-service';
+  import {
+    fetchLatestWorkflowExecutionIdentity,
+    fetchWorkflow,
+  } from '$lib/services/workflow-service';
   import { resetLastDataEncoderSuccess } from '$lib/stores/data-encoder-config';
   import { eventFilterSort, type EventSortOrder } from '$lib/stores/event-view';
   import {
@@ -46,6 +68,10 @@
   import { copyToClipboard } from '$lib/utilities/copy-to-clipboard';
   import { decodePayloadAndParseDataToJSON } from '$lib/utilities/decode-payload';
   import { stringifyWithBigInt } from '$lib/utilities/parse-with-big-int';
+  import {
+    FOLLOW_CONTINUES_PARAM,
+    isFollowingContinues,
+  } from '$lib/utilities/route-for';
   import { routeForApi } from '$lib/utilities/route-for-api';
 
   interface Props {
@@ -57,7 +83,21 @@
 
   let namespace = $derived(page.params.namespace);
   let workflowId = $derived(page.params.workflow);
-  let runId = $derived(page.params.run);
+  let chainRunId = $derived(page.params.run);
+  let requestedFollowing = $derived(isFollowingContinues(page.url));
+  let routeSessionKey = $derived(
+    `${namespace}|${workflowId}|${chainRunId}|${requestedFollowing}`,
+  );
+  let activeRunId = $state('');
+  let loadingRunId = $state('');
+  let activeBufferRunId = $state('');
+  let following = $state(false);
+  let staging = $state(false);
+  let retainedRuns = $state.raw<RetainedTimelineRun[]>([]);
+  let truncation = $state<ChainTruncationState | null>(null);
+  let pendingRetainedRun: RetainedTimelineRun | null = null;
+  let backfillSourceRunId = '';
+  let loadGeneration = 0;
   let showJson = $derived(page.url.searchParams.has('json'));
   let fullJson = $derived.by(() => {
     $bufferVersion;
@@ -106,6 +146,91 @@
 
   setContext(HISTORY_CTX, ctx);
 
+  const navigateWorkflowMode = async (runId: string, follow: boolean) => {
+    const url = new URL(page.url);
+    const segments = url.pathname.split('/');
+    const workflowsIndex = segments.lastIndexOf('workflows');
+    if (workflowsIndex >= 0 && segments.length > workflowsIndex + 2) {
+      segments[workflowsIndex + 2] = encodeURIComponent(runId);
+      url.pathname = segments.join('/');
+    }
+    if (follow) url.searchParams.set(FOLLOW_CONTINUES_PARAM, 'on');
+    else url.searchParams.delete(FOLLOW_CONTINUES_PARAM);
+    await goto(`${url.pathname}${url.search}`, { replaceState: true });
+  };
+
+  const workflowRunCtx: WorkflowRunContext = {
+    get chainRunId() {
+      return chainRunId;
+    },
+    get activeRunId() {
+      return activeRunId;
+    },
+    get activeBufferRunId() {
+      return activeBufferRunId;
+    },
+    get following() {
+      return following;
+    },
+    get staging() {
+      return staging;
+    },
+    get retainedRuns() {
+      return retainedRuns;
+    },
+    get truncation() {
+      return truncation;
+    },
+    pruneRetainedRuns(window) {
+      const pruned = retainRunsWithinWindow(retainedRuns, window);
+      const changed =
+        pruned.length !== retainedRuns.length ||
+        pruned.some(
+          (run, index) =>
+            run.runId !== retainedRuns[index]?.runId ||
+            run.groups.length !== retainedRuns[index]?.groups.length,
+        );
+      if (changed) retainedRuns = pruned;
+    },
+    async enableFollowing() {
+      const current = $workflowRun.workflow;
+      if (!current || (!current.isRunning && !current.isPaused)) return;
+      const { identity, error } = await fetchLatestWorkflowExecutionIdentity({
+        namespace,
+        workflowId,
+      });
+      if (error || !identity?.firstExecutionRunId) {
+        workflowError =
+          error ??
+          ({
+            message: 'Unable to resolve the workflow chain.',
+          } as NetworkError);
+        return;
+      }
+      await navigateWorkflowMode(identity.firstExecutionRunId, true);
+    },
+    async disableFollowing() {
+      staging = false;
+      pendingRetainedRun = null;
+      retainedRuns = [];
+      truncation = null;
+      await navigateWorkflowMode(activeRunId, false);
+    },
+    pinnedRunUrl() {
+      const url = new URL(page.url);
+      const segments = url.pathname.split('/');
+      const workflowsIndex = segments.lastIndexOf('workflows');
+      if (workflowsIndex >= 0 && segments.length > workflowsIndex + 2) {
+        segments[workflowsIndex + 2] = encodeURIComponent(activeRunId);
+        url.pathname = segments.join('/');
+      }
+      url.searchParams.delete(FOLLOW_CONTINUES_PARAM);
+      return `${url.pathname}${url.search}`;
+    },
+  };
+
+  setContext(WORKFLOW_RUN_CTX, workflowRunCtx);
+
   const { copy, copied } = copyToClipboard();
 
   const handleCopy = (e: Event) => {
@@ -131,11 +256,10 @@
           userMetadata.details = decodedDetails;
         }
       }
-
-      $workflowRun = { ...$workflowRun, userMetadata };
     } catch (e) {
       console.error('Error decoding user metadata', e);
     }
+    return userMetadata;
   };
 
   const startLivePoll = (
@@ -166,70 +290,139 @@
     });
   };
 
+  const cancelStagedRun = (runId: string): boolean => {
+    if (pendingRetainedRun?.successorRunId !== runId) return false;
+    const sourceRunId = pendingRetainedRun.runId;
+    pendingRetainedRun = null;
+    staging = false;
+    loadingRunId = sourceRunId;
+    return true;
+  };
+
   const getWorkflowAndEventHistory = async (
     ns: string,
     wfId: string,
     rId: string,
   ) => {
+    const generation = ++loadGeneration;
     const { workflow, error } = await fetchWorkflow({
       namespace: ns,
       workflowId: wfId,
       runId: rId,
     });
 
+    if (generation !== loadGeneration || rId !== loadingRunId) return;
+
     if (error) {
-      workflowError = error;
+      if (!cancelStagedRun(rId)) workflowError = error;
       return;
     }
 
     if (!workflow) return;
 
-    await decodeWorkflowUserMetadata(workflow);
+    const userMetadata = await decodeWorkflowUserMetadata(workflow);
 
     const { taskQueue } = workflow;
     const workers = await getPollers({ queue: taskQueue!, namespace: ns });
 
-    $workflowRun = { ...$workflowRun, workflow, workers, workersLoaded: true };
+    if (generation !== loadGeneration || rId !== loadingRunId) return;
 
-    workflowRunController = new AbortController();
-
-    if (workflow.isRunning && workers?.pollers?.length) {
-      getWorkflowMetadata(
-        { namespace: ns, workflow: { id: wfId, runId: rId } },
-        workflowRunController.signal,
-      ).then((metadata) => {
-        $workflowRun.metadata = metadata;
-      });
-    }
+    const stagingController = new AbortController();
+    const nextBuffer = createGroupedEventBuffer();
 
     const historySize = parseInt(workflow.historyEvents ?? '0') || 0;
-    resetBuffer(historySize);
-    fetchComplete = false;
-    _pauseHandle = null;
+    nextBuffer.reset(historySize);
+    let committed = false;
+    let stagedChainRunId = workflow.firstExecutionRunId;
+    let stagedLatestEventId = 0;
+    let stagedTotalExpectedEvents = 0;
+    let stagedDescMinId = 0;
 
-    // Start live poll immediately — concurrent with the bidirectional fetch.
-    // Any events that arrive while the fetch is in progress are captured right
-    // away rather than waiting for the full history to load first.
-    // appendLiveEvent deduplicates events that the bidirectional fetch also
-    // delivers; getEventArray() filters the live side at read time for safety.
-    // Skip if the user has already paused auto-refresh — the pause $effect
-    // will restart from _lastPollToken when they unpause.
-    if (workflow.isRunning && !$pauseLiveUpdates) {
-      startLivePoll(ns, wfId, rId, '');
-    }
+    const commitStagedRun = () => {
+      if (committed) return true;
+      if (generation !== loadGeneration || rId !== loadingRunId) {
+        stagingController.abort();
+        return false;
+      }
+      if (following && pendingRetainedRun && stagedChainRunId !== chainRunId) {
+        const sourceRunId = pendingRetainedRun.runId;
+        pendingRetainedRun = null;
+        staging = false;
+        loadingRunId = sourceRunId;
+        stagingController.abort();
+        workflowError = {
+          message: 'The next run does not belong to this workflow chain.',
+        } as NetworkError;
+        return false;
+      }
+      abortAll();
+      workflowRunController = stagingController;
+      replaceActiveBuffer(nextBuffer);
+      activeBufferRunId = rId;
+      latestEventId = stagedLatestEventId;
+      totalExpectedEvents = stagedTotalExpectedEvents;
+      descMinId = stagedDescMinId;
+      fetchComplete = false;
+      _pauseHandle = null;
+      $workflowRun = {
+        ...initialWorkflowRun,
+        workflow,
+        workers,
+        workersLoaded: true,
+        userMetadata,
+      };
+      activeRunId = rId;
+      if (pendingRetainedRun?.successorRunId === rId) {
+        const limited = limitRetainedRuns([
+          ...retainedRuns,
+          pendingRetainedRun,
+        ]);
+        retainedRuns = limited.runs;
+        truncation = limited.truncation ?? truncation;
+        pendingRetainedRun = null;
+      }
+      $fullEventHistory = nextBuffer.getEventArray();
+      $bufferVersion += 1;
+      committed = true;
+      staging = false;
+
+      if (following && retainedRuns.length === 0) {
+        void backfillPredecessors(rId, nextBuffer.getEventArray(), generation);
+      }
+
+      if (workflow.isRunning && !$pauseLiveUpdates) {
+        startLivePoll(ns, wfId, rId, '');
+      }
+      if (workflow.isRunning && workers?.pollers?.length) {
+        getWorkflowMetadata(
+          { namespace: ns, workflow: { id: wfId, runId: rId } },
+          stagingController.signal,
+        ).then((metadata) => {
+          if (
+            generation === loadGeneration &&
+            rId === activeRunId &&
+            rId === activeBufferRunId
+          ) {
+            $workflowRun.metadata = metadata;
+          }
+        });
+      }
+      return true;
+    };
 
     fetchBidirectional({
       namespace: ns,
       workflowId: wfId,
       runId: rId,
-      signal: workflowRunController.signal,
+      signal: stagingController.signal,
       maximumPageSize: 1000,
       pauseAfterPages: 2,
       onProgress: (p) => {
-        if (p.totalEstimated) totalExpectedEvents = p.totalEstimated;
-        if (p.descMinId) descMinId = p.descMinId;
+        if (p.totalEstimated) stagedTotalExpectedEvents = p.totalEstimated;
+        if (p.descMinId) stagedDescMinId = p.descMinId;
       },
       onPause: (handle) => {
+        if (!commitStagedRun()) return;
         if (_resumeRequested) {
           _resumeRequested = false;
           handle.resume();
@@ -239,24 +432,50 @@
       },
       onRawPage: (events, isAscending) => {
         for (const event of events) {
-          processEvent(event, isAscending);
+          if (isAscending && event.eventType === 'WorkflowExecutionStarted') {
+            const firstExecutionRunId =
+              event.workflowExecutionStartedEventAttributes
+                ?.firstExecutionRunId;
+            if (typeof firstExecutionRunId === 'string') {
+              stagedChainRunId = firstExecutionRunId;
+            }
+          }
+          nextBuffer.processEvent(event, isAscending);
           const id = parseInt(event.eventId);
-          if (id > latestEventId) latestEventId = id;
+          if (id > stagedLatestEventId) stagedLatestEventId = id;
         }
-        if (events.length) bufferVersion.update((v) => v + 1);
+        if (events.length && committed) {
+          latestEventId = stagedLatestEventId;
+          bufferVersion.update((v) => v + 1);
+        }
       },
     })
       .then(() => {
-        enrichGroups(
-          $workflowRun.workflow?.pendingActivities ?? [],
-          $workflowRun.workflow?.pendingNexusOperations ?? [],
+        if (!commitStagedRun()) return;
+        nextBuffer.enrichGroups(
+          workflow.pendingActivities ?? [],
+          workflow.pendingNexusOperations ?? [],
         );
         fetchComplete = true;
         bufferVersion.update((v) => v + 1);
+        if (following && retainedRuns.length === 0) {
+          void backfillPredecessors(
+            rId,
+            nextBuffer.getEventArray(),
+            generation,
+          );
+        }
       })
       .catch((e: unknown) => {
-        if (e instanceof Error && e.name !== 'AbortError') {
-          workflowError = { message: e.message } as NetworkError;
+        if (
+          generation === loadGeneration &&
+          rId === loadingRunId &&
+          e instanceof Error &&
+          e.name !== 'AbortError'
+        ) {
+          if (!cancelStagedRun(rId)) {
+            workflowError = { message: e.message } as NetworkError;
+          }
         }
       });
   };
@@ -270,16 +489,195 @@
       (refreshAction.action || (!pause && $workflowRun?.workflow?.isRunning));
 
     if (shouldFetch) {
+      const refreshGeneration = loadGeneration;
+      const refreshRunId = activeRunId;
+      if (!refreshRunId || refreshRunId !== activeBufferRunId) return;
       const { workflow, error } = await fetchWorkflow({
         namespace,
         workflowId,
-        runId,
+        runId: refreshRunId,
       });
+      if (
+        refreshGeneration !== loadGeneration ||
+        refreshRunId !== activeRunId ||
+        refreshRunId !== activeBufferRunId
+      ) {
+        return;
+      }
       if (error) {
         workflowError = error;
         return;
       }
+      if (workflow && workflow.runId !== refreshRunId) return;
       $workflowRun.workflow = workflow ?? null;
+
+      if (
+        following &&
+        !pause &&
+        workflow &&
+        !workflow.isRunning &&
+        !workflow.isPaused
+      ) {
+        await stageNextRun();
+      }
+    }
+  };
+
+  const stageNextRun = async (
+    successorRunId?: string,
+    transitionFromPrevious?: ChainTransition,
+    transitionTimeMs?: number,
+  ) => {
+    if (staging || !following || $pauseLiveUpdates) return;
+    staging = true;
+    const sourceRunId = activeRunId;
+    let sourceWorkflow = $workflowRun.workflow;
+    if (!sourceWorkflow || sourceWorkflow.runId !== sourceRunId) {
+      staging = false;
+      return;
+    }
+
+    const refreshedSource = await fetchWorkflow({
+      namespace,
+      workflowId,
+      runId: sourceRunId,
+    });
+    if (!following || activeRunId !== sourceRunId) {
+      staging = false;
+      return;
+    }
+    if (refreshedSource.workflow) sourceWorkflow = refreshedSource.workflow;
+
+    let nextRunId = successorRunId;
+    if (!nextRunId) {
+      const { identity: latest, error } =
+        await fetchLatestWorkflowExecutionIdentity({
+          namespace,
+          workflowId,
+        });
+      if (
+        error ||
+        !latest ||
+        latest.runId === sourceRunId ||
+        latest.firstExecutionRunId !== chainRunId
+      ) {
+        staging = false;
+        return;
+      }
+      nextRunId = latest.runId;
+    }
+
+    if (
+      !following ||
+      activeRunId !== sourceRunId ||
+      !nextRunId ||
+      nextRunId === sourceRunId
+    ) {
+      staging = false;
+      return;
+    }
+
+    const retained: RetainedTimelineRun = {
+      runId: sourceWorkflow.runId,
+      status: sourceWorkflow.status,
+      startTimeMs: Date.parse(sourceWorkflow.startTime),
+      endTimeMs:
+        transitionTimeMs || Date.parse(sourceWorkflow.endTime) || Date.now(),
+      groups: toTimelineGroups(
+        sourceWorkflow.runId,
+        getGroupArray({ excludeWorkflowTasks: true }),
+      ),
+      successorRunId: nextRunId,
+      transitionFromPrevious,
+    };
+    pendingRetainedRun = retained;
+
+    loadingRunId = nextRunId;
+  };
+
+  const backfillPredecessors = async (
+    sourceRunId: string,
+    sourceEvents: ReturnType<typeof getEventArray>,
+    generation: number,
+  ) => {
+    let successorRunId = sourceRunId;
+    let predecessorRunId = getPredecessorFromEvents(sourceEvents);
+    if (!predecessorRunId || backfillSourceRunId === sourceRunId) return;
+    backfillSourceRunId = sourceRunId;
+    const backfilled: RetainedTimelineRun[] = [];
+
+    for (let hop = 0; predecessorRunId && hop < 5; hop += 1) {
+      if (
+        !following ||
+        activeRunId !== sourceRunId ||
+        generation !== loadGeneration
+      ) {
+        return;
+      }
+
+      const runId = predecessorRunId;
+      const [{ workflow }, ascending, descending] = await Promise.all([
+        fetchWorkflow({ namespace, workflowId, runId }),
+        fetchPartialRawEvents({
+          namespace,
+          workflowId,
+          runId,
+          sort: 'ascending',
+          maximumPageSize: '1000',
+        }),
+        fetchPartialRawEvents({
+          namespace,
+          workflowId,
+          runId,
+          sort: 'descending',
+          maximumPageSize: '1000',
+        }),
+      ]);
+
+      if (
+        !workflow ||
+        (workflow.firstExecutionRunId &&
+          workflow.firstExecutionRunId !== chainRunId)
+      ) {
+        break;
+      }
+
+      const buffer = createGroupedEventBuffer();
+      buffer.reset(parseInt(workflow.historyEvents ?? '0') || 0);
+      for (const event of ascending) buffer.processEvent(event, true);
+      for (const event of descending) buffer.processEvent(event, false);
+      const events = buffer.getEventArray();
+      const startedAttributes = events.find(
+        (event) => event.eventType === 'WorkflowExecutionStarted',
+      )?.attributes as Record<string, unknown> | undefined;
+      const reportedChainId = startedAttributes?.firstExecutionRunId;
+      if (reportedChainId !== chainRunId) break;
+
+      predecessorRunId = getPredecessorFromEvents(events);
+      backfilled.unshift({
+        runId,
+        status: workflow.status,
+        startTimeMs: Date.parse(workflow.startTime),
+        endTimeMs: Date.parse(workflow.endTime) || Date.now(),
+        groups: toTimelineGroups(
+          runId,
+          buffer.getGroupArray({ excludeWorkflowTasks: true }),
+        ),
+        predecessorRunId: predecessorRunId ?? undefined,
+        successorRunId,
+      });
+      successorRunId = runId;
+    }
+
+    if (
+      backfilled.length &&
+      following &&
+      activeRunId === sourceRunId &&
+      generation === loadGeneration
+    ) {
+      const limited = limitRetainedRuns([...backfilled, ...retainedRuns]);
+      retainedRuns = limited.runs;
+      truncation = limited.truncation ?? truncation;
     }
   };
 
@@ -294,10 +692,21 @@
     untrack(() => {
       const events = getEventArray();
       $fullEventHistory = events;
+      if (following && !$pauseLiveUpdates && !staging) {
+        const successor = getSuccessorFromEvents(events);
+        if (successor) {
+          void stageNextRun(
+            successor.runId,
+            successor.transition,
+            successor.timeMs,
+          );
+        }
+      }
     });
   });
 
   const clearWorkflowData = () => {
+    loadGeneration += 1;
     $timelineEvents = null;
     $workflowRun = initialWorkflowRun;
     $fullEventHistory = [];
@@ -311,6 +720,11 @@
     _resumeRequested = false;
     _lastPollToken = '';
     _pollPaused = false;
+    staging = false;
+    pendingRetainedRun = null;
+    loadingRunId = '';
+    activeBufferRunId = '';
+    backfillSourceRunId = '';
     abortAll();
     resetLastDataEncoderSuccess();
     if (refreshInterval) clearInterval(refreshInterval);
@@ -318,16 +732,83 @@
   };
 
   $effect(() => {
-    runId;
+    routeSessionKey;
+    const ns = namespace;
+    const wfId = workflowId;
+    const canonicalRunId = chainRunId;
+    const shouldFollow = requestedFollowing;
     untrack(() => {
       clearWorkflowData();
+      const generation = loadGeneration;
+      retainedRuns = [];
+      truncation = null;
+      following = shouldFollow;
+      if (!shouldFollow) {
+        activeRunId = canonicalRunId;
+        loadingRunId = canonicalRunId;
+        return;
+      }
+
+      const resolveFollowingRoute = async () => {
+        const { workflow: routedWorkflow, error: routedError } =
+          await fetchWorkflow({
+            namespace: ns,
+            workflowId: wfId,
+            runId: canonicalRunId,
+          });
+        if (generation !== loadGeneration) return;
+        if (routedError || !routedWorkflow) {
+          workflowError =
+            routedError ??
+            ({
+              message: 'Unable to resolve the workflow run.',
+            } as NetworkError);
+          return;
+        }
+
+        const routedFirstRunId = routedWorkflow.firstExecutionRunId;
+        if (routedFirstRunId && routedFirstRunId !== canonicalRunId) {
+          await navigateWorkflowMode(routedFirstRunId, true);
+          return;
+        }
+
+        const { identity, error } = await fetchLatestWorkflowExecutionIdentity({
+          namespace: ns,
+          workflowId: wfId,
+        });
+        if (generation !== loadGeneration) return;
+
+        if (
+          !routedFirstRunId &&
+          identity?.runId === canonicalRunId &&
+          identity.firstExecutionRunId !== canonicalRunId
+        ) {
+          await navigateWorkflowMode(identity.firstExecutionRunId, true);
+          return;
+        }
+
+        if (error || identity?.firstExecutionRunId !== canonicalRunId) {
+          workflowError =
+            error ??
+            ({
+              message:
+                'This URL does not identify the latest workflow execution chain.',
+            } as NetworkError);
+          return;
+        }
+        activeRunId = identity.runId;
+        loadingRunId = identity.runId;
+      };
+
+      void resolveFollowingRoute();
     });
   });
 
   $effect(() => {
     const ns = namespace;
     const wfId = workflowId;
-    const rId = runId;
+    const rId = loadingRunId;
+    if (!rId) return;
     untrack(() => {
       getWorkflowAndEventHistory(ns, wfId, rId);
     });
@@ -353,7 +834,7 @@
         livePollingController = null;
       } else if (!paused && _pollPaused && $workflowRun.workflow?.isRunning) {
         _pollPaused = false;
-        startLivePoll(namespace, workflowId, runId, _lastPollToken);
+        startLivePoll(namespace, workflowId, activeRunId, _lastPollToken);
       }
     });
   });
@@ -386,6 +867,14 @@
   </div>
 {:else if workflowError}
   <WorkflowError error={workflowError} />
+  {#if following}
+    <Button
+      variant="secondary"
+      onclick={() => workflowRunCtx.disableFollowing()}
+    >
+      {translate('workflows.open-pinned-run')}
+    </Button>
+  {/if}
 {:else if !$workflowRun.workflow}
   <SkeletonWorkflow />
 {:else}

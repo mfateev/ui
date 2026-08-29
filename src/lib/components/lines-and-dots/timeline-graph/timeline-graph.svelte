@@ -4,6 +4,11 @@
   import { timestamp } from '$lib/components/timestamp.svelte';
   import { translate } from '$lib/i18n/translate';
   import type { EventGroups } from '$lib/models/event-groups/event-groups';
+  import {
+    type ChainRetentionWindow,
+    getChainRetentionWindow,
+    type TimelineRun,
+  } from '$lib/services/chain-workflow-session';
   import { activeGroups, clearActiveGroups } from '$lib/stores/active-events';
   import { collapseIdleTime } from '$lib/stores/event-view';
   import { fullEventHistory, pauseLiveUpdates } from '$lib/stores/events';
@@ -40,7 +45,10 @@
   import TimelineCollapsedLayer from './timeline-collapsed-layer.svelte';
   import TimelineGraphRow from './timeline-graph-row.svelte';
   import TimelineIconDefs from './timeline-icon-defs.svelte';
-  import { TimelineScale } from './timeline-scale.svelte';
+  import {
+    DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS,
+    TimelineScale,
+  } from './timeline-scale.svelte';
   import { Timeline } from './timeline.svelte';
   import { Viewport } from './viewport.svelte';
   import WorkflowRow from './workflow-row.svelte';
@@ -57,6 +65,9 @@
     panelHeight?: number;
     displayMode?: TimelineDisplayMode;
     onTimelineInit?: (timeline: Timeline) => void;
+    timelineRuns?: TimelineRun[];
+    onRetentionWindow?: (window: ChainRetentionWindow) => void;
+    rowHeightRetentionScopeId?: string;
   }
 
   let {
@@ -71,7 +82,67 @@
     panelHeight = $bindable(0),
     displayMode = DEFAULT_TIMELINE_DISPLAY_MODE,
     onTimelineInit,
+    timelineRuns = [],
+    onRetentionWindow,
+    rowHeightRetentionScopeId,
   }: Props = $props();
+
+  let nowMs = $state(Date.now());
+
+  const workflowRuns = $derived(
+    timelineRuns.length
+      ? timelineRuns
+      : [
+          {
+            runId: workflow.runId,
+            status: workflow.status,
+            startTimeMs: Date.parse(workflow.startTime),
+            endTimeMs: workflow.endTime ? Date.parse(workflow.endTime) : nowMs,
+            groups: [],
+            active: true,
+          },
+        ],
+  );
+
+  const timelineGroupEntries = $derived(
+    timelineRuns.length
+      ? timelineRuns.flatMap((run) =>
+          run.groups.map((entry) => ({
+            ...entry,
+            active: run.active,
+            runEndTimeMs: run.endTimeMs,
+          })),
+        )
+      : groups.map((group) => ({
+          timelineKey: `${workflow.runId}:${group.id}`,
+          runId: workflow.runId,
+          group,
+          active: true,
+          runEndTimeMs: nowMs,
+        })),
+  );
+  const renderedGroups = $derived(
+    timelineGroupEntries.map((entry) => entry.group),
+  );
+  const timelineKeys = $derived(
+    new Map(
+      timelineGroupEntries.map((entry) => [entry.group, entry.timelineKey]),
+    ),
+  );
+  const timelineEntryByGroup = $derived(
+    new Map(timelineGroupEntries.map((entry) => [entry.group, entry])),
+  );
+  const getRetainedEndTimeMs = (
+    group: EventGroups[number],
+  ): number | undefined => {
+    const entry = timelineEntryByGroup.get(group);
+    return entry && !entry.active && group.isPending
+      ? entry.runEndTimeMs
+      : undefined;
+  };
+  const getTimelineKey = (group: EventGroups[number]): string =>
+    timelineKeys.get(group) ?? `${workflow.runId}:${group.id}`;
+  const timelineLoading = $derived(loading);
 
   // Dot geometry, published as CSS vars on .canvas (consumed by every row's dot).
   const dotSize = 2 * RADIUS + DOT_STROKE;
@@ -109,15 +180,26 @@
 
   const timelineWidth = $derived(canvasWidth - 2 * GUTTER);
 
-  let nowMs = $state(Date.now());
-
   const timeline = new Timeline({
     getFullEventHistory: () => $fullEventHistory,
     getWorkflow: () => workflow,
-    getEventGroups: () => groups,
+    getEventGroups: () => renderedGroups,
+    getEventGroupEndMs: (group) => getRetainedEndTimeMs(group),
     getCurrentTimeMs: () => nowMs,
-    getLoading: () => loading,
+    getLoading: () => timelineLoading,
     getShouldCollapseByDefault: () => $collapseIdleTime === 'on',
+    getStartTimeMs: () => {
+      const chainStartTimeMs = workflowRuns[0]?.startTimeMs;
+      if (
+        displayMode !== 'fixed-window' ||
+        (!workflow.isRunning && !workflow.isPaused)
+      ) {
+        return chainStartTimeMs;
+      }
+      const windowStartTimeMs =
+        nowMs - DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS;
+      return Math.min(chainStartTimeMs ?? windowStartTimeMs, windowStartTimeMs);
+    },
   });
 
   const collapsedSegmentCount = $derived(
@@ -168,6 +250,21 @@
       totalWorldWidthPx: scale.totalWorldWidthPx,
       anchoredOffsetPx,
     });
+    if (displayMode === 'fixed-window' && timelineRuns.length) {
+      const window = getChainRetentionWindow({
+        viewport: {
+          widthPx: viewport.widthPx,
+          offsetPx: viewport.offsetPx,
+          expandedDurationPerViewportMs: durationPerViewportMs,
+          overscanViewports: 1,
+          followingLiveEdge: viewport.isFollowing,
+          anchorTimeMs: frozenAnchorTimeMs ?? undefined,
+          hasMeasuredGeometry: viewport.widthPx > 0,
+        },
+        unprojectWorldPx: (worldPx) => scale.unproject(worldPx),
+      });
+      if (window) onRetentionWindow?.(window);
+    }
   });
 
   $effect(() => {
@@ -202,12 +299,17 @@
 
     let animationFrame = 0;
     const renderFrame = (frameTimeMs: number) => {
+      // Two seconds of normal clock motion may be preserved. Anything larger
+      // is a coordinate-system rebase (handoff, backfill, or retention prune)
+      // and must snap rather than becoming a long-lived visual offset.
+      const snapThresholdPx = Math.max(scale.liveEdgePxPerMs * 2_000, 1);
       const frameOffsetPx = viewportMotion.nextFrame({
         nowMs: frameTimeMs,
         committedOffsetPx: viewport.offsetPx,
         expandedPxPerMs: scale.liveEdgePxPerMs,
         animate: viewport.offsetPx > 0,
         freeze: false,
+        snapThresholdPx,
       });
       const liveEdgeExtensionPx = liveEdgeMotion.nextFrame({
         nowMs: frameTimeMs,
@@ -215,6 +317,7 @@
         expandedPxPerMs: scale.liveEdgePxPerMs,
         animate: true,
         freeze: false,
+        snapThresholdPx,
       });
       element.style.setProperty(
         '--timeline-frame-offset',
@@ -250,7 +353,7 @@
   };
 
   const filteredGroups = $derived(
-    getFailedOrPendingGroups(groups, $eventStatusFilter),
+    getFailedOrPendingGroups(renderedGroups, $eventStatusFilter),
   );
 
   const visibleGroups = $derived(
@@ -260,6 +363,7 @@
           timelineGroupIntersectsViewport({
             group,
             currentTimeMs: nowMs,
+            retainedEndTimeMs: getRetainedEndTimeMs(group),
             project: (timeMs) => scale.project(timeMs),
             visibleRange: viewport.visibleRange,
           }),
@@ -267,7 +371,7 @@
   );
 
   const visibleGroupIds = $derived(
-    new Set(visibleGroups.map((group) => group.id)),
+    new Set(visibleGroups.map((group) => getTimelineKey(group))),
   );
 
   let observedRunId: string | undefined;
@@ -277,13 +381,23 @@
 
   $effect(() => {
     const currentRunId = workflow.runId;
-    const currentGroupIds = groups.map((group) => group.id);
+    const currentGroupIds = renderedGroups.map((group) =>
+      getTimelineKey(group),
+    );
 
     if (observedRunId === undefined || currentRunId !== observedRunId) {
       observedRunId = currentRunId;
       knownGroupIds = new Set(currentGroupIds);
       hasSeenInitialGroups = currentGroupIds.length > 0;
       rowStackEntryOffsetPx = 0;
+      // A handoff can rebase the retained timeline's world coordinates. The
+      // compositor offsets are only valid within one coordinate basis; carrying
+      // them into the successor adds the old translation a second time and
+      // makes every run boundary jump left.
+      viewportMotion.reset(viewport.offsetPx);
+      liveEdgeMotion.reset(scale.totalWorldWidthPx);
+      containerEl?.style.setProperty('--timeline-frame-offset', '0px');
+      containerEl?.style.setProperty('--timeline-live-edge-extension', '0px');
       return;
     }
 
@@ -321,14 +435,14 @@
         displayMode === 'fixed-window' &&
         (workflow.isRunning || workflow.isPaused),
       retentionDurationMs: durationPerViewportMs + TIMELINE_ROW_HEIGHT_GRACE_MS,
-      retentionKey: `${workflow.runId}:${$eventStatusFilter}:${$eventTypeFilter.join(',')}`,
+      retentionKey: `${rowHeightRetentionScopeId ?? workflow.runId}:${$eventStatusFilter}:${$eventTypeFilter.join(',')}`,
     }),
   );
 
   // Unfetched skeleton rows. totalExpectedEvents is already a density-adjusted
   // group count, so subtracting the loaded count is correct.
   const pendingGroupCount = $derived.by(() => {
-    if (!loading) return 0;
+    if (!timelineLoading) return 0;
     if (displayMode === 'fixed-window') {
       return visibleGroups.length === 0 && filteredGroups.length === 0
         ? Math.min(totalExpectedEvents || 50, 50)
@@ -447,7 +561,7 @@
   );
 
   const groupIndexMap = $derived(
-    new Map(visibleGroups.map((g, i) => [g.id, i])),
+    new Map(visibleGroups.map((g, i) => [getTimelineKey(g), i])),
   );
 
   // Active group's index in visibleGroups (-1 = none). Derived here so the row
@@ -480,7 +594,7 @@
   }
 
   const descStart = $derived(
-    getDescStart(visibleGroups, descMinId, loading, pendingGroupCount),
+    getDescStart(visibleGroups, descMinId, timelineLoading, pendingGroupCount),
   );
 
   const totalForY = $derived(
@@ -650,7 +764,9 @@
       focusedGroupId,
       focusedSlotIndex,
       visibleGroupIds,
-      slotGroupIds: pool.map((slot) => slot?.group.id ?? null),
+      slotGroupIds: pool.map((slot) =>
+        slot ? getTimelineKey(slot.group) : null,
+      ),
     });
 
     if (!moveFocus) return;
@@ -745,18 +861,25 @@
             viewportOffsetPx={viewport.offsetPx}
           />
           <div class="timeline-motion-layer absolute inset-0">
-            <WorkflowRow
-              {workflow}
-              y={ROW_HEIGHT}
-              {canvasWidth}
-              startWorldPx={scale.project(
-                timeline.workflowTimespan.startTimeMs,
-              )}
-              endWorldPx={scale.project(timeline.workflowTimespan.endTimeMs)}
-              viewportOffsetPx={viewport.offsetPx}
-            />
+            {#each workflowRuns as run (run.runId)}
+              <WorkflowRow
+                {workflow}
+                runId={run.runId}
+                status={run.status}
+                live={run.active && workflowIsLive}
+                y={ROW_HEIGHT}
+                {canvasWidth}
+                startWorldPx={scale.project(run.startTimeMs)}
+                endWorldPx={scale.project(
+                  run.active
+                    ? timeline.workflowTimespan.endTimeMs
+                    : run.endTimeMs,
+                )}
+                viewportOffsetPx={viewport.offsetPx}
+              />
+            {/each}
           </div>
-          {#if !loading}
+          {#if !timelineLoading}
             <!-- Anchor's left provides the gutter offset for the layer's 0-based coords. -->
             <div
               class="timeline-motion-layer absolute top-0"
@@ -797,18 +920,24 @@
                   ? `translateY(${getY(slot.index) - ROW_HEIGHT / 2 + shiftFor(slot.index)}px)`
                   : undefined}
                 onfocusin={() => {
-                  focusedGroupId = slot?.group.id ?? null;
+                  focusedGroupId = slot ? getTimelineKey(slot.group) : null;
                   focusedSlotIndex = slot ? slotIndex : null;
                 }}
               >
                 {#if slot}
+                  {@const timelineEntry = timelineEntryByGroup.get(slot.group)}
                   <div class="timeline-motion-layer absolute inset-0">
                     <TimelineGraphRow
                       group={slot.group}
+                      timelineKey={getTimelineKey(slot.group)}
                       eventCount={slot.group.eventList.length}
                       {canvasWidth}
                       project={projectX}
                       {readOnly}
+                      active={timelineEntry?.active ?? true}
+                      retainedEndTimeMs={timelineEntry?.active
+                        ? undefined
+                        : timelineEntry?.runEndTimeMs}
                     />
                   </div>
                 {/if}
@@ -817,7 +946,7 @@
           </ul>
         </div>
 
-        {#if loading && pendingGroupCount > 0}
+        {#if timelineLoading && pendingGroupCount > 0}
           {@const rectY = getPendingBlockY({
             descStart,
             filteredGroupsLength: visibleGroups.length,
@@ -837,12 +966,19 @@
         {#if !readOnly && activeIdx >= 0}
           {@const activeGroup = visibleGroups[activeIdx]}
           {#if activeGroup}
+            {@const activeTimelineEntry = timelineEntryByGroup.get(activeGroup)}
             {@const panelY = getY(activeIdx) + 1.33 * RADIUS}
             <GroupDetailsRow
               y={panelY}
               group={activeGroup}
+              timelineKey={getTimelineKey(activeGroup)}
               {canvasWidth}
-              endTime={workflow?.endTime ? endTime : nowMs}
+              endTime={activeTimelineEntry?.active === false
+                ? activeTimelineEntry.runEndTimeMs
+                : workflow?.endTime
+                  ? endTime
+                  : nowMs}
+              active={activeTimelineEntry?.active ?? true}
               onHeight={(height) => {
                 panelHeight = height;
               }}

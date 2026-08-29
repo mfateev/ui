@@ -28,6 +28,17 @@ const workflows = [
 ] as unknown as WorkflowExecutionAPIResponse[];
 
 describe('toWorkflowExecution', () => {
+  it('preserves the first run id exposed by describe', () => {
+    const response = {
+      workflowExecutionInfo: {
+        execution: { workflowId: 'workflow-id', runId: 'run-2' },
+        firstRunId: 'run-1',
+      },
+    } as WorkflowExecutionAPIResponse;
+
+    expect(toWorkflowExecution(response).firstExecutionRunId).toBe('run-1');
+  });
+
   for (const workflow of workflows) {
     it(`should match the snapshot for ${workflow.workflowExecutionInfo?.status} workflows`, () => {
       expect(toWorkflowExecution(workflow)).toMatchSnapshot();

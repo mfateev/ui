@@ -28,20 +28,102 @@ import {
   routeForNamespaces,
   routeForNexus,
   routeForPendingActivities,
+  routeForRelationships,
   routeForSchedule,
   routeForScheduleCreate,
   routeForSchedules,
   routeForTaskQueue,
+  routeForTimeline,
+  routeForUserMetadata,
   routeForWorkerDeploymentCreate,
   routeForWorkerDeploymentVersionCreate,
   routeForWorkerDeploymentVersionEdit,
+  routeForWorkflowMemo,
   routeForWorkflowQuery,
   routeForWorkflows,
+  routeForWorkflowSearchAttributes,
   routeForWorkflowsWithQuery,
   routeForWorkflowWorkers,
+  workflowModeQueryParams,
+  workflowRouteParameters,
 } from './route-for';
 
 describe('routeFor', () => {
+  it('builds canonical following parameters only from an open complete execution', () => {
+    expect(
+      workflowRouteParameters('default', {
+        id: 'workflow-id',
+        runId: 'run-2',
+        firstExecutionRunId: 'run-1',
+        isRunning: true,
+        isPaused: false,
+      } as never),
+    ).toEqual({
+      namespace: 'default',
+      workflow: 'workflow-id',
+      run: 'run-1',
+      queryParams: { follow_continues: 'on' },
+    });
+  });
+
+  it('marks open list records for resolution when chain identity is omitted', () => {
+    expect(
+      workflowRouteParameters('default', {
+        id: 'workflow-id',
+        runId: 'run-2',
+        isRunning: true,
+        isPaused: false,
+      } as never),
+    ).toEqual({
+      namespace: 'default',
+      workflow: 'workflow-id',
+      run: 'run-2',
+      queryParams: { follow_continues: 'on' },
+    });
+  });
+
+  it('keeps closed list records pinned', () => {
+    expect(
+      workflowRouteParameters('default', {
+        id: 'workflow-id',
+        runId: 'run-2',
+        firstExecutionRunId: 'run-1',
+        isRunning: false,
+        isPaused: false,
+      } as never),
+    ).toEqual({
+      namespace: 'default',
+      workflow: 'workflow-id',
+      run: 'run-2',
+      queryParams: {},
+    });
+  });
+
+  it('preserves following mode across every workflow tab route', () => {
+    const parameters = {
+      namespace: 'default',
+      workflow: 'workflow-id',
+      run: 'run-1',
+      queryParams: workflowModeQueryParams({ followContinues: true }),
+    };
+    const routes = [
+      routeForTimeline,
+      routeForEventHistory,
+      routeForRelationships,
+      routeForWorkflowWorkers,
+      routeForPendingActivities,
+      routeForCallStack,
+      routeForWorkflowQuery,
+      routeForUserMetadata,
+      routeForWorkflowSearchAttributes,
+      routeForWorkflowMemo,
+    ];
+
+    for (const route of routes) {
+      expect(route(parameters)).toContain('follow_continues=on');
+    }
+  });
+
   it('should route to "namespaces"', () => {
     const path = routeForNamespaces();
     expect(path).toBe(`${base}/namespaces`);

@@ -176,6 +176,7 @@ export function pathForApi(
     'workflow.pause': `/namespaces/${parameters?.namespace}/workflows/${parameters?.workflowId}/pause`,
     'workflow.unpause': `/namespaces/${parameters?.namespace}/workflows/${parameters?.workflowId}/unpause`,
     workflow: `/namespaces/${parameters?.namespace}/workflows/${parameters?.workflowId}`,
+    'workflow.latest-execution': `/namespaces/${parameters?.namespace}/workflows/${parameters?.workflowId}/latest-execution`,
     workflows: `/namespaces/${parameters?.namespace}/workflows`,
     'workflows.archived': `/namespaces/${parameters?.namespace}/archived-workflows`,
     'workflows.count': `/namespaces/${parameters?.namespace}/workflow-count`,

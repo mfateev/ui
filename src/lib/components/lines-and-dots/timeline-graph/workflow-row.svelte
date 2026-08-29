@@ -1,6 +1,7 @@
 <script lang="ts">
   import { translate } from '$lib/i18n/translate';
   import type { WorkflowExecution } from '$lib/types/workflows';
+  import type { WorkflowStatus } from '$lib/types/workflows';
   import { isWorkflowDelayed } from '$lib/utilities/delayed-workflows';
   import { getWorkflowStatusLabel } from '$lib/utilities/get-status-label';
 
@@ -16,6 +17,9 @@
     startWorldPx: number;
     endWorldPx: number;
     viewportOffsetPx: number;
+    runId?: string;
+    status?: WorkflowStatus;
+    live?: boolean;
   }
 
   let {
@@ -25,6 +29,9 @@
     startWorldPx,
     endWorldPx,
     viewportOffsetPx,
+    runId = workflow.runId,
+    status = workflow.status,
+    live = workflow.isRunning || workflow.isPaused,
   }: Props = $props();
 
   const centerY = ROW_HEIGHT / 2;
@@ -48,17 +55,18 @@
   );
   const color = $derived(
     strokeColor({
-      status: workflow.status,
+      status,
       delayed: isWorkflowDelayed(workflow),
     }),
   );
-  const colors = $derived(dotColors(workflow.status));
-  const workflowIsLive = $derived(workflow.isRunning || workflow.isPaused);
+  const colors = $derived(dotColors(status));
+  const workflowIsLive = $derived(live);
 
   const accessibleName = $derived(
-    translate('workflows.row-accessible-name', {
+    translate('workflows.chain-row-accessible-name', {
       workflowId: workflow.id,
-      status: getWorkflowStatusLabel(workflow.status),
+      runId,
+      status: getWorkflowStatusLabel(status),
     }),
   );
 </script>
@@ -68,6 +76,7 @@
 <div
   role="img"
   aria-label={accessibleName}
+  title={runId}
   class="pointer-events-none absolute inset-x-0 outline-none"
   style:top="{y - centerY}px"
   style:height="{ROW_HEIGHT}px"
@@ -87,8 +96,18 @@
       style:--tl-line-color={color}
       style:--tl-live-committed-width="{lineBounds.width}px"
     ></div>
+    {#if lineBounds.width >= 160}
+      <span
+        class="absolute max-w-36 -translate-x-1/2 truncate rounded bg-primary/80 px-1 font-mono text-xs text-secondary"
+        style:left={`${lineBounds.left + lineBounds.width / 2}px`}
+        style:top={`${centerY - 22}px`}
+        title={runId}
+      >
+        {runId}
+      </span>
+    {/if}
   {/if}
-  {#each [geometry.startDotPx, geometry.endDotPx].filter((point) => point !== null) as pointX (pointX)}
+  {#each [geometry.startDotPx, geometry.endDotPx].filter((point) => point !== null) as pointX, pointIndex (pointIndex)}
     {@const dotBounds = dotBox(pointX, centerY)}
     <div
       class="absolute h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"

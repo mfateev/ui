@@ -2,6 +2,7 @@
   import { fly } from 'svelte/transition';
 
   import type { Snippet } from 'svelte';
+  import { getContext } from 'svelte';
 
   import { page } from '$app/state';
 
@@ -14,14 +15,20 @@
   import WorkflowDetails from '$lib/components/lines-and-dots/workflow-details.svelte';
   import NoWorkersPollingAlert from '$lib/components/workers/no-workers-polling-alert.svelte';
   import WorkflowActions from '$lib/components/workflow-actions.svelte';
+  import {
+    WORKFLOW_RUN_CTX,
+    type WorkflowRunContext,
+  } from '$lib/contexts/workflow-run-context';
   import Alert from '$lib/holocene/alert.svelte';
   import Badge from '$lib/holocene/badge.svelte';
+  import Button from '$lib/holocene/button.svelte';
   import Copyable from '$lib/holocene/copyable/index.svelte';
   import Icon from '$lib/holocene/icon/icon.svelte';
   import Link from '$lib/holocene/link.svelte';
   import TabList from '$lib/holocene/tab/tab-list.svelte';
   import Tab from '$lib/holocene/tab/tab.svelte';
   import Tabs from '$lib/holocene/tab/tabs.svelte';
+  import ToggleSwitch from '$lib/holocene/toggle-switch.svelte';
   import { translate } from '$lib/i18n/translate';
   import { getInboundNexusLinkEvents } from '$lib/runes/inbound-nexus-links.svelte';
   import { workflowViewPreference } from '$lib/stores/event-view';
@@ -30,6 +37,7 @@
   import { workflowRun } from '$lib/stores/workflow-run';
   import { workflowsSearchParams } from '$lib/stores/workflows';
   import { isCancelInProgress } from '$lib/utilities/cancel-in-progress';
+  import { copyToClipboard } from '$lib/utilities/copy-to-clipboard';
   import { isWorkflowDelayed } from '$lib/utilities/delayed-workflows';
   import { getSharedFilterParams } from '$lib/utilities/event-filter-params';
   import {
@@ -63,6 +71,8 @@
   } = $derived(page.params);
 
   let { headerSnippet }: { headerSnippet?: Snippet } = $props();
+  const workflowRunCtx = getContext<WorkflowRunContext>(WORKFLOW_RUN_CTX);
+  const { copy: copyPinnedRunUrl } = copyToClipboard();
 
   const { workflow } = $derived($workflowRun);
   const runningWithNoWorkers = $derived(isRunningWithNoWorkers($workflowRun));
@@ -73,6 +83,11 @@
     namespace,
     workflow: workflowId,
     run: runId,
+  });
+  const sharedFilterParams = $derived(getSharedFilterParams(page.url));
+  const routeParametersWithQuery = $derived({
+    ...routeParameters,
+    queryParams: sharedFilterParams,
   });
 
   const activitiesCanceled = $derived(
@@ -110,7 +125,6 @@
     getInboundNexusLinkEvents($fullEventHistory)?.length || 0,
   );
   const linkCount = $derived(outboundLinks + inboundLinks);
-  const sharedFilterParams = $derived(getSharedFilterParams(page.url));
 </script>
 
 <div class="flex items-center justify-between">
@@ -187,6 +201,39 @@
         next={workflowRelationships.next}
       />
     </div>
+  </div>
+  <div class="flex flex-wrap items-center gap-4">
+    <ToggleSwitch
+      id="follow-chained-runs"
+      label={translate('workflows.follow-chained-runs')}
+      checked={workflowRunCtx.following}
+      disabled={!workflow?.isRunning &&
+        !workflow?.isPaused &&
+        !workflowRunCtx.following}
+      onchange={() =>
+        workflowRunCtx.following
+          ? workflowRunCtx.disableFollowing()
+          : workflowRunCtx.enableFollowing()}
+      data-testid="follow-chained-runs"
+    />
+    {#if workflowRunCtx.following}
+      <Button
+        variant="secondary"
+        size="xs"
+        onclick={(event) =>
+          copyPinnedRunUrl(
+            event,
+            new URL(workflowRunCtx.pinnedRunUrl(), page.url).href,
+          )}
+      >
+        {translate('workflows.copy-pinned-run-link')}
+      </Button>
+    {/if}
+    <span class="sr-only" aria-live="polite">
+      {workflowRunCtx.staging
+        ? translate('workflows.waiting-for-next-run')
+        : ''}
+    </span>
   </div>
   <CodecServerErrorBanner />
   <WorkflowDetails workflow={workflow!} next={workflowRelationships.next} />
@@ -276,8 +323,7 @@
         label={translate('workflows.timeline-tab')}
         id="timeline-tab"
         href={routeForTimeline({
-          ...routeParameters,
-          queryParams: sharedFilterParams,
+          ...routeParametersWithQuery,
         })}
         active={pathMatches(
           page.url.pathname,
@@ -289,8 +335,7 @@
         label={translate('workflows.history-tab')}
         id="history-tab"
         href={routeForEventHistory({
-          ...routeParameters,
-          queryParams: sharedFilterParams,
+          ...routeParametersWithQuery,
         })}
         onClick={() => ($workflowViewPreference = 'history')}
         active={pathMatches(
@@ -307,7 +352,7 @@
       <Tab
         label={translate('workflows.relationships')}
         id="relationships-tab"
-        href={routeForRelationships(routeParameters)}
+        href={routeForRelationships(routeParametersWithQuery)}
         active={pathMatches(
           page.url.pathname,
           routeForRelationships(routeParameters),
@@ -321,7 +366,7 @@
         <Tab
           label={translate('workflows.nexus-links-tab')}
           id="nexus-links-tab"
-          href={routeForNexusLinks(routeParameters)}
+          href={routeForNexusLinks(routeParametersWithQuery)}
           active={pathMatches(
             page.url.pathname,
             routeForNexusLinks(routeParameters),
@@ -335,7 +380,7 @@
       <Tab
         label={translate('workflows.workers-tab')}
         id="workers-tab"
-        href={routeForWorkflowWorkers(routeParameters)}
+        href={routeForWorkflowWorkers(routeParametersWithQuery)}
         active={pathMatches(
           page.url.pathname,
           routeForWorkflowWorkers(routeParameters),
@@ -346,7 +391,7 @@
       <Tab
         label={translate('workflows.pending-activities-tab')}
         id="pending-activities-tab"
-        href={routeForPendingActivities(routeParameters)}
+        href={routeForPendingActivities(routeParametersWithQuery)}
         active={pathMatches(
           page.url.pathname,
           routeForPendingActivities(routeParameters),
@@ -367,7 +412,7 @@
       <Tab
         label={translate('workflows.call-stack-tab')}
         id="call-stack-tab"
-        href={routeForCallStack(routeParameters)}
+        href={routeForCallStack(routeParametersWithQuery)}
         active={pathMatches(
           page.url.pathname,
           routeForCallStack(routeParameters),
@@ -376,7 +421,7 @@
       <Tab
         label={translate('workflows.queries-tab')}
         id="queries-tab"
-        href={routeForWorkflowQuery(routeParameters)}
+        href={routeForWorkflowQuery(routeParametersWithQuery)}
         active={pathMatches(
           page.url.pathname,
           routeForWorkflowQuery(routeParameters),
@@ -385,7 +430,7 @@
       <Tab
         label={translate('workflows.user-metadata-tab')}
         id="user-metadata-tab"
-        href={routeForUserMetadata(routeParameters)}
+        href={routeForUserMetadata(routeParametersWithQuery)}
         active={pathMatches(
           page.url.pathname,
           routeForUserMetadata(routeParameters),
@@ -394,7 +439,7 @@
       <Tab
         label={translate('workflows.search-attributes-tab')}
         id="search-attributes-tab"
-        href={routeForWorkflowSearchAttributes(routeParameters)}
+        href={routeForWorkflowSearchAttributes(routeParametersWithQuery)}
         active={pathMatches(
           page.url.pathname,
           routeForWorkflowSearchAttributes(routeParameters),
@@ -403,7 +448,7 @@
       <Tab
         label={translate('workflows.memo-tab')}
         id="memo-tab"
-        href={routeForWorkflowMemo(routeParameters)}
+        href={routeForWorkflowMemo(routeParametersWithQuery)}
         active={pathMatches(
           page.url.pathname,
           routeForWorkflowMemo(routeParameters),

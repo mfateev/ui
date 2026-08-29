@@ -1,8 +1,6 @@
 <script lang="ts">
   import { writable, type Writable } from 'svelte/store';
 
-  import { page } from '$app/state';
-
   import PayloadCodeBlock from '$lib/components/payload/payload-code-block.svelte';
   import PayloadInput from '$lib/components/payload-input.svelte';
   import RandomUuidButton from '$lib/components/random-uuid-button.svelte';
@@ -30,7 +28,7 @@
 
   let { open = $bindable(), workflow, namespace }: Props = $props();
 
-  const runId = $derived(page.params.run);
+  const runId = $derived(workflow.runId);
   const metadata = $derived($workflowRun.metadata);
   const updateDefinitions = $derived(metadata?.definition?.updateDefinitions);
 

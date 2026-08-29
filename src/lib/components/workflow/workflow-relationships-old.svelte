@@ -14,8 +14,8 @@
 
   const namespace = $derived(page.params.namespace);
   const workflowId = $derived(page.params.workflow);
-  const runId = $derived(page.params.run);
   const workflow = $derived($workflowRun.workflow);
+  const runId = $derived(workflow?.runId ?? '');
 
   const workflowRelationships = $derived(
     getWorkflowRelationships(workflow, $fullEventHistory, page.data.namespace),

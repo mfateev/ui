@@ -19,6 +19,7 @@ import {
 import { eventFilterSort } from './event-view';
 import { eventTypeFilter } from './filters';
 import { persistStore } from './persist-store';
+import { workflowRun } from './workflow-run';
 
 const namespace = derived([page], ([$page]) => {
   if ($page.params.namespace) {
@@ -34,7 +35,8 @@ const workflowId = derived([page], ([$page]) => {
   return '';
 });
 
-const runId = derived([page], ([$page]) => {
+const runId = derived([page, workflowRun], ([$page, $workflowRun]) => {
+  if ($workflowRun.workflow?.runId) return $workflowRun.workflow.runId;
   if ($page.params.run) {
     return decodeURIForSvelte($page.params.run);
   }

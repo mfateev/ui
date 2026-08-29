@@ -17,7 +17,9 @@ test.describe('Timeline graph node accessible names', () => {
 
   test('workflow node announces its id and status', async ({ page }) => {
     await expect(
-      page.getByRole('img', { name: `Workflow ${workflowId}: Running` }),
+      page.getByRole('img', {
+        name: `Workflow ${workflowId}, run ${runId}: Running`,
+      }),
     ).toBeVisible();
   });
 

@@ -24,6 +24,7 @@
   import {
     routeForWorkerDeployment,
     routeForWorkflow,
+    workflowRouteParameters,
   } from '$lib/utilities/route-for';
   import {
     TRUNCATE_LENGTH,
@@ -96,9 +97,7 @@
       attribute: 'WorkflowType',
       value: workflow.name,
       href: routeForWorkflow({
-        namespace,
-        workflow: workflow.id,
-        run: workflow.runId,
+        ...workflowRouteParameters(namespace, workflow),
         archival,
       }),
     })}
@@ -107,9 +106,7 @@
       attribute: 'WorkflowId',
       value: workflow.id,
       href: routeForWorkflow({
-        namespace,
-        workflow: workflow.id,
-        run: workflow.runId,
+        ...workflowRouteParameters(namespace, workflow),
         archival,
       }),
     })}
@@ -118,9 +115,7 @@
       attribute: 'RunId',
       value: workflow.runId,
       href: routeForWorkflow({
-        namespace,
-        workflow: workflow.id,
-        run: workflow.runId,
+        ...workflowRouteParameters(namespace, workflow),
         archival,
       }),
     })}

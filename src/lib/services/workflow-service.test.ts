@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { base } from '$app/paths';
 
-import { fetchAllWorkflows, fetchWorkflowForRunId } from './workflow-service';
+import {
+  fetchAllWorkflows,
+  fetchLatestWorkflowExecutionIdentity,
+  fetchWorkflowForRunId,
+} from './workflow-service';
 import { getApiOrigin } from '../utilities/get-api-origin';
 import { requestFromAPI } from '../utilities/request-from-api';
 
@@ -40,6 +44,30 @@ describe('workflow service', () => {
           params: {
             query: 'WorkflowType LIKE "cron%"',
           },
+          request: expect.any(Function),
+        },
+      );
+    });
+  });
+
+  describe('fetchLatestWorkflowExecutionIdentity', () => {
+    test('uses the bounded latest identity endpoint', async () => {
+      vi.mocked(requestFromAPI).mockResolvedValueOnce({
+        workflowId: 'workflow-id',
+        runId: 'run-2',
+        firstExecutionRunId: 'run-1',
+      });
+
+      const result = await fetchLatestWorkflowExecutionIdentity({
+        namespace: 'test',
+        workflowId: 'workflow-id',
+      });
+
+      expect(result.identity?.firstExecutionRunId).toBe('run-1');
+      expect(requestFromAPI).toHaveBeenCalledWith(
+        `${origin}${base}/api/v1/namespaces/test/workflows/workflow-id/latest-execution`,
+        {
+          notifyOnError: false,
           request: expect.any(Function),
         },
       );

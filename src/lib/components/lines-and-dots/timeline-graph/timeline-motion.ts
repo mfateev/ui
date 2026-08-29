@@ -4,6 +4,7 @@ interface TimelineMotionFrame {
   expandedPxPerMs: number;
   animate: boolean;
   freeze: boolean;
+  snapThresholdPx?: number;
 }
 
 export class TimelineMotion {
@@ -18,6 +19,7 @@ export class TimelineMotion {
     expandedPxPerMs,
     animate,
     freeze,
+    snapThresholdPx,
   }: TimelineMotionFrame): number {
     if (freeze) return this._frameOffsetPx;
 
@@ -35,6 +37,20 @@ export class TimelineMotion {
     }
 
     if (committedOffsetPx !== this._baseOffsetPx) {
+      // Ordinary clock commits are small and should preserve visual
+      // continuity. A run handoff/backfill can rebase the entire world by
+      // thousands of pixels; carrying that delta as a compositor offset leaves
+      // the geometry distorted until real time catches up.
+      if (
+        snapThresholdPx !== undefined &&
+        Math.abs(committedOffsetPx - this._baseOffsetPx) > snapThresholdPx
+      ) {
+        this._baseTimeMs = nowMs;
+        this._baseOffsetPx = committedOffsetPx;
+        this._baseFrameOffsetPx = 0;
+        this._frameOffsetPx = 0;
+        return 0;
+      }
       const effectiveOffsetPx =
         this._baseOffsetPx +
         this._baseFrameOffsetPx +

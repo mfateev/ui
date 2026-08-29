@@ -85,4 +85,8 @@ describe('isTimelineLabelVisible', () => {
     expect(isTimelineLabelVisible(19, 20, 120)).toBe(false);
     expect(isTimelineLabelVisible(121, 20, 120)).toBe(false);
   });
+
+  it('keeps a running label mounted while its pending bar is visible', () => {
+    expect(isTimelineLabelVisible(-40, 20, 120, true)).toBe(true);
+  });
 });

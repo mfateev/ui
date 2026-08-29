@@ -74,7 +74,7 @@ export function getTimelineAxisTicks({
   // gives every tick a new world coordinate whenever following advances,
   // causing the entire grid to disappear and reappear on each coarse update.
   const firstTickIndex = Math.floor(worldStartPx / tickDistancePx) + 1;
-  const endTickIndex = Math.ceil(worldEndPx / tickDistancePx);
+  const endTickIndex = Math.floor(worldEndPx / tickDistancePx) + 2;
   const visibleTickCount = Math.max(0, endTickIndex - firstTickIndex);
 
   return Array.from({ length: visibleTickCount }, (_, index) => {

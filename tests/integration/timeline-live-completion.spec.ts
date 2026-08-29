@@ -202,6 +202,86 @@ test.describe('Timeline live completion', () => {
     expect((await appended.boundingBox())?.y).toBeGreaterThan(initialY ?? 0);
   });
 
+  test('keeps a running activity label inside the timeline after its start scrolls out', async ({
+    page,
+  }) => {
+    const oldEventTime = new Date(Date.now() - 120_000).toISOString();
+    const oldInProgress = inProgress.map((event) => ({
+      ...event,
+      eventTime: oldEventTime,
+    }));
+    const workflowWithPendingActivity = {
+      ...runningWorkflow,
+      pendingActivities: [
+        {
+          ...mockWorkflow.pendingActivities[0],
+          activityId: '2',
+          activityType: { name: 'DeployNetwork' },
+        },
+      ],
+    };
+
+    await mockWorkflowApis(page, workflowWithPendingActivity);
+    await page.route(EVENT_HISTORY_API, async (route) => {
+      if (route.request().url().includes('waitNewEvent=true')) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return route.fulfill({ json: historyPage([]) });
+      }
+      return route.fulfill({ json: historyPage(oldInProgress) });
+    });
+    await page.route(EVENT_HISTORY_API_REVERSE, (route) =>
+      route.fulfill({ json: historyPage([...oldInProgress].reverse()) }),
+    );
+
+    await page.goto(timelineUrl);
+
+    const timeline = page.locator('#event-history-timeline-graph');
+    const label = timeline.locator('.timeline-running-label');
+    await expect(label).toBeVisible();
+
+    const positions = await timeline.evaluate(
+      (element) =>
+        new Promise<{
+          labelLeft: number[];
+          labelRight: number;
+          leftBoundary: number;
+          rightBoundary: number;
+        }>((resolve) => {
+          const rails = element.querySelectorAll<HTMLElement>(
+            '.timeline-height-rail',
+          );
+          const runningLabel = element.querySelector<HTMLElement>(
+            '.timeline-running-label',
+          );
+          if (!runningLabel || rails.length !== 2) {
+            throw new Error('Expected a running label and two timeline rails');
+          }
+
+          const labelLeft: number[] = [];
+          const sample = () => {
+            labelLeft.push(runningLabel.getBoundingClientRect().left);
+            if (labelLeft.length < 8) return requestAnimationFrame(sample);
+
+            resolve({
+              labelLeft,
+              labelRight: runningLabel.getBoundingClientRect().right,
+              leftBoundary: rails[0].getBoundingClientRect().right,
+              rightBoundary: rails[1].getBoundingClientRect().left,
+            });
+          };
+          requestAnimationFrame(sample);
+        }),
+    );
+    expect(
+      Math.max(...positions.labelLeft) - Math.min(...positions.labelLeft),
+    ).toBeLessThan(1);
+    const visibleLabelWidth =
+      Math.min(positions.labelRight, positions.rightBoundary) -
+      Math.max(Math.min(...positions.labelLeft), positions.leftBoundary);
+    expect(visibleLabelWidth).toBeGreaterThan(100);
+    expect(positions.labelRight).toBeLessThan(positions.rightBoundary);
+  });
+
   test('freezes the viewport while paused and follows the latest edge after resume', async ({
     page,
   }) => {
@@ -223,6 +303,37 @@ test.describe('Timeline live completion', () => {
     ).toBeVisible();
 
     const timeline = page.locator('#event-history-timeline-graph');
+    const clipping = await timeline.evaluate((element) => {
+      const clip = element.querySelector<HTMLElement>(
+        '.timeline-viewport-clip',
+      );
+      const rails = element.querySelectorAll<HTMLElement>(
+        '.timeline-height-rail',
+      );
+      if (!clip || rails.length !== 2) return null;
+
+      const clipRect = clip.getBoundingClientRect();
+      const left = rails[0].getBoundingClientRect();
+      const right = rails[1].getBoundingClientRect();
+      const clipPath = getComputedStyle(clip).clipPath;
+      const horizontalInset = Number.parseFloat(
+        clipPath.match(/^inset\([^ ]+ ([^ )]+)/)?.[1] ?? 'NaN',
+      );
+
+      return {
+        clipPath,
+        leftBoundaryDelta: Math.abs(
+          clipRect.left + horizontalInset - left.right,
+        ),
+        rightBoundaryDelta: Math.abs(
+          clipRect.right - horizontalInset - right.left,
+        ),
+      };
+    });
+    expect(clipping?.clipPath).toMatch(/^inset\(/);
+    expect(clipping?.leftBoundaryDelta).toBeLessThan(0.5);
+    expect(clipping?.rightBoundaryDelta).toBeLessThan(0.5);
+
     const viewportOffset = async () =>
       Number(await timeline.getAttribute('data-viewport-offset'));
     const axisWorldTicks = async () =>

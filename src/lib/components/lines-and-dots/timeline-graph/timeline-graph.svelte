@@ -672,96 +672,101 @@
         style:height="{svgHeight}px"
         style:--dot="{dotSize}px"
         style:--dot-r="{dotRadius}px"
+        style:--timeline-clip-inset="{GUTTER + RADIUS / 4}px"
       >
         <TimelineIconDefs />
 
         <!-- Border rails -->
         <div
-          class="timeline-height-rail absolute bg-current"
+          class="timeline-height-rail pointer-events-none absolute z-10 bg-current"
           style:left="{GUTTER - RADIUS / 4}px"
           style:top="{lineTop}px"
           style:width="{RADIUS / 2}px"
           style:height="{lineBottom}px"
         ></div>
         <div
-          class="timeline-height-rail absolute bg-current"
+          class="timeline-height-rail pointer-events-none absolute z-10 bg-current"
           style:left="{canvasWidth - GUTTER - RADIUS / 4}px"
           style:top="{lineTop}px"
           style:width="{RADIUS / 2}px"
           style:height="{lineBottom}px"
         ></div>
 
-        <TimelineAxis
-          x1={GUTTER - RADIUS / 4}
-          x2={canvasWidth - GUTTER + RADIUS / 4}
-          gutter={GUTTER}
-          {timelineHeight}
-          {startTime}
-          {scale}
-          viewportOffsetPx={viewport.offsetPx}
-        />
-        <div class="timeline-motion-layer absolute inset-0">
-          <WorkflowRow
-            {workflow}
-            y={ROW_HEIGHT}
-            {canvasWidth}
-            startWorldPx={scale.project(timeline.workflowTimespan.startTimeMs)}
-            endWorldPx={scale.project(timeline.workflowTimespan.endTimeMs)}
+        <div class="timeline-viewport-clip absolute inset-0">
+          <TimelineAxis
+            x1={GUTTER - RADIUS / 4}
+            x2={canvasWidth - GUTTER + RADIUS / 4}
+            gutter={GUTTER}
+            {timelineHeight}
+            {startTime}
+            {scale}
             viewportOffsetPx={viewport.offsetPx}
           />
-        </div>
-        {#if !loading}
-          <!-- Anchor's left provides the gutter offset for the layer's 0-based coords. -->
-          <div
-            class="timeline-motion-layer absolute top-0"
-            style:left="{GUTTER}px"
-          >
-            <TimelineCollapsedLayer
-              {scale}
-              {timelineHeight}
-              bandTop={layerBandTop}
-              bandHeight={layerBandHeight}
-              {readOnly}
+          <div class="timeline-motion-layer absolute inset-0">
+            <WorkflowRow
+              {workflow}
+              y={ROW_HEIGHT}
+              {canvasWidth}
+              startWorldPx={scale.project(
+                timeline.workflowTimespan.startTimeMs,
+              )}
+              endWorldPx={scale.project(timeline.workflowTimespan.endTimeMs)}
               viewportOffsetPx={viewport.offsetPx}
-              viewportWidthPx={timelineWidth}
-              onToggle={toggleSegment}
             />
           </div>
-        {/if}
-
-        <!-- Keyed by slot index so Svelte reuses the <li>s in place; the <li>
-           persists when its slot is null, only the inner row toggles.
-           pointer-events-none so clicks fall through to the collapse toggles;
-           event buttons opt back in with pointer-events:auto. -->
-        <ul class="pointer-events-none absolute inset-0 m-0 list-none p-0">
-          {#each pool as slot, slotIndex (slotIndex)}
-            <li
-              class="absolute left-0 right-0 top-0"
-              style:display={slot ? 'block' : 'none'}
-              style:height="{ROW_HEIGHT}px"
-              style:contain="layout"
-              style:transform={slot
-                ? `translateY(${getY(slot.index) - ROW_HEIGHT / 2 + shiftFor(slot.index)}px)`
-                : undefined}
-              onfocusin={() => {
-                focusedGroupId = slot?.group.id ?? null;
-                focusedSlotIndex = slot ? slotIndex : null;
-              }}
+          {#if !loading}
+            <!-- Anchor's left provides the gutter offset for the layer's 0-based coords. -->
+            <div
+              class="timeline-motion-layer absolute top-0"
+              style:left="{GUTTER}px"
             >
-              {#if slot}
-                <div class="timeline-motion-layer absolute inset-0">
-                  <TimelineGraphRow
-                    group={slot.group}
-                    eventCount={slot.group.eventList.length}
-                    {canvasWidth}
-                    project={projectX}
-                    {readOnly}
-                  />
-                </div>
-              {/if}
-            </li>
-          {/each}
-        </ul>
+              <TimelineCollapsedLayer
+                {scale}
+                {timelineHeight}
+                bandTop={layerBandTop}
+                bandHeight={layerBandHeight}
+                {readOnly}
+                viewportOffsetPx={viewport.offsetPx}
+                viewportWidthPx={timelineWidth}
+                onToggle={toggleSegment}
+              />
+            </div>
+          {/if}
+
+          <!-- Keyed by slot index so Svelte reuses the <li>s in place; the <li>
+             persists when its slot is null, only the inner row toggles.
+             pointer-events-none so clicks fall through to the collapse toggles;
+             event buttons opt back in with pointer-events:auto. -->
+          <ul class="pointer-events-none absolute inset-0 m-0 list-none p-0">
+            {#each pool as slot, slotIndex (slotIndex)}
+              <li
+                class="absolute left-0 right-0 top-0"
+                style:display={slot ? 'block' : 'none'}
+                style:height="{ROW_HEIGHT}px"
+                style:contain="layout"
+                style:transform={slot
+                  ? `translateY(${getY(slot.index) - ROW_HEIGHT / 2 + shiftFor(slot.index)}px)`
+                  : undefined}
+                onfocusin={() => {
+                  focusedGroupId = slot?.group.id ?? null;
+                  focusedSlotIndex = slot ? slotIndex : null;
+                }}
+              >
+                {#if slot}
+                  <div class="timeline-motion-layer absolute inset-0">
+                    <TimelineGraphRow
+                      group={slot.group}
+                      eventCount={slot.group.eventList.length}
+                      {canvasWidth}
+                      project={projectX}
+                      {readOnly}
+                    />
+                  </div>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </div>
 
         {#if loading && pendingGroupCount > 0}
           {@const rectY = getPendingBlockY({
@@ -811,6 +816,13 @@
 
   .canvas :global(.timeline-motion-layer) {
     transform: translateX(calc(-1 * var(--timeline-frame-offset, 0px)));
+  }
+
+  /* The motion layer deliberately mounts geometry just beyond the viewport so
+     it can glide in continuously. Clip it at the stationary inner edges of the
+     rails; clipping the transformed layer itself would move this boundary. */
+  .canvas :global(.timeline-viewport-clip) {
+    clip-path: inset(0 var(--timeline-clip-inset));
   }
 
   .timeline-motion-active .canvas :global(.timeline-motion-layer) {

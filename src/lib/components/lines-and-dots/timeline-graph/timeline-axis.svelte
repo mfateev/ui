@@ -86,7 +86,7 @@
   style:height="{baselineWidth}px"
 ></div>
 
-<div class="timeline-motion-layer absolute inset-0">
+<div class="timeline-motion-layer pointer-events-none absolute inset-0">
   {#each ticks as tick (tick.worldPx)}
     <div
       class="grid-line top-0"

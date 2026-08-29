@@ -26,6 +26,8 @@ describe('getTimelineAxisTicks', () => {
       { screenPx: 70, worldPx: 350 },
       { screenPx: 120, worldPx: 400 },
       { screenPx: 170, worldPx: 450 },
+      { screenPx: 220, worldPx: 500 },
+      { screenPx: 270, worldPx: 550 },
     ]);
   });
 
@@ -42,6 +44,8 @@ describe('getTimelineAxisTicks', () => {
     ).toEqual([
       { screenPx: 70, worldPx: 350 },
       { screenPx: 170, worldPx: 450 },
+      { screenPx: 220, worldPx: 500 },
+      { screenPx: 270, worldPx: 550 },
     ]);
   });
 
@@ -67,12 +71,15 @@ describe('getTimelineAxisTicks', () => {
       { screenPx: 70, worldPx: 350 },
       { screenPx: 120, worldPx: 400 },
       { screenPx: 170, worldPx: 450 },
+      { screenPx: 220, worldPx: 500 },
+      { screenPx: 270, worldPx: 550 },
     ]);
     expect(advanced).toEqual([
       { screenPx: 60, worldPx: 350 },
       { screenPx: 110, worldPx: 400 },
       { screenPx: 160, worldPx: 450 },
       { screenPx: 210, worldPx: 500 },
+      { screenPx: 260, worldPx: 550 },
     ]);
   });
 
@@ -85,7 +92,7 @@ describe('getTimelineAxisTicks', () => {
         viewportOffsetPx: 0,
         collapsedWorldRanges: [],
       }),
-    ).toHaveLength(1);
+    ).toHaveLength(3);
     expect(
       getTimelineAxisTicks({
         screenStartPx: 0,
@@ -94,6 +101,19 @@ describe('getTimelineAxisTicks', () => {
         viewportOffsetPx: 0,
         collapsedWorldRanges: [],
       }),
-    ).toHaveLength(39);
+    ).toHaveLength(41);
+  });
+
+  it('keeps the next tick mounted beyond the right edge', () => {
+    const ticks = getTimelineAxisTicks({
+      screenStartPx: 20,
+      screenEndPx: 220,
+      gutterPx: 20,
+      viewportOffsetPx: 310,
+      collapsedWorldRanges: [],
+      targetTickPx: 50,
+    });
+
+    expect(ticks.at(-1)).toEqual({ screenPx: 260, worldPx: 550 });
   });
 });

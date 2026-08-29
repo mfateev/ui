@@ -84,6 +84,7 @@
 
   let decodedLocalActivity: SummaryAttribute | undefined =
     $state.raw(undefined);
+  let labelWidth = $state(0);
 
   // Keyed on group (not onMount) so it re-runs on pooled re-point; reuses a
   // value already decoded onto the group, otherwise decodes once.
@@ -147,8 +148,16 @@
       haloPx: HALO,
     }),
   );
+  const hasVisiblePendingConnector = $derived(
+    rowGeometry.connectors.some((connector) => connector.pending),
+  );
   const labelVisible = $derived(
-    isTimelineLabelVisible(textPosition[0], GUTTER, canvasWidth - GUTTER),
+    isTimelineLabelVisible(
+      textPosition[0],
+      GUTTER,
+      canvasWidth - GUTTER,
+      hasVisiblePendingConnector,
+    ),
   );
 
   const onClick = () => {
@@ -338,21 +347,37 @@
               (pendingActivity && !pendingActivity.paused) || retried
                 ? 'retry'
                 : undefined}
+            {@const runningLabelMaxWidth = Math.max(
+              0,
+              canvasWidth - 2 * (GUTTER + 1.5 * RADIUS),
+            )}
+            {@const runningLabelLeft = `clamp(calc(${GUTTER + 1.5 * RADIUS - spanLeft}px + var(--timeline-frame-offset, 0px)), ${textPosition[0] - spanLeft - (textAnchor === 'end' ? labelWidth : 0)}px, calc(${canvasWidth - GUTTER - 1.5 * RADIUS - labelWidth - spanLeft}px + var(--timeline-frame-offset, 0px)))`}
             <div
               class="pointer-events-auto absolute flex select-none items-center gap-1 whitespace-nowrap text-[13px] leading-none {textAnchor ===
               'end'
-                ? '-translate-x-full -translate-y-1/2 flex-row-reverse'
+                ? `${hasVisiblePendingConnector ? '' : '-translate-x-full'} -translate-y-1/2 flex-row-reverse`
                 : '-translate-y-1/2'}"
-              style:left="{textPosition[0] - spanLeft}px"
+              class:timeline-running-label={hasVisiblePendingConnector}
+              class:overflow-hidden={hasVisiblePendingConnector}
+              style:left={hasVisiblePendingConnector
+                ? runningLabelLeft
+                : `${textPosition[0] - spanLeft}px`}
               style:top="{spanCy}px"
+              style:max-width={hasVisiblePendingConnector
+                ? `${runningLabelMaxWidth}px`
+                : undefined}
+              bind:clientWidth={labelWidth}
             >
               {#if iconName}
-                <svg class="h-[14px] w-[14px] text-current" viewBox="0 0 24 24">
+                <svg
+                  class="h-[14px] w-[14px] shrink-0 text-current"
+                  viewBox="0 0 24 24"
+                >
                   <use href="#ti-{iconName}" />
                 </svg>
               {/if}
               <span
-                class="inline-flex min-h-[var(--dot)] items-center rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-current"
+                class="inline-flex min-h-[var(--dot)] min-w-0 items-center overflow-hidden text-ellipsis rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-current"
               >
                 {#if pendingActivity}
                   {translate('workflows.attempt')}

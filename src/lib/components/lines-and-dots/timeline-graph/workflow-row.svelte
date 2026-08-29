@@ -77,22 +77,14 @@
       class="tl-line absolute"
       class:tl-line--dashed={workflowIsLive}
       class:tl-line--animate={workflowIsLive}
+      class:tl-line--live={workflowIsLive}
       style:left="{lineBounds.left}px"
       style:top="{lineBounds.top}px"
-      style:width="{lineBounds.width}px"
+      style:width="{workflowIsLive ? canvasWidth : lineBounds.width}px"
       style:height="{lineBounds.height}px"
       style:--tl-line-color={color}
+      style:--tl-live-committed-width="{lineBounds.width}px"
     ></div>
-    {#if workflowIsLive}
-      <div
-        class="tl-line tl-line--dashed tl-live-edge-extension absolute"
-        style:left="{lineBounds.left + lineBounds.width}px"
-        style:top="{lineBounds.top}px"
-        style:width="1px"
-        style:height="{lineBounds.height}px"
-        style:--tl-line-color={color}
-      ></div>
-    {/if}
   {/if}
   {#each [geometry.startDotPx, geometry.endDotPx].filter((point) => point !== null) as pointX (pointX)}
     {@const dotBounds = dotBox(pointX, centerY)}

@@ -151,12 +151,22 @@
   const hasVisiblePendingConnector = $derived(
     rowGeometry.connectors.some((connector) => connector.pending),
   );
+  const hasVisibleConnector = $derived(rowGeometry.connectors.length > 0);
+  const labelSafeInset = GUTTER + 1.5 * RADIUS;
+  const shouldClampLabel = $derived(
+    hasVisibleConnector &&
+      (hasVisiblePendingConnector ||
+        textPosition[0] - (textAnchor === 'end' ? labelWidth : 0) <
+          labelSafeInset ||
+        textPosition[0] + (textAnchor === 'end' ? 0 : labelWidth) >
+          canvasWidth - labelSafeInset),
+  );
   const labelVisible = $derived(
     isTimelineLabelVisible(
       textPosition[0],
       GUTTER,
       canvasWidth - GUTTER,
-      hasVisiblePendingConnector,
+      hasVisibleConnector,
     ),
   );
 
@@ -226,24 +236,15 @@
     class:tl-line--gradient={opts.gradient}
     class:tl-line--dashed={opts.dashed}
     class:tl-line--animate={opts.animate}
+    class:tl-line--live={opts.liveEdge}
     style:left="{bounds.left}px"
     style:top="{bounds.top}px"
-    style:width="{bounds.width}px"
+    style:width="{opts.liveEdge ? canvasWidth : bounds.width}px"
     style:height="{bounds.height}px"
     style:--tl-line-color={color}
+    style:--tl-live-committed-width="{bounds.width}px"
     style:opacity={opts.dim || null}
   ></div>
-  {#if opts.liveEdge}
-    <div
-      class="tl-line tl-live-edge-extension absolute"
-      class:tl-line--dashed={opts.dashed}
-      style:left="{bounds.left + bounds.width}px"
-      style:top="{bounds.top}px"
-      style:width="1px"
-      style:height="{bounds.height}px"
-      style:--tl-line-color={color}
-    ></div>
-  {/if}
 {/snippet}
 
 {#snippet dot(
@@ -347,37 +348,38 @@
               (pendingActivity && !pendingActivity.paused) || retried
                 ? 'retry'
                 : undefined}
-            {@const runningLabelMaxWidth = Math.max(
+            {@const clampedLabelMaxWidth = Math.max(
               0,
               canvasWidth - 2 * (GUTTER + 1.5 * RADIUS),
             )}
-            {@const runningLabelLeft = `clamp(calc(${GUTTER + 1.5 * RADIUS - spanLeft}px + var(--timeline-frame-offset, 0px)), ${textPosition[0] - spanLeft - (textAnchor === 'end' ? labelWidth : 0)}px, calc(${canvasWidth - GUTTER - 1.5 * RADIUS - labelWidth - spanLeft}px + var(--timeline-frame-offset, 0px)))`}
+            {@const clampedLabelLeft = `clamp(calc(${GUTTER + 1.5 * RADIUS - spanLeft}px + var(--timeline-frame-offset, 0px)), ${textPosition[0] - spanLeft - (textAnchor === 'end' ? labelWidth : 0)}px, calc(${canvasWidth - GUTTER - 1.5 * RADIUS - labelWidth - spanLeft}px + var(--timeline-frame-offset, 0px)))`}
             <div
-              class="pointer-events-auto absolute flex select-none items-center gap-1 whitespace-nowrap text-[13px] leading-none {textAnchor ===
+              class="pointer-events-auto absolute z-10 flex select-none items-center gap-1 whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none {textAnchor ===
               'end'
-                ? `${hasVisiblePendingConnector ? '' : '-translate-x-full'} -translate-y-1/2 flex-row-reverse`
+                ? `${shouldClampLabel ? '' : '-translate-x-full'} -translate-y-1/2 flex-row-reverse`
                 : '-translate-y-1/2'}"
               class:timeline-running-label={hasVisiblePendingConnector}
-              class:overflow-hidden={hasVisiblePendingConnector}
-              style:left={hasVisiblePendingConnector
-                ? runningLabelLeft
+              class:timeline-clamped-label={shouldClampLabel}
+              class:overflow-hidden={shouldClampLabel}
+              style:left={shouldClampLabel
+                ? clampedLabelLeft
                 : `${textPosition[0] - spanLeft}px`}
               style:top="{spanCy}px"
-              style:max-width={hasVisiblePendingConnector
-                ? `${runningLabelMaxWidth}px`
+              style:max-width={shouldClampLabel
+                ? `${clampedLabelMaxWidth}px`
                 : undefined}
               bind:clientWidth={labelWidth}
             >
               {#if iconName}
                 <svg
-                  class="h-[14px] w-[14px] shrink-0 text-current"
+                  class="h-[var(--dot)] w-[var(--dot)] shrink-0 rounded-full p-[3px] text-current"
                   viewBox="0 0 24 24"
                 >
                   <use href="#ti-{iconName}" />
                 </svg>
               {/if}
               <span
-                class="inline-flex min-h-[var(--dot)] min-w-0 items-center overflow-hidden text-ellipsis rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-current"
+                class="inline-flex min-h-[var(--dot)] min-w-0 items-center overflow-hidden text-ellipsis rounded-full text-current"
               >
                 {#if pendingActivity}
                   {translate('workflows.attempt')}

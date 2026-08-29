@@ -196,7 +196,7 @@
       viewportMotion.reset();
       liveEdgeMotion.reset();
       element.style.setProperty('--timeline-frame-offset', '0px');
-      element.style.setProperty('--timeline-live-edge-extension', '0');
+      element.style.setProperty('--timeline-live-edge-extension', '0px');
       return;
     }
 
@@ -222,7 +222,7 @@
       );
       element.style.setProperty(
         '--timeline-live-edge-extension',
-        String(Math.max(0, liveEdgeExtensionPx)),
+        `${Math.max(0, liveEdgeExtensionPx)}px`,
       );
       animationFrame = requestAnimationFrame(renderFrame);
     };
@@ -836,14 +836,6 @@
     transform: translateX(var(--timeline-frame-offset, 0));
   }
 
-  /* Live geometry reaches the right edge on each coarse clock tick. Extend its
-     painted endpoint by the inter-tick offset while the layer translates left,
-     keeping the edge stationary without recomputing row geometry per frame. */
-  .canvas :global(.tl-live-edge-extension) {
-    transform: scaleX(var(--timeline-live-edge-extension, 0));
-    transform-origin: left center;
-  }
-
   .canvas :global(.timeline-live-edge-anchor) {
     transform: translateX(var(--timeline-frame-offset, 0));
   }
@@ -854,6 +846,22 @@
   .canvas :global(.tl-line) {
     border-radius: 9999px;
     background-color: var(--tl-line-color);
+  }
+
+  /* Render each live connector as one fixed-width pattern and reveal through
+     its interpolated endpoint. A separate extension would restart the stripe
+     pattern at its seam; scaling it would distort stripe width. */
+  .canvas :global(.tl-line--live) {
+    border-radius: 9999px 0 0 9999px;
+    clip-path: inset(
+      0
+        calc(
+          100% - var(--tl-live-committed-width) -
+            var(--timeline-live-edge-extension, 0px)
+        )
+        0 0
+    );
+    will-change: clip-path;
   }
 
   .canvas :global(.tl-line--gradient) {

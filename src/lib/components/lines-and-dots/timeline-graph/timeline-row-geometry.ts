@@ -91,10 +91,9 @@ export function isTimelineLabelVisible(
   xPx: number,
   viewportStartPx: number,
   viewportEndPx: number,
-  hasVisiblePendingConnector = false,
+  hasVisibleConnector = false,
 ): boolean {
   return (
-    hasVisiblePendingConnector ||
-    (xPx >= viewportStartPx && xPx <= viewportEndPx)
+    hasVisibleConnector || (xPx >= viewportStartPx && xPx <= viewportEndPx)
   );
 }

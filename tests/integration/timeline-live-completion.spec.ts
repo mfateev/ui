@@ -202,7 +202,7 @@ test.describe('Timeline live completion', () => {
     expect((await appended.boundingBox())?.y).toBeGreaterThan(initialY ?? 0);
   });
 
-  test('keeps a running activity label inside the timeline after its start scrolls out', async ({
+  test('keeps a long activity label visible while running and after completion', async ({
     page,
   }) => {
     const oldEventTime = new Date(Date.now() - 120_000).toISOString();
@@ -221,10 +221,20 @@ test.describe('Timeline live completion', () => {
       ],
     };
 
+    let releaseCompletion: () => void;
+    const completionHeld = new Promise<void>((resolve) => {
+      releaseCompletion = resolve;
+    });
+    let completionDelivered = false;
+
     await mockWorkflowApis(page, workflowWithPendingActivity);
     await page.route(EVENT_HISTORY_API, async (route) => {
       if (route.request().url().includes('waitNewEvent=true')) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (!completionDelivered) {
+          await completionHeld;
+          completionDelivered = true;
+          return route.fulfill({ json: historyPage([completion]) });
+        }
         return route.fulfill({ json: historyPage([]) });
       }
       return route.fulfill({ json: historyPage(oldInProgress) });
@@ -280,6 +290,12 @@ test.describe('Timeline live completion', () => {
       Math.max(Math.min(...positions.labelLeft), positions.leftBoundary);
     expect(visibleLabelWidth).toBeGreaterThan(100);
     expect(positions.labelRight).toBeLessThan(positions.rightBoundary);
+
+    releaseCompletion();
+    await expect(
+      page.getByRole('button', { name: 'Event DeployNetwork: Completed' }),
+    ).toBeVisible();
+    await expect(timeline.locator('.timeline-clamped-label')).toBeVisible();
   });
 
   test('freezes the viewport while paused and follows the latest edge after resume', async ({
@@ -383,10 +399,24 @@ test.describe('Timeline live completion', () => {
           const extensions: number[] = [];
           const sample = () => {
             const anchor = element.querySelector('.timeline-live-edge-anchor');
-            const extension = element.querySelector('.tl-live-edge-extension');
-            if (anchor && extension) {
+            const liveLine = element.querySelector('.tl-line--live');
+            if (anchor && liveLine) {
               anchors.push(anchor.getBoundingClientRect().right);
-              extensions.push(extension.getBoundingClientRect().right);
+              const committedWidth = Number.parseFloat(
+                getComputedStyle(liveLine).getPropertyValue(
+                  '--tl-live-committed-width',
+                ),
+              );
+              const extensionWidth = Number.parseFloat(
+                getComputedStyle(element).getPropertyValue(
+                  '--timeline-live-edge-extension',
+                ),
+              );
+              extensions.push(
+                liveLine.getBoundingClientRect().left +
+                  committedWidth +
+                  extensionWidth,
+              );
             }
             if (anchors.length === 8) resolve({ anchors, extensions });
             else requestAnimationFrame(sample);

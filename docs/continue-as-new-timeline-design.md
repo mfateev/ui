@@ -628,6 +628,111 @@ IDs or payload data.
 
 ## Testing Strategy
 
+### Codebase consistency requirements
+
+Treat existing behavior as a compatibility contract. Implement this feature by
+extending the current workflow and timeline seams rather than introducing a
+parallel state, routing, fetching, or rendering system.
+
+Before refactoring a shared area, add or confirm characterization coverage for
+its current behavior. At minimum, preserve tests for:
+
+- grouped-event ordering, deduplication, promises, listeners, enrichment, and
+  reset behavior;
+- pinned workflow routing and workflow-tab query propagation;
+- history fetch progress, live polling, and pause/resume behavior; and
+- timeline filtering, sorting, idle collapse, focus, selection, virtualization,
+  and animation.
+
+The following compatibility rules apply throughout implementation:
+
+- Refactor the grouped-event buffer behind its existing module API first.
+  Existing consumers continue to call the module functions through the active
+  buffer handle until a separate cleanup explicitly removes that compatibility
+  layer.
+- Keep the existing workflow stores as read-only compatibility views of
+  `session.active`. Do not create a second independently writable source of run
+  identity or page data.
+- Preserve the current one-run `TimelineGraph` behavior and input path while
+  adding chain-oriented inputs. The `full-duration` mode remains run-scoped.
+- Extend the existing route helpers for workflow mode and query propagation.
+  Components must not construct following URLs independently.
+- Reuse the mounted workflow layout for session ownership, the existing history
+  context pattern for run-scoped access, Holocene controls, translation keys,
+  request/error conventions, and the timeline's existing focus and geometry
+  utilities.
+- Follow the repository conventions in `CLAUDE.md`, including Svelte 5 runes,
+  import ordering, type-only imports, kebab-case filenames, accessibility
+  requirements, and avoiding unnecessary comments.
+
+The implementation must maintain these state invariants:
+
+- The mounted workflow layout is the sole owner of `ChainWorkflowSession`.
+- `session.active.runId` is the sole default run ID for API operations.
+- `page.params.run` identifies the canonical chain URL or an explicitly pinned
+  route; it must not implicitly select the API target while following.
+- Workflow description, buffer identity, history fetch state, runtime resources,
+  full event history, and compatibility stores all represent the same active
+  run and generation.
+- Only `commitActiveRun(...)` may replace active-run identity. The replacement
+  and active-buffer version increment occur in one synchronous publication.
+- Every asynchronous callback validates both its captured session generation
+  and run ID before publishing.
+- Teardown and canceled staging release every timer, controller, listener,
+  subscription, retry, and paused-fetch latch owned by that run.
+
+Add development-only invariant assertions where practical. They should detect a
+workflow model, active buffer, fetch state, poll runtime, or compatibility view
+whose run or generation differs from `session.active`, without recording
+workflow identifiers or payloads in production telemetry.
+
+Before behavioral implementation, establish a compatibility baseline with:
+
+1. characterization tests for current routing, workflow state ownership,
+   grouped-buffer behavior, and single-run timeline rendering;
+2. development assertions for the active-state ownership invariants; and
+3. a one-run integration test that remains a required regression gate for the
+   rest of the implementation.
+
+Every implementation deliverable must include the smallest focused test that
+proves its behavior. Run the repository-wide checks for every deliverable:
+
+```bash
+pnpm check
+pnpm lint
+pnpm test -- --run
+```
+
+Also run the nearest behavioral validation for the changed seam:
+
+- route changes: route utility tests and workflow navigation integration tests;
+- grouped-buffer changes: `grouped-event-buffer.test.ts`;
+- timeline projection or rendering changes: the existing timeline geometry,
+  scale, motion, focus, and component tests;
+- shared-header or query changes: workflow navigation integration tests;
+- handoff and stale-response changes: mocked chain-session integration tests;
+  and
+- live chain behavior: `agent-probe.mjs` against a concrete workflow route.
+
+Use this checklist when reviewing every deliverable:
+
+- Does it extend an existing abstraction where one already exists?
+- Is bare and explicitly pinned single-run behavior unchanged?
+- Does every API operation use the committed active run ID?
+- Are workflow URLs produced only by shared route helpers?
+- Are existing filters, stores, translations, focus rules, and accessibility
+  patterns reused?
+- Can any stale asynchronous operation mutate the current active state?
+- Does disposal release all resources owned by the old or staged run?
+- Does a one-run timeline still render and behave identically?
+- Is each new user-visible behavior covered by an integration test?
+- Does the browser probe report no console errors, uncaught exceptions, failed
+  requests, or empty output?
+
+Following mode is consistent with the existing codebase only when it adds chain
+behavior while pinned mode and the one-run timeline remain observationally
+unchanged.
+
 ### Unit tests
 
 - A bare run URL remains pinned even when the selected run is open.

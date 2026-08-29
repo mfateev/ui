@@ -29,6 +29,26 @@ test.describe('Timeline graph node accessible names', () => {
     ).toBeVisible();
     await expect(
       page.getByRole('button', { name: 'Event customSignal: Signaled' }),
-    ).toBeVisible();
+    ).not.toBeAttached();
+  });
+
+  test('moves focus to the timeline before a focused group is removed', async ({
+    page,
+  }) => {
+    const event = page.getByRole('button', {
+      name: 'Event LongActivity: Scheduled',
+    });
+    const timeline = page.locator('#event-history-timeline-graph');
+
+    await page.locator('button[aria-controls="status-menu"]').click();
+    const activityFilter = page.getByTestId('Activity');
+    await expect(activityFilter).toBeVisible();
+
+    await event.focus();
+    await expect(event).toBeFocused();
+    await activityFilter.evaluate((element: HTMLElement) => element.click());
+
+    await expect(event).not.toBeAttached();
+    await expect(timeline).toBeFocused();
   });
 });

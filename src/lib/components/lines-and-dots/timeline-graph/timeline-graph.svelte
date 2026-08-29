@@ -3,7 +3,7 @@
 
   import { timestamp } from '$lib/components/timestamp.svelte';
   import type { EventGroups } from '$lib/models/event-groups/event-groups';
-  import { activeGroups } from '$lib/stores/active-events';
+  import { activeGroups, clearActiveGroups } from '$lib/stores/active-events';
   import { collapseIdleTime } from '$lib/stores/event-view';
   import { fullEventHistory } from '$lib/stores/events';
   import { eventStatusFilter } from '$lib/stores/filters';
@@ -15,6 +15,7 @@
   import EndTimeInterval from '../end-time-interval.svelte';
   import { GUTTER, RADIUS, ROW_HEIGHT } from './constants';
   import { expandedDurationPerViewportMs } from './timeline-display-mode';
+  import { shouldMoveFocusToTimeline } from './timeline-focus';
   import { timelineGroupIntersectsViewport } from './timeline-group-window';
   import {
     getDescStart,
@@ -184,10 +185,15 @@
   // group count, so subtracting the loaded count is correct.
   const pendingGroupCount = $derived.by(() => {
     if (!loading) return 0;
-    if (!totalExpectedEvents) {
-      return filteredGroups.length === 0 ? 50 : 0;
+    if (displayMode === 'fixed-window') {
+      return visibleGroups.length === 0 && filteredGroups.length === 0
+        ? Math.min(totalExpectedEvents || 50, 50)
+        : 0;
     }
-    return Math.max(0, totalExpectedEvents - filteredGroups.length);
+    if (!totalExpectedEvents) {
+      return visibleGroups.length === 0 ? 50 : 0;
+    }
+    return Math.max(0, totalExpectedEvents - visibleGroups.length);
   });
 
   // Rows mounted beyond the viewport, so edge rows survive small scrolls and
@@ -297,10 +303,10 @@
   );
 
   const groupIndexMap = $derived(
-    new Map(filteredGroups.map((g, i) => [g.id, i])),
+    new Map(visibleGroups.map((g, i) => [g.id, i])),
   );
 
-  // Active group's index in filteredGroups (-1 = none). Derived here so the row
+  // Active group's index in visibleGroups (-1 = none). Derived here so the row
   // pool doesn't subscribe to $activeGroups directly.
   const activeIdx = $derived(
     $activeGroups.length > 0 ? (groupIndexMap.get($activeGroups[0]) ?? -1) : -1,
@@ -308,6 +314,17 @@
 
   $effect(() => {
     if ($activeGroups.length === 0) panelHeight = 0;
+  });
+
+  $effect.pre(() => {
+    const activeGroupId = $activeGroups[0];
+    if (!activeGroupId || visibleGroupIds.has(activeGroupId)) return;
+
+    if (containerEl?.contains(document.activeElement)) {
+      containerEl.focus({ preventScroll: true });
+    }
+    clearActiveGroups();
+    panelHeight = 0;
   });
 
   // Open detail panel pushes rows below the active one down by panelHeight.
@@ -319,11 +336,11 @@
   }
 
   const descStart = $derived(
-    getDescStart(filteredGroups, descMinId, loading, pendingGroupCount),
+    getDescStart(visibleGroups, descMinId, loading, pendingGroupCount),
   );
 
   const totalForY = $derived(
-    getTotalForY(filteredGroups.length, pendingGroupCount, descStart),
+    getTotalForY(visibleGroups.length, pendingGroupCount, descStart),
   );
 
   // Widen the mount window by the panel's row span: shiftFor moves rows down but
@@ -335,10 +352,8 @@
   // Full drawn height (rows + axis + detail panel). The container is this tall and
   // scrolls with the page.
   const timelineHeight = $derived(
-    Math.max(
-      ROW_HEIGHT * (filteredGroups.length + pendingGroupCount + 2),
-      120,
-    ) + panelHeight,
+    Math.max(ROW_HEIGHT * (visibleGroups.length + pendingGroupCount + 2), 120) +
+      panelHeight,
   );
   const AXIS_LABEL_ZONE = 150;
   const svgHeight = $derived(timelineHeight + AXIS_LABEL_ZONE);
@@ -436,7 +451,7 @@
     return getWindowBounds({
       bandTop,
       bandHeight,
-      total: filteredGroups.length,
+      total: visibleGroups.length,
       overscan: windowOverscan,
       reverseSort,
       descStart,
@@ -462,14 +477,13 @@
   // item and re-run the row derived for rows that didn't move.
   let prevSlots: ({ index: number; group: EventGroups[number] } | null)[] = [];
   const pool = $derived.by(() => {
-    const total = filteredGroups.length;
+    const total = visibleGroups.length;
     const slots: ({ index: number; group: EventGroups[number] } | null)[] =
       new Array(poolSize).fill(null);
     const end = Math.min(windowEnd, total, windowStart + poolSize);
     for (let index = windowStart; index < end; index++) {
       const slot = index % poolSize;
-      const group = filteredGroups[index];
-      if (!visibleGroupIds.has(group.id)) continue;
+      const group = visibleGroups[index];
       const prev = prevSlots[slot];
       if (prev && prev.index === index && prev.group === group) {
         slots[slot] = prev;
@@ -479,6 +493,23 @@
     }
     prevSlots = slots;
     return slots;
+  });
+
+  let focusedGroupId = $state<string | null>(null);
+  let focusedSlotIndex = $state<number | null>(null);
+
+  $effect.pre(() => {
+    const moveFocus = shouldMoveFocusToTimeline({
+      focusedGroupId,
+      focusedSlotIndex,
+      visibleGroupIds,
+      slotGroupIds: pool.map((slot) => slot?.group.id ?? null),
+    });
+
+    if (!moveFocus) return;
+    containerEl?.focus({ preventScroll: true });
+    focusedGroupId = null;
+    focusedSlotIndex = null;
   });
 
   const getY = $derived.by(
@@ -507,6 +538,7 @@
   )}
   style:height="{svgHeight}px"
   bind:this={containerEl}
+  tabindex="-1"
 >
   <EndTimeInterval {workflow} {startTime} bind:currentTime={nowMs}>
     {#snippet children({ endTime })}
@@ -580,6 +612,8 @@
         <ul class="pointer-events-none absolute inset-0 m-0 list-none p-0">
           {#each pool as slot, slotIndex (slotIndex)}
             <li
+              data-group-id={slot?.group.id}
+              data-slot-index={slotIndex}
               class="absolute left-0 right-0 top-0"
               style:display={slot ? 'block' : 'none'}
               style:height="{ROW_HEIGHT}px"
@@ -587,6 +621,10 @@
               style:transform={slot
                 ? `translateY(${getY(slot.index) - ROW_HEIGHT / 2 + shiftFor(slot.index)}px)`
                 : undefined}
+              onfocusin={() => {
+                focusedGroupId = slot?.group.id ?? null;
+                focusedSlotIndex = slot ? slotIndex : null;
+              }}
             >
               {#if slot}
                 <TimelineGraphRow
@@ -604,7 +642,7 @@
         {#if loading && pendingGroupCount > 0}
           {@const rectY = getPendingBlockY({
             descStart,
-            filteredGroupsLength: filteredGroups.length,
+            filteredGroupsLength: visibleGroups.length,
             reverseSort,
           })}
           {@const rectH = pendingGroupCount * ROW_HEIGHT + RADIUS}
@@ -619,7 +657,7 @@
 
         <!-- Last child so it paints above rows; onHeight feeds shiftFor. -->
         {#if !readOnly && activeIdx >= 0}
-          {@const activeGroup = filteredGroups[activeIdx]}
+          {@const activeGroup = visibleGroups[activeIdx]}
           {#if activeGroup}
             {@const panelY = getY(activeIdx) + 1.33 * RADIUS}
             <GroupDetailsRow

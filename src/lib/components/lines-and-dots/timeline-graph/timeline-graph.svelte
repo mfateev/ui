@@ -591,7 +591,14 @@
           {scale}
           viewportOffsetPx={viewport.offsetPx}
         />
-        <WorkflowRow {workflow} y={ROW_HEIGHT} length={canvasWidth} />
+        <WorkflowRow
+          {workflow}
+          y={ROW_HEIGHT}
+          {canvasWidth}
+          startWorldPx={scale.project(timeline.workflowTimespan.startTimeMs)}
+          endWorldPx={scale.project(timeline.workflowTimespan.endTimeMs)}
+          viewportOffsetPx={viewport.offsetPx}
+        />
         {#if !loading}
           <!-- Anchor's left provides the gutter offset for the layer's 0-based coords. -->
           <div class="absolute top-0" style:left="{GUTTER}px">

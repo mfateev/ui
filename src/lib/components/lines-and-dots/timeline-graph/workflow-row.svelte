@@ -7,20 +7,45 @@
   import { GUTTER, ROW_HEIGHT } from './constants';
   import { dotBox, lineBox } from './primitives';
   import { dotColors, strokeColor } from '../colors';
+  import { getWorkflowRowGeometry } from './workflow-row-geometry';
 
   interface Props {
     workflow: WorkflowExecution;
-    length: number;
+    canvasWidth: number;
     y: number;
+    startWorldPx: number;
+    endWorldPx: number;
+    viewportOffsetPx: number;
   }
 
-  let { workflow, length, y }: Props = $props();
+  let {
+    workflow,
+    canvasWidth,
+    y,
+    startWorldPx,
+    endWorldPx,
+    viewportOffsetPx,
+  }: Props = $props();
 
   const centerY = ROW_HEIGHT / 2;
 
-  const start = GUTTER;
-  const end = $derived(start + length - 2 * GUTTER);
-  const lineBounds = $derived(lineBox([start, centerY], [end, centerY]));
+  const geometry = $derived(
+    getWorkflowRowGeometry({
+      startWorldPx,
+      endWorldPx,
+      viewportOffsetPx,
+      viewportWidthPx: canvasWidth - 2 * GUTTER,
+      gutterPx: GUTTER,
+    }),
+  );
+  const lineBounds = $derived(
+    geometry.line
+      ? lineBox(
+          [geometry.line.startPx, centerY],
+          [geometry.line.endPx, centerY],
+        )
+      : null,
+  );
   const color = $derived(
     strokeColor({
       status: workflow.status,
@@ -46,17 +71,19 @@
   style:top="{y - centerY}px"
   style:height="{ROW_HEIGHT}px"
 >
-  <div
-    class="tl-line absolute"
-    class:tl-line--dashed={workflow.isRunning}
-    class:tl-line--animate={workflow.isRunning}
-    style:left="{lineBounds.left}px"
-    style:top="{lineBounds.top}px"
-    style:width="{lineBounds.width}px"
-    style:height="{lineBounds.height}px"
-    style:--tl-line-color={color}
-  ></div>
-  {#each [start, end] as pointX (pointX)}
+  {#if lineBounds}
+    <div
+      class="tl-line absolute"
+      class:tl-line--dashed={workflow.isRunning}
+      class:tl-line--animate={workflow.isRunning}
+      style:left="{lineBounds.left}px"
+      style:top="{lineBounds.top}px"
+      style:width="{lineBounds.width}px"
+      style:height="{lineBounds.height}px"
+      style:--tl-line-color={color}
+    ></div>
+  {/if}
+  {#each [geometry.startDotPx, geometry.endDotPx].filter((point) => point !== null) as pointX (pointX)}
     {@const dotBounds = dotBox(pointX, centerY)}
     <div
       class="absolute h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"

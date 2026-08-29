@@ -78,6 +78,8 @@
       class:tl-line--dashed={workflowIsLive}
       class:tl-line--animate={workflowIsLive}
       class:tl-line--live={workflowIsLive}
+      class:tl-line--viewport-clipped-start={workflowIsLive &&
+        startWorldPx < viewportOffsetPx}
       style:left="{lineBounds.left}px"
       style:top="{lineBounds.top}px"
       style:width="{workflowIsLive ? canvasWidth : lineBounds.width}px"

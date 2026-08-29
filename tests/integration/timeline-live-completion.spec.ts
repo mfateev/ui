@@ -429,6 +429,43 @@ test.describe('Timeline live completion', () => {
     expect(range(liveEdgePositions.anchors)).toBeLessThan(1);
     expect(range(liveEdgePositions.extensions)).toBeLessThan(1);
 
+    const clippedPatternCommitDelta = await timeline.evaluate(
+      (element) =>
+        new Promise<number>((resolve) => {
+          let previous:
+            | { viewportOffset: number; patternOrigin: number }
+            | undefined;
+          const sample = () => {
+            const line = element.querySelector(
+              '.tl-line--viewport-clipped-start',
+            );
+            if (line) {
+              const pseudo = getComputedStyle(line, '::after');
+              const translateX = Number.parseFloat(pseudo.translate) || 0;
+              const current = {
+                viewportOffset: Number(
+                  element.getAttribute('data-viewport-offset'),
+                ),
+                patternOrigin: line.getBoundingClientRect().left + translateX,
+              };
+              if (
+                previous &&
+                Math.abs(current.viewportOffset - previous.viewportOffset) > 1
+              ) {
+                resolve(
+                  Math.abs(current.patternOrigin - previous.patternOrigin),
+                );
+                return;
+              }
+              previous = current;
+            }
+            requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        }),
+    );
+    expect(clippedPatternCommitDelta).toBeLessThan(1);
+
     await page.getByTestId('pause').click();
     await expect(timeline).toHaveAttribute('data-live-paused', 'true');
     await expect(timeline).toHaveAttribute('data-viewport-following', 'false');

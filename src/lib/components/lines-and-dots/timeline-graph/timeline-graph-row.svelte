@@ -228,6 +228,7 @@
     gradient?: boolean;
     dim?: number;
     liveEdge?: boolean;
+    viewportClippedStart?: boolean;
   },
 )}
   {@const bounds = lineBox([leftX, spanCy], [rightX, spanCy])}
@@ -237,6 +238,7 @@
     class:tl-line--dashed={opts.dashed}
     class:tl-line--animate={opts.animate}
     class:tl-line--live={opts.liveEdge}
+    class:tl-line--viewport-clipped-start={opts.viewportClippedStart}
     style:left="{bounds.left}px"
     style:top="{bounds.top}px"
     style:width="{opts.liveEdge ? canvasWidth : bounds.width}px"
@@ -308,6 +310,7 @@
             dashed: visibleConnector.pending,
             animate: visibleConnector.pending,
             liveEdge: visibleConnector.pending,
+            viewportClippedStart: visibleConnector.startPx <= GUTTER,
           },
         )}
       {/each}

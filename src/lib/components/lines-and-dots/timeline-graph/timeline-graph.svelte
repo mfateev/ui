@@ -899,6 +899,14 @@
     will-change: transform;
   }
 
+  /* A connector clipped to the stationary left rail does not reproject its
+     local origin at coarse clock commits. Counter the parent layer's smooth
+     offset so its repeating pattern keeps the same screen-space phase. */
+  .canvas :global(.tl-line--viewport-clipped-start)::after {
+    translate: var(--timeline-frame-offset, 0) 0;
+    will-change: transform, translate;
+  }
+
   @keyframes tl-line-dash {
     to {
       transform: translateX(-6px);

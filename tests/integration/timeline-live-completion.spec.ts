@@ -133,10 +133,25 @@ test.describe('Timeline live completion', () => {
     const timeline = page.locator('#event-history-timeline-graph');
     const viewportOffset = async () =>
       Number(await timeline.getAttribute('data-viewport-offset'));
+    const axisWorldTicks = async () =>
+      page
+        .locator('[data-timeline-axis-world-px]')
+        .evaluateAll((ticks) =>
+          ticks.map((tick) =>
+            Number(tick.getAttribute('data-timeline-axis-world-px')),
+          ),
+        );
     const initialOffset = await viewportOffset();
+    const initialAxisWorldTicks = await axisWorldTicks();
     await expect
       .poll(viewportOffset, { timeout: 3_000 })
       .toBeGreaterThan(initialOffset);
+    const advancedAxisWorldTicks = await axisWorldTicks();
+    expect(
+      initialAxisWorldTicks.filter((tick) =>
+        advancedAxisWorldTicks.includes(tick),
+      ).length,
+    ).toBeGreaterThan(0);
 
     const frameOffsets = await timeline.evaluate(
       (element) =>

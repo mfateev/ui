@@ -87,6 +87,7 @@
   {#each ticks as tick (tick.worldPx)}
     <div
       class="grid-line top-0"
+      data-timeline-axis-world-px={tick.worldPx}
       style:left="{tick.screenPx}px"
       style:height="{timelineHeight}px"
     ></div>

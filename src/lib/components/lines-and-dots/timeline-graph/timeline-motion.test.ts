@@ -33,6 +33,20 @@ describe('TimelineMotion', () => {
     expect(frame(motion, { nowMs: 1_750, committedOffsetPx: 105 })).toBe(2.5);
   });
 
+  it('preserves the effective visual offset across an uneven coarse update', () => {
+    const motion = new TimelineMotion();
+    frame(motion);
+    expect(frame(motion, { nowMs: 1_500 })).toBe(5);
+
+    const rebased = frame(motion, {
+      nowMs: 1_500,
+      committedOffsetPx: 108,
+    });
+    expect(rebased).toBe(-3);
+    expect(108 + rebased).toBe(105);
+    expect(frame(motion, { nowMs: 1_750, committedOffsetPx: 108 })).toBe(-0.5);
+  });
+
   it('holds the current frame offset while paused', () => {
     const motion = new TimelineMotion();
     frame(motion);

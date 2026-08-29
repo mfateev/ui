@@ -9,6 +9,7 @@ interface TimelineMotionFrame {
 export class TimelineMotion {
   private _baseTimeMs: number | null = null;
   private _baseOffsetPx = 0;
+  private _baseFrameOffsetPx = 0;
   private _frameOffsetPx = 0;
 
   nextFrame({
@@ -25,23 +26,35 @@ export class TimelineMotion {
       return 0;
     }
 
-    if (this._baseTimeMs === null || committedOffsetPx !== this._baseOffsetPx) {
+    if (this._baseTimeMs === null) {
       this._baseTimeMs = nowMs;
       this._baseOffsetPx = committedOffsetPx;
+      this._baseFrameOffsetPx = 0;
       this._frameOffsetPx = 0;
       return 0;
     }
 
-    this._frameOffsetPx = Math.max(
-      0,
-      (nowMs - this._baseTimeMs) * expandedPxPerMs,
-    );
+    if (committedOffsetPx !== this._baseOffsetPx) {
+      const effectiveOffsetPx =
+        this._baseOffsetPx +
+        this._baseFrameOffsetPx +
+        (nowMs - this._baseTimeMs) * expandedPxPerMs;
+      this._baseTimeMs = nowMs;
+      this._baseOffsetPx = committedOffsetPx;
+      this._baseFrameOffsetPx = effectiveOffsetPx - committedOffsetPx;
+      this._frameOffsetPx = this._baseFrameOffsetPx;
+      return this._frameOffsetPx;
+    }
+
+    this._frameOffsetPx =
+      this._baseFrameOffsetPx + (nowMs - this._baseTimeMs) * expandedPxPerMs;
     return this._frameOffsetPx;
   }
 
   private _reset(committedOffsetPx: number): void {
     this._baseTimeMs = null;
     this._baseOffsetPx = committedOffsetPx;
+    this._baseFrameOffsetPx = 0;
     this._frameOffsetPx = 0;
   }
 }

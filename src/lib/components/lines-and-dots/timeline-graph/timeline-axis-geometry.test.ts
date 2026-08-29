@@ -45,6 +45,37 @@ describe('getTimelineAxisTicks', () => {
     ]);
   });
 
+  it('keeps tick world identities stable as the viewport advances', () => {
+    const initial = getTimelineAxisTicks({
+      screenStartPx: 20,
+      screenEndPx: 220,
+      gutterPx: 20,
+      viewportOffsetPx: 300,
+      collapsedWorldRanges: [],
+      targetTickPx: 50,
+    });
+    const advanced = getTimelineAxisTicks({
+      screenStartPx: 20,
+      screenEndPx: 220,
+      gutterPx: 20,
+      viewportOffsetPx: 310,
+      collapsedWorldRanges: [],
+      targetTickPx: 50,
+    });
+
+    expect(initial).toEqual([
+      { screenPx: 70, worldPx: 350 },
+      { screenPx: 120, worldPx: 400 },
+      { screenPx: 170, worldPx: 450 },
+    ]);
+    expect(advanced).toEqual([
+      { screenPx: 60, worldPx: 350 },
+      { screenPx: 110, worldPx: 400 },
+      { screenPx: 160, worldPx: 450 },
+      { screenPx: 210, worldPx: 500 },
+    ]);
+  });
+
   it('keeps tick density bounded for very small and large viewports', () => {
     expect(
       getTimelineAxisTicks({

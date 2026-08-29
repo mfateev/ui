@@ -185,7 +185,7 @@
       );
       element.style.setProperty(
         '--timeline-frame-offset-value',
-        String(frameOffsetPx),
+        String(Math.max(0, frameOffsetPx)),
       );
       element.dataset.frameOffset = String(frameOffsetPx);
       animationFrame = requestAnimationFrame(renderFrame);

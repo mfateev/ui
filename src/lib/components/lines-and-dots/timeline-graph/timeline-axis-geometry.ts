@@ -44,18 +44,25 @@ export function getTimelineAxisTicks({
     gutterPx,
     viewportOffsetPx,
   );
-  const worldDistancePx = screenDistancePx;
-  const tickDistancePx = worldDistancePx / tickCount;
+  const worldEndPx = worldStartPx + screenDistancePx;
+  const tickDistancePx = screenDistancePx / tickCount;
+  if (tickDistancePx <= 0) return [];
 
-  return Array.from({ length: tickCount }, (_, index) => {
-    const worldPx = worldStartPx + index * tickDistancePx;
+  // Anchor ticks to the world origin. Deriving them from the viewport start
+  // gives every tick a new world coordinate whenever following advances,
+  // causing the entire grid to disappear and reappear on each coarse update.
+  const firstTickIndex = Math.floor(worldStartPx / tickDistancePx) + 1;
+  const endTickIndex = Math.ceil(worldEndPx / tickDistancePx);
+  const visibleTickCount = Math.max(0, endTickIndex - firstTickIndex);
+
+  return Array.from({ length: visibleTickCount }, (_, index) => {
+    const worldPx = (firstTickIndex + index) * tickDistancePx;
     return {
       worldPx,
-      screenPx: screenStartPx + index * tickDistancePx,
+      screenPx: screenStartPx + worldPx - worldStartPx,
     };
   }).filter(
-    ({ worldPx }, index) =>
-      index !== 0 &&
+    ({ worldPx }) =>
       !collapsedWorldRanges.some(
         ({ startPx, endPx }) => worldPx >= startPx && worldPx <= endPx,
       ),

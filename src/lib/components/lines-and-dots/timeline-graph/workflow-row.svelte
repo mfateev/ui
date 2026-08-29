@@ -82,11 +82,23 @@
       style:height="{lineBounds.height}px"
       style:--tl-line-color={color}
     ></div>
+    {#if workflow.isRunning}
+      <div
+        class="tl-line tl-line--dashed tl-live-edge-extension absolute"
+        style:left="{lineBounds.left + lineBounds.width}px"
+        style:top="{lineBounds.top}px"
+        style:width="1px"
+        style:height="{lineBounds.height}px"
+        style:--tl-line-color={color}
+      ></div>
+    {/if}
   {/if}
   {#each [geometry.startDotPx, geometry.endDotPx].filter((point) => point !== null) as pointX (pointX)}
     {@const dotBounds = dotBox(pointX, centerY)}
     <div
       class="absolute h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"
+      class:timeline-live-edge-anchor={workflow.isRunning &&
+        pointX === geometry.endDotPx}
       style:left="{dotBounds.left}px"
       style:top="{dotBounds.top}px"
       style:border-color={colors.stroke}

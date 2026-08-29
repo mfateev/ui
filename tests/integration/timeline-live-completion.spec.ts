@@ -152,6 +152,29 @@ test.describe('Timeline live completion', () => {
     );
     expect(new Set(frameOffsets).size).toBeGreaterThan(1);
 
+    const liveEdgePositions = await timeline.evaluate(
+      (element) =>
+        new Promise<{ anchors: number[]; extensions: number[] }>((resolve) => {
+          const anchors: number[] = [];
+          const extensions: number[] = [];
+          const sample = () => {
+            const anchor = element.querySelector('.timeline-live-edge-anchor');
+            const extension = element.querySelector('.tl-live-edge-extension');
+            if (anchor && extension) {
+              anchors.push(anchor.getBoundingClientRect().right);
+              extensions.push(extension.getBoundingClientRect().right);
+            }
+            if (anchors.length === 8) resolve({ anchors, extensions });
+            else requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        }),
+    );
+    const range = (values: number[]) =>
+      Math.max(...values) - Math.min(...values);
+    expect(range(liveEdgePositions.anchors)).toBeLessThan(1);
+    expect(range(liveEdgePositions.extensions)).toBeLessThan(1);
+
     await page.getByTestId('pause').click();
     await expect(timeline).toHaveAttribute('data-live-paused', 'true');
     await expect(timeline).toHaveAttribute('data-viewport-following', 'false');

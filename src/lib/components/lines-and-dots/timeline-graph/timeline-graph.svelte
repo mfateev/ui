@@ -183,6 +183,10 @@
         '--timeline-frame-offset',
         `${frameOffsetPx}px`,
       );
+      element.style.setProperty(
+        '--timeline-frame-offset-value',
+        String(frameOffsetPx),
+      );
       element.dataset.frameOffset = String(frameOffsetPx);
       animationFrame = requestAnimationFrame(renderFrame);
     };
@@ -762,6 +766,18 @@
      The coarse viewport update repositions these hit targets often enough to
      remain aligned without making pointer and keyboard interaction chase rAF. */
   .canvas :global(.timeline-motion-hit-target) {
+    transform: translateX(var(--timeline-frame-offset, 0));
+  }
+
+  /* Live geometry reaches the right edge on each coarse clock tick. Extend its
+     painted endpoint by the inter-tick offset while the layer translates left,
+     keeping the edge stationary without recomputing row geometry per frame. */
+  .canvas :global(.tl-live-edge-extension) {
+    transform: scaleX(var(--timeline-frame-offset-value, 0));
+    transform-origin: left center;
+  }
+
+  .canvas :global(.timeline-live-edge-anchor) {
     transform: translateX(var(--timeline-frame-offset, 0));
   }
 

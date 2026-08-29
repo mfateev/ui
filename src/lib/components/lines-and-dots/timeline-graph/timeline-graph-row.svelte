@@ -208,6 +208,7 @@
     animate?: boolean;
     gradient?: boolean;
     dim?: number;
+    liveEdge?: boolean;
   },
 )}
   {@const bounds = lineBox([leftX, spanCy], [rightX, spanCy])}
@@ -223,6 +224,17 @@
     style:--tl-line-color={color}
     style:opacity={opts.dim || null}
   ></div>
+  {#if opts.liveEdge}
+    <div
+      class="tl-line tl-live-edge-extension absolute"
+      class:tl-line--dashed={opts.dashed}
+      style:left="{bounds.left + bounds.width}px"
+      style:top="{bounds.top}px"
+      style:width="1px"
+      style:height="{bounds.height}px"
+      style:--tl-line-color={color}
+    ></div>
+  {/if}
 {/snippet}
 
 {#snippet dot(
@@ -285,6 +297,7 @@
                 : undefined,
             dashed: visibleConnector.pending,
             animate: visibleConnector.pending,
+            liveEdge: visibleConnector.pending,
           },
         )}
       {/each}

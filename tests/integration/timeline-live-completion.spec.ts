@@ -138,12 +138,31 @@ test.describe('Timeline live completion', () => {
       .poll(viewportOffset, { timeout: 3_000 })
       .toBeGreaterThan(initialOffset);
 
+    const frameOffsets = await timeline.evaluate(
+      (element) =>
+        new Promise<number[]>((resolve) => {
+          const offsets: number[] = [];
+          const sample = () => {
+            offsets.push(Number((element as HTMLElement).dataset.frameOffset));
+            if (offsets.length === 4) resolve(offsets);
+            else requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        }),
+    );
+    expect(new Set(frameOffsets).size).toBeGreaterThan(1);
+
     await page.getByTestId('pause').click();
     await expect(timeline).toHaveAttribute('data-live-paused', 'true');
     await expect(timeline).toHaveAttribute('data-viewport-following', 'false');
     const frozenOffset = await viewportOffset();
+    const frozenFrameOffset = await timeline.getAttribute('data-frame-offset');
     await page.waitForTimeout(1_200);
     expect(await viewportOffset()).toBe(frozenOffset);
+    await expect(timeline).toHaveAttribute(
+      'data-frame-offset',
+      frozenFrameOffset ?? '0',
+    );
 
     await page.getByTestId('pause').click();
     await expect(timeline).toHaveAttribute('data-live-paused', 'false');

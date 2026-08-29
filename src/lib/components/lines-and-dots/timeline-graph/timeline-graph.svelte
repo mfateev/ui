@@ -17,6 +17,7 @@
   import { expandedDurationPerViewportMs } from './timeline-display-mode';
   import { shouldMoveFocusToTimeline } from './timeline-focus';
   import { timelineGroupIntersectsViewport } from './timeline-group-window';
+  import { TimelineMotion } from './timeline-motion';
   import {
     getDescStart,
     getPendingBlockY,
@@ -131,6 +132,7 @@
   });
 
   const viewport = new Viewport();
+  const timelineMotion = new TimelineMotion();
 
   $effect(() => {
     onTimelineInit?.(timeline);
@@ -151,6 +153,39 @@
       workflowIsLive: workflow.isRunning || workflow.isPaused,
       totalWorldWidthPx: scale.totalWorldWidthPx,
     });
+  });
+
+  // Smooth only the already-rendered world layers. Membership, ticks, and the
+  // segment collection continue to update on the coarse live clock.
+  $effect(() => {
+    const element = containerEl;
+    if (!element) return;
+
+    let animationFrame = 0;
+    const renderFrame = (frameTimeMs: number) => {
+      const workflowIsLive = workflow.isRunning || workflow.isPaused;
+      const frameOffsetPx = timelineMotion.nextFrame({
+        nowMs: frameTimeMs,
+        committedOffsetPx: viewport.offsetPx,
+        expandedPxPerMs: scale.expandedPxPerMs,
+        animate:
+          displayMode === 'fixed-window' &&
+          workflowIsLive &&
+          viewport.isFollowing &&
+          viewport.offsetPx > 0,
+        freeze:
+          displayMode === 'fixed-window' && workflowIsLive && $pauseLiveUpdates,
+      });
+      element.style.setProperty(
+        '--timeline-frame-offset',
+        `${frameOffsetPx}px`,
+      );
+      element.dataset.frameOffset = String(frameOffsetPx);
+      animationFrame = requestAnimationFrame(renderFrame);
+    };
+
+    animationFrame = requestAnimationFrame(renderFrame);
+    return () => cancelAnimationFrame(animationFrame);
   });
 
   const projectX = (time: ValidTime | undefined | null): number => {
@@ -604,17 +639,22 @@
           {scale}
           viewportOffsetPx={viewport.offsetPx}
         />
-        <WorkflowRow
-          {workflow}
-          y={ROW_HEIGHT}
-          {canvasWidth}
-          startWorldPx={scale.project(timeline.workflowTimespan.startTimeMs)}
-          endWorldPx={scale.project(timeline.workflowTimespan.endTimeMs)}
-          viewportOffsetPx={viewport.offsetPx}
-        />
+        <div class="timeline-motion-layer absolute inset-0">
+          <WorkflowRow
+            {workflow}
+            y={ROW_HEIGHT}
+            {canvasWidth}
+            startWorldPx={scale.project(timeline.workflowTimespan.startTimeMs)}
+            endWorldPx={scale.project(timeline.workflowTimespan.endTimeMs)}
+            viewportOffsetPx={viewport.offsetPx}
+          />
+        </div>
         {#if !loading}
           <!-- Anchor's left provides the gutter offset for the layer's 0-based coords. -->
-          <div class="absolute top-0" style:left="{GUTTER}px">
+          <div
+            class="timeline-motion-layer absolute top-0"
+            style:left="{GUTTER}px"
+          >
             <TimelineCollapsedLayer
               {scale}
               {timelineHeight}
@@ -650,13 +690,15 @@
               }}
             >
               {#if slot}
-                <TimelineGraphRow
-                  group={slot.group}
-                  eventCount={slot.group.eventList.length}
-                  {canvasWidth}
-                  project={projectX}
-                  {readOnly}
-                />
+                <div class="timeline-motion-layer absolute inset-0">
+                  <TimelineGraphRow
+                    group={slot.group}
+                    eventCount={slot.group.eventList.length}
+                    {canvasWidth}
+                    project={projectX}
+                    {readOnly}
+                  />
+                </div>
               {/if}
             </li>
           {/each}
@@ -706,6 +748,11 @@
     position: relative;
     margin-top: -1rem;
     color: rgb(var(--color-text-primary));
+  }
+
+  .canvas :global(.timeline-motion-layer) {
+    transform: translateX(calc(-1 * var(--timeline-frame-offset, 0px)));
+    will-change: transform;
   }
 
   /* Connector-line styles for the row components' `.tl-line` divs; :global since

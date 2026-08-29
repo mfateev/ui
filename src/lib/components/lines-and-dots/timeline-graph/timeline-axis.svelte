@@ -83,24 +83,26 @@
   style:height="{baselineWidth}px"
 ></div>
 
-{#each ticks as tick (tick.worldPx)}
-  <div
-    class="grid-line top-0"
-    style:left="{tick.screenPx}px"
-    style:height="{timelineHeight}px"
-  ></div>
-  <div
-    class="tick-label"
-    style:left="{tick.screenPx}px"
-    style:top="{timelineHeight + RADIUS}px"
-  >
-    {formatDistanceAbbreviated({
-      start: startTime,
-      end: new Date(scale.unproject(tick.worldPx)),
-      includeMilliseconds,
-    })}
-  </div>
-{/each}
+<div class="timeline-motion-layer absolute inset-0">
+  {#each ticks as tick (tick.worldPx)}
+    <div
+      class="grid-line top-0"
+      style:left="{tick.screenPx}px"
+      style:height="{timelineHeight}px"
+    ></div>
+    <div
+      class="tick-label"
+      style:left="{tick.screenPx}px"
+      style:top="{timelineHeight + RADIUS}px"
+    >
+      {formatDistanceAbbreviated({
+        start: startTime,
+        end: new Date(scale.unproject(tick.worldPx)),
+        includeMilliseconds,
+      })}
+    </div>
+  {/each}
+</div>
 
 <style lang="postcss">
   .baseline {

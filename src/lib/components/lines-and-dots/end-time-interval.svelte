@@ -43,6 +43,9 @@
     if (workflow.endTime) return;
     if (!(workflow.isRunning || workflow.isPaused)) return;
 
+    // Resume from the actual current time immediately instead of waiting for
+    // the first interval tick with a stale frozen clock.
+    currentTime = Date.now();
     const interval = setInterval(() => {
       currentTime = Date.now();
     }, 1000);

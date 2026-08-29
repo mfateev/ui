@@ -5,7 +5,7 @@
   import type { EventGroups } from '$lib/models/event-groups/event-groups';
   import { activeGroups, clearActiveGroups } from '$lib/stores/active-events';
   import { collapseIdleTime } from '$lib/stores/event-view';
-  import { fullEventHistory } from '$lib/stores/events';
+  import { fullEventHistory, pauseLiveUpdates } from '$lib/stores/events';
   import { eventStatusFilter } from '$lib/stores/filters';
   import type { WorkflowExecution } from '$lib/types/workflows';
   import { isWorkflowDelayed } from '$lib/utilities/delayed-workflows';
@@ -24,6 +24,7 @@
     getTotalForY,
   } from './timeline-positioning';
   import type { TimelineDisplayMode } from './types';
+  import { syncTimelineViewport } from './viewport-lifecycle';
 
   import GroupDetailsRow from './group-details-row.svelte';
   import TimelineAxis from './timeline-axis.svelte';
@@ -138,6 +139,16 @@
   $effect(() => {
     viewport.setGeometry({
       widthPx: timelineWidth,
+      totalWorldWidthPx: scale.totalWorldWidthPx,
+    });
+  });
+
+  $effect(() => {
+    syncTimelineViewport({
+      viewport,
+      displayMode,
+      paused: $pauseLiveUpdates,
+      workflowIsLive: workflow.isRunning || workflow.isPaused,
       totalWorldWidthPx: scale.totalWorldWidthPx,
     });
   });
@@ -532,6 +543,8 @@
   id="event-history-timeline-graph"
   data-display-mode={displayMode}
   data-viewport-offset={viewport.offsetPx}
+  data-viewport-following={viewport.isFollowing}
+  data-live-paused={$pauseLiveUpdates}
   class={twMerge(
     'relative overflow-hidden border border-t-0 border-subtle bg-primary',
     error && 'bg-danger',

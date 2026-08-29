@@ -25,12 +25,17 @@ const { workflowId, runId } = mockWorkflow.workflowExecutionInfo.execution;
 const timelineUrl = `/namespaces/default/workflows/${workflowId}/${runId}/timeline`;
 
 // Activity scheduled + started, not yet completed.
+const liveEventTime = new Date(Date.now() - 2_000).toISOString();
+const atLiveTime = <T extends { eventTime: string }>(event: T): T => ({
+  ...event,
+  eventTime: liveEventTime,
+});
 const inProgress = [
-  makeWorkflowStarted(1),
-  makeActivityScheduled(2, 'DeployNetwork'),
-  makeActivityStarted(3, 2),
+  atLiveTime(makeWorkflowStarted(1)),
+  atLiveTime(makeActivityScheduled(2, 'DeployNetwork')),
+  atLiveTime(makeActivityStarted(3, 2)),
 ];
-const completion = makeActivityCompleted(4, 2, 3);
+const completion = atLiveTime(makeActivityCompleted(4, 2, 3));
 
 const historyPage = (events: unknown[]) => ({
   history: { events },
@@ -74,8 +79,11 @@ test.describe('Timeline live completion', () => {
     await page.route(EVENT_HISTORY_API, async (route) => {
       if (route.request().url().includes('waitNewEvent=true')) {
         if (!completionDelivered) {
-          completionDelivered = true;
           await completionHeld;
+          if (completionDelivered) {
+            return route.fulfill({ json: historyPage([]) });
+          }
+          completionDelivered = true;
           return route.fulfill({ json: historyPage([completion]) });
         }
         return route.fulfill({ json: historyPage([]) });
@@ -100,5 +108,48 @@ test.describe('Timeline live completion', () => {
     // ...then flips to Completed once the live completion arrives — no reload.
     releaseCompletion();
     await expect(completedButton).toBeVisible();
+  });
+
+  test('freezes the viewport while paused and follows the latest edge after resume', async ({
+    page,
+  }) => {
+    await mockWorkflowApis(page, runningWorkflow);
+    await page.route(EVENT_HISTORY_API, async (route) => {
+      if (route.request().url().includes('waitNewEvent=true')) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return route.fulfill({ json: historyPage([]) });
+      }
+      return route.fulfill({ json: historyPage(inProgress) });
+    });
+    await page.route(EVENT_HISTORY_API_REVERSE, (route) =>
+      route.fulfill({ json: historyPage([...inProgress].reverse()) }),
+    );
+
+    await page.goto(timelineUrl);
+    await expect(
+      page.getByRole('button', { name: /^Event DeployNetwork:/ }),
+    ).toBeVisible();
+
+    const timeline = page.locator('#event-history-timeline-graph');
+    const viewportOffset = async () =>
+      Number(await timeline.getAttribute('data-viewport-offset'));
+    const initialOffset = await viewportOffset();
+    await expect
+      .poll(viewportOffset, { timeout: 3_000 })
+      .toBeGreaterThan(initialOffset);
+
+    await page.getByTestId('pause').click();
+    await expect(timeline).toHaveAttribute('data-live-paused', 'true');
+    await expect(timeline).toHaveAttribute('data-viewport-following', 'false');
+    const frozenOffset = await viewportOffset();
+    await page.waitForTimeout(1_200);
+    expect(await viewportOffset()).toBe(frozenOffset);
+
+    await page.getByTestId('pause').click();
+    await expect(timeline).toHaveAttribute('data-live-paused', 'false');
+    await expect(timeline).toHaveAttribute('data-viewport-following', 'true');
+    await expect
+      .poll(viewportOffset, { timeout: 3_000 })
+      .toBeGreaterThan(frozenOffset);
   });
 });

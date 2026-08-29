@@ -181,7 +181,7 @@
       aria-label={seg.isCollapsed
         ? translate('workflows.show-idle-time-segment', { distance })
         : translate('workflows.hide-idle-time-segment', { distance })}
-      class="absolute top-0 m-0 cursor-pointer border-0 bg-current p-0 opacity-0 outline-none transition-opacity duration-100 ease-in-out hover:opacity-20 focus-visible:opacity-20"
+      class="timeline-motion-hit-target absolute top-0 m-0 cursor-pointer border-0 bg-current p-0 opacity-0 outline-none transition-opacity duration-100 ease-in-out hover:opacity-20 focus-visible:opacity-20"
       style:left="{segmentWindow.hitRange.startPx}px"
       style:width="{Math.max(
         1,

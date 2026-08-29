@@ -758,6 +758,13 @@
     will-change: transform;
   }
 
+  /* Keep interactive overlays stable while their painted segment layer glides.
+     The coarse viewport update repositions these hit targets often enough to
+     remain aligned without making pointer and keyboard interaction chase rAF. */
+  .canvas :global(.timeline-motion-hit-target) {
+    transform: translateX(var(--timeline-frame-offset, 0));
+  }
+
   /* Connector-line styles for the row components' `.tl-line` divs; :global since
      they're in children, scoped under .canvas so they don't leak. Elements set
      geometry + --tl-line-color inline. border-radius: 9999px → pill ends. */

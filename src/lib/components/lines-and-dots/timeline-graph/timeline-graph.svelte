@@ -589,6 +589,7 @@
           {timelineHeight}
           {startTime}
           {scale}
+          viewportOffsetPx={viewport.offsetPx}
         />
         <WorkflowRow {workflow} y={ROW_HEIGHT} length={canvasWidth} />
         {#if !loading}

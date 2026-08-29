@@ -3,6 +3,10 @@
   import { formatDistanceAbbreviated } from '$lib/utilities/format-time';
 
   import { RADIUS } from './constants';
+  import {
+    getTimelineAxisTicks,
+    screenToTimelineWorld,
+  } from './timeline-axis-geometry';
 
   import type { TimelineScale } from './timeline-scale.svelte';
 
@@ -13,6 +17,7 @@
     timelineHeight: number;
     startTime: string | Timestamp;
     scale: TimelineScale;
+    viewportOffsetPx: number;
   };
   let {
     x1 = 0,
@@ -21,6 +26,7 @@
     timelineHeight = 1000,
     startTime,
     scale,
+    viewportOffsetPx = 0,
   }: Props = $props();
 
   const TARGET_TICK_PX = 60;
@@ -34,31 +40,35 @@
       Math.max(MIN_TICKS, Math.round(distance / TARGET_TICK_PX)),
     ),
   );
-  const tickDistance = $derived(distance / tickCount);
-
-  const startMs = $derived(scale.unproject(x1 - gutter));
-  const endMs = $derived(scale.unproject(x2 - gutter));
+  const startWorldPx = $derived(
+    screenToTimelineWorld(x1, gutter, viewportOffsetPx),
+  );
+  const endWorldPx = $derived(
+    screenToTimelineWorld(x2, gutter, viewportOffsetPx),
+  );
+  const startMs = $derived(scale.unproject(startWorldPx));
+  const endMs = $derived(scale.unproject(endWorldPx));
   const includeMilliseconds = $derived((endMs - startMs) / tickCount < 1000);
 
-  // Skip ticks inside collapsed segments — they'd show misleading labels and
-  // collide with the collapse marker.
-  const collapsedRanges = $derived(
+  const collapsedWorldRanges = $derived(
     scale.segments
       .filter((segment) => segment.isCollapsed)
       .map((segment) => ({
-        startX: gutter + segment.startPx,
-        endX: gutter + segment.endPx,
+        startPx: segment.startPx,
+        endPx: segment.endPx,
       })),
   );
-
-  const isInsideCollapsed = (x: number): boolean =>
-    collapsedRanges.some((range) => x >= range.startX && x <= range.endX);
-
-  // Tick x positions (skip i=0, the rail; skip any inside a collapsed range).
   const ticks = $derived(
-    Array.from({ length: tickCount }, (_, i) => x1 + i * tickDistance).filter(
-      (x, i) => i !== 0 && !isInsideCollapsed(x),
-    ),
+    getTimelineAxisTicks({
+      screenStartPx: x1,
+      screenEndPx: x2,
+      gutterPx: gutter,
+      viewportOffsetPx,
+      collapsedWorldRanges,
+      targetTickPx: TARGET_TICK_PX,
+      minTicks: MIN_TICKS,
+      maxTicks: MAX_TICKS,
+    }),
   );
 
   const baselineWidth = RADIUS / 2;
@@ -73,20 +83,20 @@
   style:height="{baselineWidth}px"
 ></div>
 
-{#each ticks as tickX (tickX)}
+{#each ticks as tick (tick.worldPx)}
   <div
     class="grid-line top-0"
-    style:left="{tickX}px"
+    style:left="{tick.screenPx}px"
     style:height="{timelineHeight}px"
   ></div>
   <div
     class="tick-label"
-    style:left="{tickX}px"
+    style:left="{tick.screenPx}px"
     style:top="{timelineHeight + RADIUS}px"
   >
     {formatDistanceAbbreviated({
       start: startTime,
-      end: new Date(scale.unproject(tickX - gutter)),
+      end: new Date(scale.unproject(tick.worldPx)),
       includeMilliseconds,
     })}
   </div>

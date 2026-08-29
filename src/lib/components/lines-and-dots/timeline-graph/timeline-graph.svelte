@@ -608,6 +608,8 @@
               bandTop={layerBandTop}
               bandHeight={layerBandHeight}
               {readOnly}
+              viewportOffsetPx={viewport.offsetPx}
+              viewportWidthPx={timelineWidth}
               onToggle={toggleSegment}
             />
           </div>

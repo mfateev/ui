@@ -156,7 +156,7 @@ test.describe('Timeline live completion', () => {
     await expect(completedButton).toBeVisible();
   });
 
-  test('appends a streamed activity without moving existing rows', async ({
+  test('slides existing rows aside for a streamed activity', async ({
     page,
   }) => {
     await mockWorkflowApis(page, runningWorkflow);
@@ -185,21 +185,29 @@ test.describe('Timeline live completion', () => {
       route.fulfill({ json: historyPage([...inProgress].reverse()) }),
     );
 
-    await page.goto(`${timelineUrl}?sort=ascending`);
+    await page.goto(`${timelineUrl}?sort=descending`);
     const existing = page.getByRole('button', {
       name: /^Event DeployNetwork:/,
     });
     await expect(existing).toBeVisible();
+    const rowStack = existing.locator('xpath=ancestor::ul');
+    await expect(rowStack).not.toHaveClass(/timeline-rows-entering/);
     const initialY = (await existing.boundingBox())?.y;
 
     releaseActivity();
     const appended = page.getByRole('button', {
       name: /^Event VerifyNetwork:/,
     });
+    await expect(appended).toBeAttached();
+    await expect(rowStack).toHaveClass(/timeline-rows-entering/);
+    const movingY = (await existing.boundingBox())?.y;
     await expect(appended).toBeVisible();
+    await expect(rowStack).not.toHaveClass(/timeline-rows-entering/);
 
-    expect((await existing.boundingBox())?.y).toBe(initialY);
-    expect((await appended.boundingBox())?.y).toBeGreaterThan(initialY ?? 0);
+    const finalExistingY = (await existing.boundingBox())?.y;
+    expect(movingY).toBeLessThan(finalExistingY ?? 0);
+    expect(finalExistingY).toBeGreaterThan(initialY ?? 0);
+    expect((await appended.boundingBox())?.y).toBeLessThan(finalExistingY ?? 0);
   });
 
   test('keeps a long activity label visible while running and after completion', async ({

@@ -270,6 +270,48 @@
     new Set(visibleGroups.map((group) => group.id)),
   );
 
+  let observedRunId: string | undefined;
+  let knownGroupIds = new Set<string>();
+  let hasSeenInitialGroups = false;
+  let rowStackEntryOffsetPx = $state(0);
+
+  $effect(() => {
+    const currentRunId = workflow.runId;
+    const currentGroupIds = groups.map((group) => group.id);
+
+    if (observedRunId === undefined || currentRunId !== observedRunId) {
+      observedRunId = currentRunId;
+      knownGroupIds = new Set(currentGroupIds);
+      hasSeenInitialGroups = currentGroupIds.length > 0;
+      rowStackEntryOffsetPx = 0;
+      return;
+    }
+
+    if (!hasSeenInitialGroups && currentGroupIds.length > 0) {
+      knownGroupIds = new Set(currentGroupIds);
+      hasSeenInitialGroups = true;
+      return;
+    }
+
+    const addedVisibleGroupCount = currentGroupIds.filter(
+      (groupId) => !knownGroupIds.has(groupId) && visibleGroupIds.has(groupId),
+    ).length;
+    knownGroupIds = new Set([...knownGroupIds, ...currentGroupIds]);
+
+    if (!reverseSort) {
+      rowStackEntryOffsetPx = 0;
+    } else if (
+      addedVisibleGroupCount > 0 &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      rowStackEntryOffsetPx = -addedVisibleGroupCount * ROW_HEIGHT;
+    }
+  });
+
+  const finishRowStackEntry = () => {
+    rowStackEntryOffsetPx = 0;
+  };
+
   const rowHeightRetention = new TimelineRowHeightRetention();
   const heightRowCount = $derived(
     rowHeightRetention.update({
@@ -737,7 +779,14 @@
              persists when its slot is null, only the inner row toggles.
              pointer-events-none so clicks fall through to the collapse toggles;
              event buttons opt back in with pointer-events:auto. -->
-          <ul class="pointer-events-none absolute inset-0 m-0 list-none p-0">
+          <ul
+            class="pointer-events-none absolute inset-0 m-0 list-none p-0"
+            class:timeline-rows-entering={rowStackEntryOffsetPx < 0}
+            style:--timeline-row-stack-offset={`${rowStackEntryOffsetPx}px`}
+            onanimationend={(event) => {
+              if (event.currentTarget === event.target) finishRowStackEntry();
+            }}
+          >
             {#each pool as slot, slotIndex (slotIndex)}
               <li
                 class="absolute left-0 right-0 top-0"
@@ -827,6 +876,26 @@
 
   .timeline-motion-active .canvas :global(.timeline-motion-layer) {
     will-change: transform;
+  }
+
+  .timeline-rows-entering {
+    animation: timeline-rows-enter 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @keyframes timeline-rows-enter {
+    from {
+      transform: translateY(var(--timeline-row-stack-offset));
+    }
+
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .timeline-rows-entering {
+      animation: none;
+    }
   }
 
   /* Keep interactive overlays stable while their painted segment layer glides.

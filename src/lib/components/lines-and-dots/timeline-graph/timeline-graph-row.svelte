@@ -42,6 +42,10 @@
   import { CategoryIcon, type TimelineIconName } from '../constants';
   import { GUTTER, RADIUS, ROW_HEIGHT } from './constants';
   import { timelineTextPosition } from './timeline-positioning';
+  import {
+    getTimelineRowGeometry,
+    isTimelineLabelVisible,
+  } from './timeline-row-geometry';
 
   type Props = {
     group: EventGroup;
@@ -76,6 +80,7 @@
   const pauseTime = $derived(
     pendingActivity && pendingActivity.pauseInfo?.pauseTime,
   );
+  const HALO = RADIUS * 1.5;
 
   let decodedLocalActivity: SummaryAttribute | undefined =
     $state.raw(undefined);
@@ -132,6 +137,19 @@
   const { points, textAnchor, textPosition } = $derived(
     getDistancePointsAndPositions(timelineWidth, group.eventList, eventCount),
   );
+  const rowGeometry = $derived(
+    getTimelineRowGeometry({
+      points,
+      viewportStartPx: GUTTER,
+      viewportEndPx: canvasWidth - GUTTER,
+      isPending: group.isPending,
+      hasPauseTime: Boolean(pauseTime),
+      haloPx: HALO,
+    }),
+  );
+  const labelVisible = $derived(
+    isTimelineLabelVisible(textPosition[0], GUTTER, canvasWidth - GUTTER),
+  );
 
   const onClick = () => {
     if (readOnly) return;
@@ -174,16 +192,8 @@
 
   // The button spans just the dots + connectors; its coords are button-local
   // (offset by spanLeft). Hover/focus highlight is CSS-only (no JS state).
-  const HALO = RADIUS * 1.5;
   // Highlight corner radius, concentric with the dots' rounded corners.
   const highlightRadius = RADIUS * 0.8;
-  const spanLeft = $derived(points[0] - HALO);
-  const spanWidth = $derived(
-    (group.isPending && canvasWidth - points[0] - HALO) ||
-      (points.length >= 2
-        ? points[points.length - 1] - points[0] + RADIUS * 3
-        : RADIUS * 3),
-  );
   const spanCy = HALO; // button-local vertical center
 </script>
 
@@ -239,105 +249,117 @@
 {/snippet}
 
 <div class="absolute inset-0">
-  <button
-    type="button"
-    class="event"
-    aria-label={accessibleName}
-    disabled={readOnly}
-    style:left="{spanLeft}px"
-    style:top="{ROW_HEIGHT / 2 - HALO}px"
-    style:width="{spanWidth}px"
-    style:height="{RADIUS * 3}px"
-    onclick={onClick}
-  >
-    <div
-      class="highlight {groupHover({ category: group.category })}"
-      style:border-radius="{highlightRadius}px"
-    ></div>
-    {#each points as pointX, index (index)}
-      {@const localX = pointX - spanLeft}
-      {@const nextPoint = points[index + 1]}
-      {#if nextPoint}
-        {@render connector(localX, nextPoint - spanLeft, lineColor, {
-          gradient: showRetryGradient,
-          dim: scheduling && index === 0 ? 0.35 : undefined,
-        })}
-      {/if}
-      {#if !nextPoint && group.isPending && !pauseTime}
+  {#if rowGeometry.hitRange}
+    {@const spanLeft = rowGeometry.hitRange.startPx}
+    {@const spanWidth = Math.max(
+      1,
+      rowGeometry.hitRange.endPx - rowGeometry.hitRange.startPx,
+    )}
+    <button
+      type="button"
+      class="event"
+      aria-label={accessibleName}
+      disabled={readOnly}
+      style:left="{spanLeft}px"
+      style:top="{ROW_HEIGHT / 2 - HALO}px"
+      style:width="{spanWidth}px"
+      style:height="{RADIUS * 3}px"
+      onclick={onClick}
+    >
+      <div
+        class="highlight {groupHover({ category: group.category })}"
+        style:border-radius="{highlightRadius}px"
+      ></div>
+      {#each rowGeometry.connectors as visibleConnector (visibleConnector.index)}
         {@render connector(
-          localX,
-          canvasWidth - GUTTER - spanLeft,
-          pendingLineColor,
+          visibleConnector.startPx - spanLeft,
+          visibleConnector.endPx - spanLeft,
+          visibleConnector.pending ? pendingLineColor : lineColor,
           {
-            dashed: true,
-            animate: true,
+            gradient: !visibleConnector.pending && showRetryGradient,
+            dim:
+              !visibleConnector.pending &&
+              scheduling &&
+              visibleConnector.index === 0
+                ? 0.35
+                : undefined,
+            dashed: visibleConnector.pending,
+            animate: visibleConnector.pending,
           },
         )}
+      {/each}
+      {#each rowGeometry.dots as visibleDot (visibleDot.index)}
+        {@const localX = visibleDot.xPx - spanLeft}
+        {@const index = visibleDot.index}
+        {#if index === points.length - 1 && group.isPending && !pauseTime}
+          {@render dot(
+            localX,
+            dotColors(group.lastEvent.classification),
+            'retry',
+          )}
+        {/if}
         {@render dot(
           localX,
-          dotColors(group.lastEvent.classification),
-          'retry',
+          dotColors(group.eventList[index]?.classification),
+          pauseTime && index !== 0
+            ? 'pause'
+            : decodedLocalActivity
+              ? CategoryIcon['local-activity'].name
+              : CategoryIcon[group.category].name,
         )}
-      {/if}
-      {@render dot(
-        localX,
-        dotColors(group.eventList[index]?.classification),
-        pauseTime && index !== 0
-          ? 'pause'
-          : decodedLocalActivity
-            ? CategoryIcon['local-activity'].name
-            : CategoryIcon[group.category].name,
-      )}
-    {/each}
-    <!-- Inside the button so hovering/clicking the label hits the same target;
+      {/each}
+      <!-- Inside the button so hovering/clicking the label hits the same target;
          positioned button-local (offset by spanLeft), may overflow the box. -->
-    <PayloadSummary
-      value={group?.userMetadata?.summary}
-      prefix={isActivityTaskScheduledEvent(group.initialEvent)
-        ? group?.displayName
-        : ''}
-      fallback={decodedLocalActivity
-        ? translate('events.category.local-activity')
-        : group?.displayName}
-    >
-      {#snippet children(decodedValue)}
-        {@const iconName =
-          (pendingActivity && !pendingActivity.paused) || retried
-            ? 'retry'
-            : undefined}
-        <div
-          class="pointer-events-auto absolute flex select-none items-center gap-1 whitespace-nowrap text-[13px] leading-none {textAnchor ===
-          'end'
-            ? '-translate-x-full -translate-y-1/2 flex-row-reverse'
-            : '-translate-y-1/2'}"
-          style:left="{textPosition[0] - spanLeft}px"
-          style:top="{spanCy}px"
+      {#if labelVisible}
+        <PayloadSummary
+          value={group?.userMetadata?.summary}
+          prefix={isActivityTaskScheduledEvent(group.initialEvent)
+            ? group?.displayName
+            : ''}
+          fallback={decodedLocalActivity
+            ? translate('events.category.local-activity')
+            : group?.displayName}
         >
-          {#if iconName}
-            <svg class="h-[14px] w-[14px] text-current" viewBox="0 0 24 24">
-              <use href="#ti-{iconName}" />
-            </svg>
-          {/if}
-          <span
-            class="inline-flex min-h-[var(--dot)] items-center rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-current"
-          >
-            {#if pendingActivity}
-              {translate('workflows.attempt')}
-              {pendingActivity.attempt} / {pendingActivity.maximumAttempts ||
-                '∞'}
-              •&nbsp;{decodedValue}
-            {:else if retried}
-              {retryAttempt} • {decodedValue}
-            {:else if decodedLocalActivity}
-              {decodedLocalActivity.value}
-            {:else}
-              {decodedValue}
-            {/if}
-          </span>
-        </div>
-      {/snippet}
-    </PayloadSummary>
-  </button>
+          {#snippet children(decodedValue)}
+            {@const iconName =
+              (pendingActivity && !pendingActivity.paused) || retried
+                ? 'retry'
+                : undefined}
+            <div
+              class="pointer-events-auto absolute flex select-none items-center gap-1 whitespace-nowrap text-[13px] leading-none {textAnchor ===
+              'end'
+                ? '-translate-x-full -translate-y-1/2 flex-row-reverse'
+                : '-translate-y-1/2'}"
+              style:left="{textPosition[0] - spanLeft}px"
+              style:top="{spanCy}px"
+            >
+              {#if iconName}
+                <svg class="h-[14px] w-[14px] text-current" viewBox="0 0 24 24">
+                  <use href="#ti-{iconName}" />
+                </svg>
+              {/if}
+              <span
+                class="inline-flex min-h-[var(--dot)] items-center rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-current"
+              >
+                {#if pendingActivity}
+                  {translate('workflows.attempt')}
+                  {pendingActivity.attempt} / {pendingActivity.maximumAttempts ||
+                    '∞'}
+                  •&nbsp;{decodedValue}
+                {:else if retried}
+                  {retryAttempt} • {decodedValue}
+                {:else if decodedLocalActivity}
+                  {decodedLocalActivity.value}
+                {:else}
+                  {decodedValue}
+                {/if}
+              </span>
+            </div>
+          {/snippet}
+        </PayloadSummary>
+      {/if}
+    </button>
+  {/if}
 </div>
 
 <style lang="postcss">

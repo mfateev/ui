@@ -58,6 +58,52 @@ const runningWorkflow = {
 };
 
 test.describe('Timeline live completion', () => {
+  test('keeps rows in event order instead of hoisting pending activities', async ({
+    page,
+  }) => {
+    const orderedHistory = [
+      atLiveTime(makeWorkflowStarted(1)),
+      atLiveTime(makeActivityScheduled(2, 'LongRunning')),
+      atLiveTime(makeActivityStarted(3, 2)),
+      atLiveTime(makeActivityScheduled(4, 'AlreadyCompleted')),
+      atLiveTime(makeActivityStarted(5, 4)),
+      atLiveTime(makeActivityCompleted(6, 4, 5)),
+    ];
+    const workflowWithPendingActivity = {
+      ...runningWorkflow,
+      pendingActivities: [
+        {
+          ...mockWorkflow.pendingActivities[0],
+          activityId: '2',
+          activityType: { name: 'LongRunning' },
+        },
+      ],
+    };
+
+    await mockWorkflowApis(page, workflowWithPendingActivity);
+    await page.route(EVENT_HISTORY_API, (route) =>
+      route.fulfill({ json: historyPage(orderedHistory) }),
+    );
+    await page.route(EVENT_HISTORY_API_REVERSE, (route) =>
+      route.fulfill({ json: historyPage([...orderedHistory].reverse()) }),
+    );
+
+    await page.goto(`${timelineUrl}?sort=descending`);
+
+    const completed = page.getByRole('button', {
+      name: 'Event AlreadyCompleted: Completed',
+    });
+    const running = page.getByRole('button', {
+      name: /^Event LongRunning:/,
+    });
+    await expect(completed).toBeVisible();
+    await expect(running).toBeVisible();
+
+    const completedBox = await completed.boundingBox();
+    const runningBox = await running.boundingBox();
+    expect(completedBox?.y).toBeLessThan(runningBox?.y ?? 0);
+  });
+
   test('recolors/relabels a group to Completed when the completion arrives live', async ({
     page,
   }) => {

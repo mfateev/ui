@@ -181,7 +181,7 @@
       aria-label={seg.isCollapsed
         ? translate('workflows.show-idle-time-segment', { distance })
         : translate('workflows.hide-idle-time-segment', { distance })}
-      class="timeline-motion-hit-target absolute top-0 m-0 cursor-pointer border-0 bg-current p-0 opacity-0 outline-none transition-opacity duration-100 ease-in-out hover:opacity-20 focus-visible:opacity-20"
+      class="timeline-height-control timeline-motion-hit-target absolute top-0 m-0 cursor-pointer border-0 bg-current p-0 opacity-0 outline-none transition-opacity duration-100 ease-in-out hover:opacity-20 focus-visible:opacity-20"
       style:left="{segmentWindow.hitRange.startPx}px"
       style:width="{Math.max(
         1,
@@ -196,5 +196,17 @@
 <style lang="postcss">
   .zigzag-path {
     stroke: rgb(var(--color-text-secondary));
+  }
+
+  .timeline-height-control {
+    transition-property: height, opacity;
+    transition-duration: 240ms, 100ms;
+    transition-timing-function: ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .timeline-height-control {
+      transition-duration: 0ms, 100ms;
+    }
   }
 </style>

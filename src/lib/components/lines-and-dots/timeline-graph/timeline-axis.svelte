@@ -109,6 +109,7 @@
   .baseline {
     position: absolute;
     background: currentColor;
+    transition: top 240ms ease-out;
   }
 
   .grid-line {
@@ -122,6 +123,7 @@
        WebKit's backing-store height and vanishes in Safari. A solid fill is
        cheap and renders at any height in both. */
     background: rgb(var(--color-text-primary));
+    transition: height 240ms ease-out;
   }
 
   .tick-label {
@@ -132,5 +134,14 @@
     transform: rotate(45deg);
     transform-origin: left center;
     pointer-events: none;
+    transition: top 240ms ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .baseline,
+    .grid-line,
+    .tick-label {
+      transition-duration: 0ms;
+    }
   }
 </style>

@@ -27,6 +27,10 @@
     getRowY,
     getTotalForY,
   } from './timeline-positioning';
+  import {
+    TIMELINE_ROW_HEIGHT_GRACE_MS,
+    TimelineRowHeightRetention,
+  } from './timeline-row-height-retention';
   import type { TimelineDisplayMode } from './types';
   import { syncTimelineViewport } from './viewport-lifecycle';
 
@@ -122,16 +126,19 @@
     ).length,
   );
 
+  const durationPerViewportMs = $derived(
+    expandedDurationPerViewportMs({
+      displayMode,
+      viewportWidthPx: timelineWidth,
+      expandedDurationMs: timeline.expandedDurationMs,
+      collapsedSegmentCount,
+    }),
+  );
+
   const scale = new TimelineScale({
     timeline,
     getViewportWidthPx: () => timelineWidth,
-    getExpandedDurationPerViewportMs: () =>
-      expandedDurationPerViewportMs({
-        displayMode,
-        viewportWidthPx: timelineWidth,
-        expandedDurationMs: timeline.expandedDurationMs,
-        collapsedSegmentCount,
-      }),
+    getExpandedDurationPerViewportMs: () => durationPerViewportMs,
   });
 
   const viewport = new Viewport();
@@ -232,6 +239,18 @@
 
   const visibleGroupIds = $derived(
     new Set(visibleGroups.map((group) => group.id)),
+  );
+
+  const rowHeightRetention = new TimelineRowHeightRetention();
+  const heightRowCount = $derived(
+    rowHeightRetention.update({
+      visibleRowCount: visibleGroups.length,
+      nowMs,
+      retain:
+        displayMode === 'fixed-window' &&
+        (workflow.isRunning || workflow.isPaused),
+      retentionDurationMs: durationPerViewportMs + TIMELINE_ROW_HEIGHT_GRACE_MS,
+    }),
   );
 
   // Unfetched skeleton rows. totalExpectedEvents is already a density-adjusted
@@ -405,7 +424,7 @@
   // Full drawn height (rows + axis + detail panel). The container is this tall and
   // scrolls with the page.
   const timelineHeight = $derived(
-    Math.max(ROW_HEIGHT * (visibleGroups.length + pendingGroupCount + 2), 120) +
+    Math.max(ROW_HEIGHT * (heightRowCount + pendingGroupCount + 2), 120) +
       panelHeight,
   );
   const AXIS_LABEL_ZONE = 150;
@@ -587,8 +606,10 @@
   data-viewport-offset={viewport.offsetPx}
   data-viewport-following={viewport.isFollowing}
   data-live-paused={$pauseLiveUpdates}
+  data-visible-group-count={visibleGroups.length}
+  data-height-row-count={heightRowCount}
   class={twMerge(
-    'relative overflow-hidden border border-t-0 border-subtle bg-primary',
+    'timeline-height-shell relative overflow-hidden border border-t-0 border-subtle bg-primary',
     error && 'bg-danger',
   )}
   style:height="{svgHeight}px"
@@ -623,14 +644,14 @@
 
         <!-- Border rails -->
         <div
-          class="absolute bg-current"
+          class="timeline-height-rail absolute bg-current"
           style:left="{GUTTER - RADIUS / 4}px"
           style:top="{lineTop}px"
           style:width="{RADIUS / 2}px"
           style:height="{lineBottom}px"
         ></div>
         <div
-          class="absolute bg-current"
+          class="timeline-height-rail absolute bg-current"
           style:left="{canvasWidth - GUTTER - RADIUS / 4}px"
           style:top="{lineTop}px"
           style:width="{RADIUS / 2}px"
@@ -755,6 +776,22 @@
     position: relative;
     margin-top: -1rem;
     color: rgb(var(--color-text-primary));
+  }
+
+  .timeline-height-shell,
+  .canvas,
+  .timeline-height-rail {
+    transition-property: height;
+    transition-duration: 240ms;
+    transition-timing-function: ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .timeline-height-shell,
+    .canvas,
+    .timeline-height-rail {
+      transition-duration: 0ms;
+    }
   }
 
   .canvas :global(.timeline-motion-layer) {

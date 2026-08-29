@@ -38,7 +38,6 @@
     parseEventFilterParams,
     updateEventFilterParams,
   } from '$lib/utilities/event-filter-params';
-  import { getTimelineGroups } from '$lib/utilities/sort-timeline-groups';
 
   const historyCtx = getContext<HistoryContext>(HISTORY_CTX);
 
@@ -68,14 +67,7 @@
     return bufferGroups.filter((g) => active.includes(g.category));
   });
 
-  const groups = $derived(
-    getTimelineGroups(
-      filteredBufferGroups,
-      reverseSort,
-      historyCtx.fetchComplete,
-      historyCtx.descMinId,
-    ),
-  );
+  const groups = $derived(filteredBufferGroups);
 
   const workflowTaskFailedError = $derived.by(() => {
     void $bufferVersion;

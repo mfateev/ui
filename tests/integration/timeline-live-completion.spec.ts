@@ -156,6 +156,52 @@ test.describe('Timeline live completion', () => {
     await expect(completedButton).toBeVisible();
   });
 
+  test('appends a streamed activity without moving existing rows', async ({
+    page,
+  }) => {
+    await mockWorkflowApis(page, runningWorkflow);
+    const appendedActivity = [
+      atLiveTime(makeActivityScheduled(4, 'VerifyNetwork')),
+      atLiveTime(makeActivityStarted(5, 4)),
+    ];
+    let releaseActivity: () => void;
+    const activityHeld = new Promise<void>((resolve) => {
+      releaseActivity = resolve;
+    });
+    let activityDelivered = false;
+
+    await page.route(EVENT_HISTORY_API, async (route) => {
+      if (route.request().url().includes('waitNewEvent=true')) {
+        if (!activityDelivered) {
+          await activityHeld;
+          activityDelivered = true;
+          return route.fulfill({ json: historyPage(appendedActivity) });
+        }
+        return route.fulfill({ json: historyPage([]) });
+      }
+      return route.fulfill({ json: historyPage(inProgress) });
+    });
+    await page.route(EVENT_HISTORY_API_REVERSE, (route) =>
+      route.fulfill({ json: historyPage([...inProgress].reverse()) }),
+    );
+
+    await page.goto(`${timelineUrl}?sort=ascending`);
+    const existing = page.getByRole('button', {
+      name: /^Event DeployNetwork:/,
+    });
+    await expect(existing).toBeVisible();
+    const initialY = (await existing.boundingBox())?.y;
+
+    releaseActivity();
+    const appended = page.getByRole('button', {
+      name: /^Event VerifyNetwork:/,
+    });
+    await expect(appended).toBeVisible();
+
+    expect((await existing.boundingBox())?.y).toBe(initialY);
+    expect((await appended.boundingBox())?.y).toBeGreaterThan(initialY ?? 0);
+  });
+
   test('freezes the viewport while paused and follows the latest edge after resume', async ({
     page,
   }) => {

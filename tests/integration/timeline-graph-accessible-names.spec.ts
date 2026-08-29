@@ -51,4 +51,21 @@ test.describe('Timeline graph node accessible names', () => {
     await expect(event).not.toBeAttached();
     await expect(timeline).toBeFocused();
   });
+
+  test('does not reclaim focus after the user leaves the timeline', async ({
+    page,
+  }) => {
+    const event = page.getByRole('button', {
+      name: 'Event LongActivity: Scheduled',
+    });
+    await page.locator('button[aria-controls="status-menu"]').click();
+    const activityFilter = page.getByTestId('Activity');
+
+    await event.focus();
+    await activityFilter.focus();
+    await activityFilter.evaluate((element: HTMLElement) => element.click());
+
+    await expect(event).not.toBeAttached();
+    await expect(activityFilter).toBeFocused();
+  });
 });

@@ -32,7 +32,7 @@ describe('Viewport', () => {
       totalWorldWidthPx: 1_000,
     });
 
-    viewport.setTotalWorldWidth(1_300);
+    viewport.setGeometry({ widthPx: 800, totalWorldWidthPx: 1_300 });
 
     expect(viewport.offsetPx).toBe(500);
     expect(viewport.isFollowing).toBe(true);
@@ -44,7 +44,7 @@ describe('Viewport', () => {
       totalWorldWidthPx: 1_600,
     });
 
-    viewport.setWidth(1_000);
+    viewport.setGeometry({ widthPx: 1_000, totalWorldWidthPx: 1_600 });
 
     expect(viewport.offsetPx).toBe(600);
     expect(viewport.visibleRange).toEqual({
@@ -60,7 +60,7 @@ describe('Viewport', () => {
     });
 
     viewport.freeze();
-    viewport.setTotalWorldWidth(3_000);
+    viewport.setGeometry({ widthPx: 1_000, totalWorldWidthPx: 3_000 });
 
     expect(viewport.offsetPx).toBe(1_000);
     expect(viewport.isFollowing).toBe(false);
@@ -73,7 +73,11 @@ describe('Viewport', () => {
     });
 
     viewport.freeze();
-    viewport.setWidth(1_200);
+    viewport.setGeometry({
+      widthPx: 1_200,
+      totalWorldWidthPx: 3_000,
+      anchoredOffsetPx: 1_800,
+    });
 
     expect(viewport.offsetPx).toBe(1_800);
     expect(viewport.visibleRange).toEqual({
@@ -90,7 +94,11 @@ describe('Viewport', () => {
       following: false,
     });
 
-    viewport.setWidth(1_200);
+    viewport.setGeometry({
+      widthPx: 1_200,
+      totalWorldWidthPx: 3_000,
+      anchoredOffsetPx: 900,
+    });
 
     expect(viewport.offsetPx).toBe(900);
   });
@@ -102,7 +110,7 @@ describe('Viewport', () => {
     });
 
     viewport.freeze();
-    viewport.setTotalWorldWidth(1_400);
+    viewport.setGeometry({ widthPx: 1_000, totalWorldWidthPx: 1_400 });
 
     expect(viewport.offsetPx).toBe(400);
   });
@@ -114,20 +122,11 @@ describe('Viewport', () => {
     });
 
     viewport.freeze();
-    viewport.setTotalWorldWidth(3_000);
-    viewport.resume();
+    viewport.setGeometry({ widthPx: 1_000, totalWorldWidthPx: 3_000 });
+    viewport.resume(3_000);
 
     expect(viewport.offsetPx).toBe(2_000);
     expect(viewport.isFollowing).toBe(true);
-  });
-
-  it('can follow a newly supplied world width in one operation', () => {
-    const viewport = new Viewport({ widthPx: 400 });
-
-    viewport.followRightEdge(1_250);
-
-    expect(viewport.totalWorldWidthPx).toBe(1_250);
-    expect(viewport.offsetPx).toBe(850);
   });
 
   it('atomically applies recalculated scale geometry to a frozen viewport', () => {

@@ -24,6 +24,26 @@ export function screenToTimelineWorld(
   return screenPx - gutterPx + viewportOffsetPx;
 }
 
+export function getTimelineAxisTickCount({
+  screenDistancePx,
+  targetTickPx,
+  minTicks,
+  maxTicks,
+}: {
+  screenDistancePx: number;
+  targetTickPx: number;
+  minTicks: number;
+  maxTicks: number;
+}): number {
+  return Math.min(
+    maxTicks,
+    Math.max(
+      minTicks,
+      Math.round(Math.max(0, screenDistancePx) / targetTickPx),
+    ),
+  );
+}
+
 export function getTimelineAxisTicks({
   screenStartPx,
   screenEndPx,
@@ -35,10 +55,12 @@ export function getTimelineAxisTicks({
   maxTicks = 40,
 }: TimelineAxisTickOptions): TimelineAxisTick[] {
   const screenDistancePx = Math.max(0, screenEndPx - screenStartPx);
-  const tickCount = Math.min(
+  const tickCount = getTimelineAxisTickCount({
+    screenDistancePx,
+    targetTickPx,
+    minTicks,
     maxTicks,
-    Math.max(minTicks, Math.round(screenDistancePx / targetTickPx)),
-  );
+  });
   const worldStartPx = screenToTimelineWorld(
     screenStartPx,
     gutterPx,

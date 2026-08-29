@@ -35,7 +35,7 @@ describe('syncTimelineViewport', () => {
     const viewport = new Viewport({ widthPx: 100, totalWorldWidthPx: 200 });
 
     sync(viewport, { paused: true, total: 200 });
-    viewport.setTotalWorldWidth(260);
+    viewport.setGeometry({ widthPx: 100, totalWorldWidthPx: 260 });
 
     expect(viewport.offsetPx).toBe(100);
     expect(viewport.isFollowing).toBe(false);
@@ -44,7 +44,7 @@ describe('syncTimelineViewport', () => {
   it('resumes at the latest right edge', () => {
     const viewport = new Viewport({ widthPx: 100, totalWorldWidthPx: 200 });
     sync(viewport, { paused: true, total: 200 });
-    viewport.setTotalWorldWidth(260);
+    viewport.setGeometry({ widthPx: 100, totalWorldWidthPx: 260 });
 
     sync(viewport, { paused: false, total: 260 });
 

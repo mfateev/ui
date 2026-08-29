@@ -42,20 +42,6 @@ export class Viewport {
     return this._isFollowing;
   }
 
-  setWidth(widthPx: number): void {
-    this.setGeometry({
-      widthPx,
-      totalWorldWidthPx: this._totalWorldWidthPx,
-    });
-  }
-
-  setTotalWorldWidth(totalWorldWidthPx: number): void {
-    this.setGeometry({
-      widthPx: this.widthPx,
-      totalWorldWidthPx,
-    });
-  }
-
   setGeometry({
     widthPx,
     totalWorldWidthPx,
@@ -68,7 +54,7 @@ export class Viewport {
       : this._clampOffset(anchoredOffsetPx ?? this.offsetPx);
   }
 
-  followRightEdge(totalWorldWidthPx = this._totalWorldWidthPx): void {
+  resume(totalWorldWidthPx = this._totalWorldWidthPx): void {
     this._totalWorldWidthPx = nonNegative(totalWorldWidthPx);
     this._isFollowing = true;
     this.offsetPx = this._rightEdgeOffset();
@@ -76,10 +62,6 @@ export class Viewport {
 
   freeze(): void {
     this._isFollowing = false;
-  }
-
-  resume(totalWorldWidthPx = this._totalWorldWidthPx): void {
-    this.followRightEdge(totalWorldWidthPx);
   }
 
   private _rightEdgeOffset(): number {

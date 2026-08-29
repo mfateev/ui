@@ -67,8 +67,6 @@
     return bufferGroups.filter((g) => active.includes(g.category));
   });
 
-  const groups = $derived(filteredBufferGroups);
-
   const workflowTaskFailedError = $derived.by(() => {
     void $bufferVersion;
     if (!historyCtx.fetchComplete) return undefined;
@@ -95,12 +93,12 @@
 
   // The timeline renders in normal page flow: the page (#content-wrapper)
   // scrolls it and the controls bar sticks to the top-nav. TimelineGraph
-  // virtualizes internally via IntersectionObserver, so there's no bounded
+  // virtualizes internally from the visible page band, so there's no bounded
   // scroll container, no scroll-offset bridge, and no height plumbing here.
   const estimatedTotalGroups = $derived.by(() => {
-    if (historyCtx.fetchComplete) return groups.length;
+    if (historyCtx.fetchComplete) return filteredBufferGroups.length;
     const totalEvents = historyCtx.totalExpectedEvents ?? 0;
-    return Math.max(groups.length, Math.ceil(totalEvents * 0.5));
+    return Math.max(filteredBufferGroups.length, Math.ceil(totalEvents * 0.5));
   });
 
   onMount(() => {
@@ -162,7 +160,7 @@
 <!--
   Wrapper: single flex child so the parent's gap-4 only applies once (above
   this block). The controls bar sticks below the top-nav while the page scrolls
-  the timeline past it; the timeline virtualizes itself via IntersectionObserver.
+  the timeline past it; the timeline virtualizes itself from the visible page band.
 -->
 <div>
   <div
@@ -224,14 +222,14 @@
 
   <!--
   Timeline in page flow: it's a tall element the page scrolls, and it
-  virtualizes itself via IntersectionObserver (no bounded scroll container,
+  virtualizes itself from the visible page band (no bounded scroll container,
   no scroll-offset bridge).
 -->
   {#if workflow}
     <TimelineGraph
       displayMode="fixed-window"
       {workflow}
-      {groups}
+      groups={filteredBufferGroups}
       {reverseSort}
       loading={!historyCtx.fetchComplete}
       totalExpectedEvents={estimatedTotalGroups}

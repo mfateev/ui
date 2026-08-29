@@ -4,6 +4,7 @@
 
   import { RADIUS } from './constants';
   import {
+    getTimelineAxisTickCount,
     getTimelineAxisTicks,
     screenToTimelineWorld,
   } from './timeline-axis-geometry';
@@ -35,10 +36,12 @@
 
   const distance = $derived(x2 - x1);
   const tickCount = $derived(
-    Math.min(
-      MAX_TICKS,
-      Math.max(MIN_TICKS, Math.round(distance / TARGET_TICK_PX)),
-    ),
+    getTimelineAxisTickCount({
+      screenDistancePx: distance,
+      targetTickPx: TARGET_TICK_PX,
+      minTicks: MIN_TICKS,
+      maxTicks: MAX_TICKS,
+    }),
   );
   const startWorldPx = $derived(
     screenToTimelineWorld(x1, gutter, viewportOffsetPx),
@@ -109,7 +112,6 @@
   .baseline {
     position: absolute;
     background: currentColor;
-    transition: top 240ms ease-out;
   }
 
   .grid-line {
@@ -123,7 +125,6 @@
        WebKit's backing-store height and vanishes in Safari. A solid fill is
        cheap and renders at any height in both. */
     background: rgb(var(--color-text-primary));
-    transition: height 240ms ease-out;
   }
 
   .tick-label {
@@ -134,14 +135,5 @@
     transform: rotate(45deg);
     transform-origin: left center;
     pointer-events: none;
-    transition: top 240ms ease-out;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .baseline,
-    .grid-line,
-    .tick-label {
-      transition-duration: 0ms;
-    }
   }
 </style>

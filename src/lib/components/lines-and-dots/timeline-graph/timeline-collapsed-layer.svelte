@@ -54,8 +54,31 @@
   const HIT_HALF_WIDTH = Math.max(RADIUS, 12);
   const iconSize = RADIUS * 2;
 
-  const collapsibleSegments = $derived(
-    scale.segments.filter((s) => s.isCollapsible),
+  const visibleSegments = $derived(
+    scale.segments
+      .filter((segment) => segment.isCollapsible)
+      .map((segment) => ({
+        segment,
+        segmentWindow: getCollapsedSegmentWindow({
+          startWorldPx: segment.startPx,
+          endWorldPx: segment.endPx,
+          isCollapsed: segment.isCollapsed,
+          viewportOffsetPx,
+          viewportWidthPx,
+          hitHalfWidthPx: HIT_HALF_WIDTH,
+          zigzagHalfWidthPx: Math.min(
+            ZIGZAG_HALF_WIDTH,
+            (segment.endPx - segment.startPx) / 4,
+          ),
+        }),
+      }))
+      .filter(
+        ({ segmentWindow }) =>
+          segmentWindow.zigzagRange ||
+          segmentWindow.markerRange ||
+          segmentWindow.hitRange ||
+          segmentWindow.centerVisible,
+      ),
   );
 
   const handleToggle = (segmentKey: string) => {
@@ -95,19 +118,7 @@
   {/if}
 {/snippet}
 
-{#each collapsibleSegments as seg (seg.key)}
-  {@const segmentWindow = getCollapsedSegmentWindow({
-    startWorldPx: seg.startPx,
-    endWorldPx: seg.endPx,
-    isCollapsed: seg.isCollapsed,
-    viewportOffsetPx,
-    viewportWidthPx,
-    hitHalfWidthPx: HIT_HALF_WIDTH,
-    zigzagHalfWidthPx: Math.min(
-      ZIGZAG_HALF_WIDTH,
-      (seg.endPx - seg.startPx) / 4,
-    ),
-  })}
+{#each visibleSegments as { segment: seg, segmentWindow } (seg.key)}
   {@const labelX = segmentWindow.centerPx}
   {@const labelY = timelineHeight + RADIUS * 2}
   {@const distance = formatDistanceAbbreviated({
@@ -119,7 +130,7 @@
     <!-- Zigzag as a tiled <pattern>, windowed to the visible band so Chromium
          never rasterizes the pattern across the full canvas height. -->
     <svg
-      class="absolute overflow-visible"
+      class="absolute overflow-hidden"
       style:left="{segmentWindow.zigzagRange.startPx}px"
       style:top="{zigzagTop}px"
       style:width="{segmentWindow.zigzagRange.endPx -
@@ -144,11 +155,7 @@
           />
         </pattern>
       </defs>
-      <rect
-        width={half * 2}
-        height={zigzagHeight}
-        fill="url(#zigzag-{seg.key})"
-      />
+      <rect width="100%" height={zigzagHeight} fill="url(#zigzag-{seg.key})" />
     </svg>
     {#if segmentWindow.markerRange}
       {@render marker(
@@ -199,14 +206,6 @@
   }
 
   .timeline-height-control {
-    transition-property: height, opacity;
-    transition-duration: 240ms, 100ms;
-    transition-timing-function: ease-out;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .timeline-height-control {
-      transition-duration: 0ms, 100ms;
-    }
+    transition: opacity 100ms ease-in-out;
   }
 </style>

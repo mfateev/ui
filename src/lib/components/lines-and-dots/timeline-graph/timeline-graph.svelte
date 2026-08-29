@@ -14,7 +14,10 @@
 
   import EndTimeInterval from '../end-time-interval.svelte';
   import { GUTTER, RADIUS, ROW_HEIGHT } from './constants';
-  import { expandedDurationPerViewportMs } from './timeline-display-mode';
+  import {
+    DEFAULT_TIMELINE_DISPLAY_MODE,
+    expandedDurationPerViewportMs,
+  } from './timeline-display-mode';
   import { shouldMoveFocusToTimeline } from './timeline-focus';
   import { timelineGroupIntersectsViewport } from './timeline-group-window';
   import { TimelineMotion } from './timeline-motion';
@@ -61,7 +64,7 @@
     totalExpectedEvents = 0,
     descMinId = 0,
     panelHeight = $bindable(0),
-    displayMode = 'full-duration',
+    displayMode = DEFAULT_TIMELINE_DISPLAY_MODE,
     onTimelineInit,
   }: Props = $props();
 

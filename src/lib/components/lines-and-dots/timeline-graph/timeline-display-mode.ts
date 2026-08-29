@@ -5,6 +5,9 @@ import {
   DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS,
 } from './timeline-scale.svelte';
 
+export const DEFAULT_TIMELINE_DISPLAY_MODE: TimelineDisplayMode =
+  'full-duration';
+
 export function expandedDurationPerViewportMs({
   displayMode,
   viewportWidthPx,

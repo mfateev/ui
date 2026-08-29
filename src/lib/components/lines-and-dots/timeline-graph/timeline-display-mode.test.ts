@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { expandedDurationPerViewportMs } from './timeline-display-mode';
+import {
+  DEFAULT_TIMELINE_DISPLAY_MODE,
+  expandedDurationPerViewportMs,
+} from './timeline-display-mode';
+
+describe('TimelineGraph display mode default', () => {
+  it('keeps omitted display modes isolated to full-duration behavior', () => {
+    expect(DEFAULT_TIMELINE_DISPLAY_MODE).toBe('full-duration');
+  });
+});
 
 describe('expandedDurationPerViewportMs', () => {
   it('uses a one-minute window in fixed-window mode', () => {

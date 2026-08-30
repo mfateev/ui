@@ -9,7 +9,14 @@ export type TimelineLayoutRow =
       entry: TimelineGroupEntry;
       rowIndex: number;
     }
-  | { kind: 'empty-run'; key: string; runId: string; rowIndex: number };
+  | { kind: 'empty-run'; key: string; runId: string; rowIndex: number }
+  | {
+      kind: 'run-gap';
+      key: string;
+      beforeRunId: string;
+      afterRunId: string;
+      rowIndex: number;
+    };
 
 export type TimelineRunSpan = {
   runId: string;
@@ -84,7 +91,18 @@ export function getTimelineContainmentLayout({
   let pendingGap: TimelineContainmentLayout['pendingGap'] = null;
   let rowIndex = 0;
 
-  for (const run of participatingRuns) {
+  for (const [runIndex, run] of participatingRuns.entries()) {
+    if (runIndex > 0) {
+      const beforeRunId = participatingRuns[runIndex - 1].runId;
+      rows.push({
+        kind: 'run-gap',
+        key: `run-gap:${beforeRunId}:${run.runId}`,
+        beforeRunId,
+        afterRunId: run.runId,
+        rowIndex,
+      });
+      rowIndex += 1;
+    }
     const ordered = orderEntries(
       entriesByRun.get(run.runId) ?? [],
       reverseSort,

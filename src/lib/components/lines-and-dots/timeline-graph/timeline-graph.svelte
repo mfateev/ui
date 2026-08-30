@@ -663,7 +663,10 @@
   // Full drawn height (rows + axis + detail panel). The container is this tall and
   // scrolls with the page.
   const timelineHeight = $derived(
-    Math.max(ROW_HEIGHT * (heightRowCount + 2), 120) + panelHeight,
+    Math.max(
+      ROW_HEIGHT * (heightRowCount + (chainFrameCandidate ? 3 : 2)),
+      120,
+    ) + panelHeight,
   );
   const AXIS_LABEL_ZONE = 150;
   const svgHeight = $derived(timelineHeight + AXIS_LABEL_ZONE);
@@ -875,6 +878,7 @@
       ];
     }),
   );
+  const CHAIN_FRAME_GAP_PX = ROW_HEIGHT / 2;
   const chainFrameLayout = $derived.by(() => {
     if (!chainFrameCandidate || !containmentLayout.chainSpan) return null;
     const vertical = getFrameVerticalBounds(containmentLayout.chainSpan);
@@ -886,8 +890,8 @@
         viewportOffsetPx: viewport.offsetPx,
         viewportWidthPx: timelineWidth,
         gutterPx: GUTTER,
-        topPx: vertical.topPx - 4,
-        bottomPx: vertical.bottomPx + 4,
+        topPx: vertical.topPx - CHAIN_FRAME_GAP_PX,
+        bottomPx: vertical.bottomPx + CHAIN_FRAME_GAP_PX,
         startBoundaryKnown: chainFrameCandidate.startBoundaryKnown,
         endBoundaryKnown: chainFrameCandidate.endBoundaryKnown,
         labelInsetPx: 2 * RADIUS,

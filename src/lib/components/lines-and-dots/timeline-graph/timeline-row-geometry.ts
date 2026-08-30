@@ -18,6 +18,58 @@ export interface TimelineRowGeometry {
   hitRange: { startPx: number; endPx: number } | null;
 }
 
+export function getTimelineDotAlignment({
+  index,
+  eventCount,
+  pending,
+}: {
+  index: number;
+  eventCount: number;
+  pending: boolean;
+}): 'start' | 'center' | 'end' {
+  if (index === 0) return 'start';
+  if (!pending && index === eventCount - 1) return 'end';
+  return 'center';
+}
+
+export type TimelineDotRole =
+  | 'start'
+  | 'completion'
+  | 'pending'
+  | 'pause'
+  | 'retained-pending';
+
+export function getTimelineDotRole({
+  index,
+  eventCount,
+  pointCount,
+  pending,
+  livePending,
+  hasPauseTime,
+  active,
+}: {
+  index: number;
+  eventCount: number;
+  pointCount: number;
+  pending: boolean;
+  livePending: boolean;
+  hasPauseTime: boolean;
+  active: boolean;
+}): TimelineDotRole | null {
+  if (hasPauseTime && index === pointCount - 1 && index >= eventCount) {
+    return 'pause';
+  }
+  if (index === 0) return 'start';
+  if (livePending && !hasPauseTime && index === pointCount - 1) {
+    return 'pending';
+  }
+  if (!pending && index === eventCount - 1) return 'completion';
+  if (!active && pending && index === eventCount - 1) {
+    return 'retained-pending';
+  }
+  return null;
+}
+
 interface TimelineRowGeometryOptions {
   points: number[];
   viewportStartPx: number;

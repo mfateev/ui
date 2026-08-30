@@ -37,12 +37,14 @@
     isActivityTaskStartedEvent,
   } from '$lib/utilities/is-event-type';
 
-  import { dotBox, lineBox } from './primitives';
+  import { alignedDotBox, lineBox } from './primitives';
   import { type DotColors, dotColors, strokeColor } from '../colors';
   import { CategoryIcon, type TimelineIconName } from '../constants';
   import { GUTTER, RADIUS, ROW_HEIGHT } from './constants';
   import { timelineTextPosition } from './timeline-positioning';
   import {
+    getTimelineDotAlignment,
+    getTimelineDotRole,
     getTimelineRowGeometry,
     isTimelineLabelVisible,
   } from './timeline-row-geometry';
@@ -272,11 +274,13 @@
   pointX: number,
   colors: DotColors,
   icon: TimelineIconName | undefined,
+  alignment: 'start' | 'center' | 'end',
 )}
-  {@const bounds = dotBox(pointX, spanCy)}
+  {@const bounds = alignedDotBox(pointX, spanCy, alignment)}
   <!-- transform (not left/top) so streaming/live reprojection composites the dot
        instead of triggering layout; anchored at 0,0 by left-0 top-0. -->
   <div
+    data-dot-alignment={alignment}
     class="absolute left-0 top-0 h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"
     style:transform="translate({bounds.left}px, {bounds.top}px)"
     style:border-color={colors.stroke}
@@ -336,22 +340,32 @@
       {#each rowGeometry.dots as visibleDot (visibleDot.index)}
         {@const localX = visibleDot.xPx - spanLeft}
         {@const index = visibleDot.index}
-        {#if index === points.length - 1 && isLivePending && !pauseTime}
-          {@render dot(
-            localX,
-            dotColors(group.lastEvent.classification),
-            'retry',
-          )}
-        {/if}
-        {#if index < group.eventList.length || pauseTime}
+        {@const alignment = getTimelineDotAlignment({
+          index,
+          eventCount: group.eventList.length,
+          pending: group.isPending,
+        })}
+        {@const role = getTimelineDotRole({
+          index,
+          eventCount: group.eventList.length,
+          pointCount: points.length,
+          pending: group.isPending,
+          livePending: isLivePending,
+          hasPauseTime: Boolean(pauseTime),
+          active,
+        })}
+        {#if role}
           {@render dot(
             localX,
             dotColors(group.eventList[index]?.classification),
-            pauseTime && index !== 0
-              ? 'pause'
-              : decodedLocalActivity
-                ? CategoryIcon['local-activity'].name
-                : CategoryIcon[group.category].name,
+            role === 'pending'
+              ? 'retry'
+              : role === 'pause'
+                ? 'pause'
+                : decodedLocalActivity
+                  ? CategoryIcon['local-activity'].name
+                  : CategoryIcon[group.category].name,
+            alignment,
           )}
         {/if}
       {/each}

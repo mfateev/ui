@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { translate } from '$lib/i18n/translate';
+
   import type { DotColors } from '../colors';
   import { GUTTER, RADIUS } from './constants';
   import { dotBox } from './primitives';
@@ -61,6 +63,9 @@
       ? geometry.horizontal.endPx - labelWidth - 2 * RADIUS
       : 0,
   );
+  const displayLabel = $derived(
+    `${translate(kind === 'chain' ? 'common.workflow-id' : 'common.run-id')}: ${label}`,
+  );
 </script>
 
 {#if paint === 'foreground'}
@@ -95,9 +100,10 @@
     {:else}
       {#if drawTop}
         <div
-          class:frame-dashed={live}
-          class:tl-line--animate={live}
-          class:tl-line--dashed={live}
+          class:frame-edge-chain={kind === 'chain'}
+          class:frame-dashed={live && kind === 'run'}
+          class:tl-line--animate={live && kind === 'run'}
+          class:tl-line--dashed={live && kind === 'run'}
           class:tl-line--live={live}
           class:tl-line--viewport-clipped-start={live &&
             !geometry.drawStartSide}
@@ -113,9 +119,10 @@
       {/if}
       {#if drawBottom}
         <div
-          class:frame-dashed={live}
-          class:tl-line--animate={live}
-          class:tl-line--dashed={live}
+          class:frame-edge-chain={kind === 'chain'}
+          class:frame-dashed={live && kind === 'run'}
+          class:tl-line--animate={live && kind === 'run'}
+          class:tl-line--dashed={live && kind === 'run'}
           class:tl-line--live={live}
           class="frame-edge pointer-events-none absolute"
           style:left="{geometry.horizontal.startPx}px"
@@ -129,7 +136,8 @@
       {/if}
       {#if geometry.drawStartSide}
         <div
-          class:frame-side-dashed={live}
+          class:frame-side-chain={kind === 'chain'}
+          class:frame-side-dashed={live && kind === 'run'}
           class="frame-side pointer-events-none absolute"
           style:left="{geometry.horizontal.startPx}px"
           style:top="{paintTop}px"
@@ -139,7 +147,8 @@
       {/if}
       {#if geometry.drawEndSide}
         <div
-          class:frame-side-dashed={live}
+          class:frame-side-chain={kind === 'chain'}
+          class:frame-side-dashed={live && kind === 'run'}
           class="frame-side pointer-events-none absolute"
           style:left="{geometry.horizontal.endPx}px"
           style:top="{paintTop}px"
@@ -149,6 +158,7 @@
       {/if}
       {#if showLabel && (kind === 'chain' ? drawBottom : drawTop)}
         <span
+          class:frame-label-chain={kind === 'chain'}
           class:workflow-run-label={kind === 'run'}
           class="pointer-events-none absolute z-10 inline-flex min-h-[var(--dot)] items-center truncate whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none text-current"
           style:left={labelLeft}
@@ -159,10 +169,12 @@
           style:--workflow-label-attached-left="{geometry.labelStartPx}px"
           style:--workflow-label-safe-inset="{labelSafeInset}px"
           style:--workflow-label-end-attached-left="{labelEndAttachedLeft}px"
-          bind:clientWidth={labelWidth}>{label}</span
+          style:--frame-color={color}
+          title={displayLabel}
+          bind:clientWidth={labelWidth}>{displayLabel}</span
         >
       {/if}
-      {#if drawTop}
+      {#if drawTop && kind === 'chain'}
         {#each visibleDotPoints as point (point)}
           {@const bounds = dotBox(point, geometry.topPx)}
           <div
@@ -195,6 +207,33 @@
     width: 2px;
     background: var(--frame-color);
     transform: translateX(-1px);
+  }
+
+  .frame-edge-chain {
+    height: 4px;
+    background: linear-gradient(
+      to bottom,
+      var(--frame-color) 0 1px,
+      transparent 1px 3px,
+      var(--frame-color) 3px 4px
+    );
+    transform: translateY(-2px);
+  }
+
+  .frame-side-chain {
+    width: 4px;
+    background: linear-gradient(
+      to right,
+      var(--frame-color) 0 1px,
+      transparent 1px 3px,
+      var(--frame-color) 3px 4px
+    );
+    transform: translateX(-2px);
+  }
+
+  .frame-label-chain {
+    font-weight: 600;
+    box-shadow: inset 0 0 0 1px var(--frame-color);
   }
 
   .frame-dashed {

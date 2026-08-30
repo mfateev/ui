@@ -11,6 +11,21 @@ export function dotBox(
   return { left: centerX - offset, top: centerY - offset };
 }
 
+export function alignedDotBox(
+  anchorX: number,
+  centerY: number,
+  alignment: 'start' | 'center' | 'end',
+): { left: number; top: number } {
+  const offset = RADIUS + DOT_STROKE / 2;
+  const centerX =
+    alignment === 'start'
+      ? anchorX + offset
+      : alignment === 'end'
+        ? anchorX - offset
+        : anchorX;
+  return dotBox(centerX, centerY);
+}
+
 export type Box = { left: number; top: number; width: number; height: number };
 
 // Axis-aligned line between two points as a div box; negative x clamps to 0.

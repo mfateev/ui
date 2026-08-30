@@ -44,6 +44,7 @@ describe('getTimelineContainmentLayout', () => {
     expect(layout.rows.map((row) => row.key)).toEqual([
       'old:1',
       'old:2',
+      'run-gap:old:active',
       'active:3',
     ]);
     expect(layout.runSpans).toEqual([
@@ -57,8 +58,8 @@ describe('getTimelineContainmentLayout', () => {
       },
       {
         runId: 'active',
-        rowStart: 2,
-        rowEnd: 3,
+        rowStart: 3,
+        rowEnd: 4,
         empty: false,
         pendingRowStart: null,
         pendingRowCount: 0,
@@ -78,6 +79,7 @@ describe('getTimelineContainmentLayout', () => {
 
     expect(layout.rows.map((row) => row.key)).toEqual([
       'active:1',
+      'run-gap:active:old',
       'old:2',
       'old:1',
     ]);
@@ -120,14 +122,15 @@ describe('getTimelineContainmentLayout', () => {
 
     expect(layout.rows.map((row) => [row.key, row.rowIndex])).toEqual([
       ['old:1', 0],
-      ['active:2', 1],
-      ['active:90', 6],
+      ['run-gap:old:active', 1],
+      ['active:2', 2],
+      ['active:90', 7],
     ]);
     expect(layout.runSpans[0].rowEnd).toBe(1);
     expect(layout.runSpans[1]).toMatchObject({
-      rowStart: 1,
-      rowEnd: 7,
-      pendingRowStart: 2,
+      rowStart: 2,
+      rowEnd: 8,
+      pendingRowStart: 3,
       pendingRowCount: 4,
     });
   });
@@ -142,6 +145,10 @@ describe('getTimelineContainmentLayout', () => {
       descMinId: 0,
     });
 
-    expect(layout.rows.map((row) => row.key)).toEqual(['old:7', 'active:7']);
+    expect(layout.rows.map((row) => row.key)).toEqual([
+      'old:7',
+      'run-gap:old:active',
+      'active:7',
+    ]);
   });
 });

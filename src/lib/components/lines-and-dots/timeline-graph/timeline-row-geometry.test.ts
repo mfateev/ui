@@ -1,9 +1,79 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  getTimelineDotAlignment,
+  getTimelineDotRole,
   getTimelineRowGeometry,
   isTimelineLabelVisible,
 } from './timeline-row-geometry';
+
+describe('getTimelineDotAlignment', () => {
+  it('anchors the initial marker by its left edge', () => {
+    expect(
+      getTimelineDotAlignment({ index: 0, eventCount: 3, pending: false }),
+    ).toBe('start');
+  });
+
+  it('anchors only a true completion marker by its right edge', () => {
+    expect(
+      getTimelineDotAlignment({ index: 2, eventCount: 3, pending: false }),
+    ).toBe('end');
+    expect(
+      getTimelineDotAlignment({ index: 2, eventCount: 3, pending: true }),
+    ).toBe('center');
+  });
+
+  it('keeps intermediate markers centered', () => {
+    expect(
+      getTimelineDotAlignment({ index: 1, eventCount: 3, pending: false }),
+    ).toBe('center');
+  });
+});
+
+describe('getTimelineDotRole', () => {
+  const role = (
+    index: number,
+    overrides: Partial<Parameters<typeof getTimelineDotRole>[0]> = {},
+  ) =>
+    getTimelineDotRole({
+      index,
+      eventCount: 3,
+      pointCount: 3,
+      pending: false,
+      livePending: false,
+      hasPauseTime: false,
+      active: true,
+      ...overrides,
+    });
+
+  it('keeps completed action boundary icons and suppresses interior icons', () => {
+    expect(role(0)).toBe('start');
+    expect(role(1)).toBeNull();
+    expect(role(2)).toBe('completion');
+  });
+
+  it('shows one current-state icon for a live pending action', () => {
+    expect(
+      role(1, {
+        eventCount: 2,
+        pointCount: 2,
+        pending: true,
+        livePending: true,
+      }),
+    ).toBe('pending');
+  });
+
+  it('preserves explicit pause markers', () => {
+    expect(
+      role(3, {
+        pointCount: 4,
+        pending: true,
+        livePending: true,
+        hasPauseTime: true,
+      }),
+    ).toBe('pause');
+  });
+});
 
 const geometry = (points: number[], isPending = false) =>
   getTimelineRowGeometry({

@@ -1,4 +1,4 @@
-import { ROW_HEIGHT } from './constants';
+import { RADIUS, ROW_HEIGHT } from './constants';
 import { clipConnectorToViewport } from './viewport-geometry';
 
 export type WorkflowFrameGeometry = {
@@ -12,6 +12,23 @@ export type WorkflowFrameGeometry = {
   labelStartPx: number;
   labelMaxWidthPx: number;
 };
+
+export function getWorkflowChainVerticalBounds({
+  topPx,
+  bottomPx,
+  depth,
+}: {
+  topPx: number;
+  bottomPx: number;
+  depth: number;
+}): { topPx: number; bottomPx: number } {
+  const inset = Math.min(depth, 4) * 6;
+  const internalPaddingPx = ROW_HEIGHT + RADIUS - inset;
+  return {
+    topPx: topPx + inset,
+    bottomPx: bottomPx + internalPaddingPx,
+  };
+}
 
 export function getWorkflowFrameVerticalBounds({
   rowStart,

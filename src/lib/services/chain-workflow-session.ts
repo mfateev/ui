@@ -19,6 +19,7 @@ export type TimelineRun = {
   endTimeMs: number;
   groups: TimelineGroup[];
   active: boolean;
+  successorRunId?: string;
 };
 
 export type RetainedTimelineRun = Omit<TimelineRun, 'active'> & {
@@ -181,6 +182,35 @@ const transitionByEventType: Partial<
   WorkflowExecutionFailed: 'retry',
   WorkflowExecutionTimedOut: 'retry',
   WorkflowExecutionCompleted: 'cron',
+};
+
+const closureStatusByEventType: Partial<
+  Record<
+    WorkflowEvent['eventType'],
+    Exclude<WorkflowStatus, 'Running' | 'Paused' | null>
+  >
+> = {
+  WorkflowExecutionCanceled: 'Canceled',
+  WorkflowExecutionCompleted: 'Completed',
+  WorkflowExecutionContinuedAsNew: 'ContinuedAsNew',
+  WorkflowExecutionFailed: 'Failed',
+  WorkflowExecutionTerminated: 'Terminated',
+  WorkflowExecutionTimedOut: 'TimedOut',
+};
+
+export const getClosureFromEvents = (
+  events: WorkflowEvent[],
+): { status: WorkflowStatus; endTimeMs: number } | null => {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    const status = closureStatusByEventType[event.eventType];
+    if (!status || !event.eventTime) continue;
+    return {
+      status,
+      endTimeMs: validTimeToDate(event.eventTime).getTime(),
+    };
+  }
+  return null;
 };
 
 export const getSuccessorFromEvents = (

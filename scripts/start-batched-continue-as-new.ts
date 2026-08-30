@@ -15,15 +15,16 @@ const taskQueue = 'e2e-1';
 const argv = await yargs(process.argv.slice(2))
   .option('workflow-id', {
     type: 'string',
-    default: 'batched-continue-as-new-10',
+    default: `batched-continue-as-new-${Date.now()}`,
   })
   .option('iterations', { type: 'number', default: 10 })
   .option('activities', { type: 'number', default: 9 })
+  .option('child-levels', { type: 'number', default: 1 })
   .option('activity-duration-ms', { type: 'number', default: 10_000 })
   .option('delay-between-ms', { type: 'number', default: 0 })
   .option('parallel-activity-duration-ms', {
     type: 'number',
-    default: 90_000,
+    default: 10_000,
   })
   .parse();
 
@@ -45,6 +46,7 @@ async function main() {
       argv.activityDurationMs,
       argv.delayBetweenMs,
       argv.parallelActivityDurationMs,
+      argv.childLevels,
     ],
     taskQueue,
     workflowId: argv.workflowId,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  getWorkflowChainVerticalBounds,
   getWorkflowFrameGeometry,
   getWorkflowFrameVerticalBounds,
 } from './workflow-frame-geometry';
@@ -107,4 +108,24 @@ describe('getWorkflowFrameVerticalBounds', () => {
       }),
     ).toEqual({ topPx: 27, bottomPx: 193 });
   });
+});
+
+describe('getWorkflowChainVerticalBounds', () => {
+  it.each([
+    { depth: 0, expectedPaddingPx: 33 },
+    { depth: 1, expectedPaddingPx: 27 },
+    { depth: 4, expectedPaddingPx: 9 },
+  ])(
+    'uses equal top and bottom internal padding at depth $depth',
+    ({ depth, expectedPaddingPx }) => {
+      const workflow = getWorkflowChainVerticalBounds({
+        topPx: 100,
+        bottomPx: 500,
+        depth,
+      });
+
+      expect(133 - workflow.topPx).toBe(expectedPaddingPx);
+      expect(workflow.bottomPx - 500).toBe(expectedPaddingPx);
+    },
+  );
 });

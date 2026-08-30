@@ -1,6 +1,10 @@
 import type { TimelineRun } from '$lib/services/chain-workflow-session';
 import type { WorkflowStatus } from '$lib/types/workflows';
 
+import {
+  type TimelineWorkflowNode,
+  workflowFrameKey,
+} from './recursive-timeline-model';
 import type { PixelRange } from './viewport-geometry';
 import { intersectPixelRanges } from './viewport-geometry';
 
@@ -15,6 +19,9 @@ export type TimelineRunFrameCandidate = {
   endWorldPx: number;
   startBoundaryKnown: boolean;
   endBoundaryKnown: boolean;
+  workflowKey?: string;
+  depth?: number;
+  workflow?: TimelineWorkflowNode['workflow'];
 };
 
 export type TimelineChainFrameCandidate = Omit<
@@ -62,44 +69,109 @@ export function getParticipatingRunFrames({
   });
 }
 
+export type RecursiveFrameCandidates = {
+  runFrames: TimelineRunFrameCandidate[];
+  chainFrames: TimelineChainFrameCandidate[];
+  participatingRunKeys: Set<string>;
+};
+
+export function getRecursiveFrameCandidates({
+  nodes,
+  visibleRange,
+  project,
+  liveEndTimeMs,
+  rootKnownChainStartRunId,
+}: {
+  nodes: TimelineWorkflowNode[];
+  visibleRange: PixelRange;
+  project: (timeMs: number) => number;
+  liveEndTimeMs: number;
+  rootKnownChainStartRunId?: string;
+}): RecursiveFrameCandidates {
+  const runFrames: TimelineRunFrameCandidate[] = [];
+  const chainFrames: TimelineChainFrameCandidate[] = [];
+  const participatingRunKeys = new Set<string>();
+  for (const [index, node] of nodes.entries()) {
+    const nodeRuns = getParticipatingRunFrames({
+      runs: node.runs,
+      visibleRange,
+      project,
+      liveEndTimeMs,
+    }).map((candidate) => ({
+      ...candidate,
+      key: workflowFrameKey({
+        executionKey: node.key,
+        kind: 'run',
+        runId: candidate.runId,
+      }),
+      workflowKey: node.key,
+      depth: node.depth,
+      workflow: node.workflow,
+    }));
+    for (const candidate of nodeRuns) {
+      participatingRunKeys.add(`${node.key}:run:${candidate.runId}`);
+    }
+    runFrames.push(...nodeRuns);
+    const chain = getChainFrameCandidate({
+      workflowId: node.workflowId,
+      runs: node.runs,
+      participatingRuns: nodeRuns,
+      knownChainStartRunId:
+        index === 0 && rootKnownChainStartRunId
+          ? rootKnownChainStartRunId
+          : node.firstRunId,
+      allowSingleRun: true,
+    });
+    if (chain) {
+      chainFrames.push({
+        ...chain,
+        key: workflowFrameKey({ executionKey: node.key, kind: 'chain' }),
+        workflowKey: node.key,
+        depth: node.depth,
+        workflow: node.workflow,
+      });
+    }
+  }
+  return { runFrames, chainFrames, participatingRunKeys };
+}
+
 export function getChainFrameCandidate({
   workflowId,
   runs,
   participatingRuns,
   knownChainStartRunId,
-  visibleRange,
-  project,
-  liveEndTimeMs,
+  allowSingleRun = false,
 }: {
   workflowId: string;
   runs: TimelineRun[];
   participatingRuns: TimelineRunFrameCandidate[];
   knownChainStartRunId: string;
-  visibleRange: PixelRange;
-  project: (timeMs: number) => number;
-  liveEndTimeMs: number;
+  allowSingleRun?: boolean;
 }): TimelineChainFrameCandidate | null {
-  if (runs.length < 2 || participatingRuns.length === 0) return null;
+  if (runs.length < (allowSingleRun ? 1 : 2) || participatingRuns.length === 0)
+    return null;
   const orderedRuns = [...runs].sort(
     (a, b) => a.startTimeMs - b.startTimeMs || a.runId.localeCompare(b.runId),
   );
+  const orderedParticipatingRuns = [...participatingRuns].sort(
+    (a, b) => a.startWorldPx - b.startWorldPx || a.runId.localeCompare(b.runId),
+  );
+  const firstParticipatingRun = orderedParticipatingRuns[0];
+  const lastParticipatingRun = orderedParticipatingRuns.at(-1)!;
   const finalRun = orderedRuns[orderedRuns.length - 1];
   const activeRun = orderedRuns.find((run) => run.active) ?? finalRun;
   const live =
     activeRun.active &&
     (activeRun.status === 'Running' || activeRun.status === 'Paused');
-  const startBoundaryKnown = orderedRuns[0]?.runId === knownChainStartRunId;
   return {
     kind: 'chain',
     key: `chain-frame:${knownChainStartRunId}`,
     label: workflowId,
     status: activeRun.status,
     live,
-    startWorldPx: startBoundaryKnown
-      ? project(orderedRuns[0].startTimeMs)
-      : visibleRange.startPx,
-    endWorldPx: project(live ? liveEndTimeMs : finalRun.endTimeMs),
-    startBoundaryKnown,
+    startWorldPx: firstParticipatingRun.startWorldPx,
+    endWorldPx: lastParticipatingRun.endWorldPx,
+    startBoundaryKnown: true,
     endBoundaryKnown: !live,
   };
 }

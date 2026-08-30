@@ -60,6 +60,8 @@
     timelineKey?: string;
     active?: boolean;
     retainedEndTimeMs?: number;
+    labelLeadingOffsetPx?: number;
+    labelTrailingOffsetPx?: number;
   };
 
   let {
@@ -71,6 +73,8 @@
     timelineKey = group.id,
     active = true,
     retainedEndTimeMs,
+    labelLeadingOffsetPx = 0,
+    labelTrailingOffsetPx = 0,
   }: Props = $props();
 
   const timelineWidth = $derived(canvasWidth - 2 * GUTTER);
@@ -174,17 +178,21 @@
   );
   const hasVisibleConnector = $derived(rowGeometry.connectors.length > 0);
   const labelSafeInset = GUTTER + 1.5 * RADIUS;
+  const labelTextPositionX = $derived(
+    textPosition[0] +
+      (textAnchor === 'start' ? labelLeadingOffsetPx : -labelTrailingOffsetPx),
+  );
   const shouldClampLabel = $derived(
     hasVisibleConnector &&
       (hasVisiblePendingConnector ||
-        textPosition[0] - (textAnchor === 'end' ? labelWidth : 0) <
+        labelTextPositionX - (textAnchor === 'end' ? labelWidth : 0) <
           labelSafeInset ||
-        textPosition[0] + (textAnchor === 'end' ? 0 : labelWidth) >
+        labelTextPositionX + (textAnchor === 'end' ? 0 : labelWidth) >
           canvasWidth - labelSafeInset),
   );
   const labelVisible = $derived(
     isTimelineLabelVisible(
-      textPosition[0],
+      labelTextPositionX,
       GUTTER,
       canvasWidth - GUTTER,
       hasVisibleConnector,
@@ -390,7 +398,7 @@
               0,
               canvasWidth - 2 * (GUTTER + 1.5 * RADIUS),
             )}
-            {@const clampedLabelLeft = `clamp(calc(${GUTTER + 1.5 * RADIUS - spanLeft}px + var(--timeline-frame-offset, 0px)), ${textPosition[0] - spanLeft - (textAnchor === 'end' ? labelWidth : 0)}px, calc(${canvasWidth - GUTTER - 1.5 * RADIUS - labelWidth - spanLeft}px + var(--timeline-frame-offset, 0px)))`}
+            {@const clampedLabelLeft = `clamp(calc(${GUTTER + 1.5 * RADIUS - spanLeft}px + var(--timeline-frame-offset, 0px)), ${labelTextPositionX - spanLeft - (textAnchor === 'end' ? labelWidth : 0)}px, calc(${canvasWidth - GUTTER - 1.5 * RADIUS - labelWidth - spanLeft}px + var(--timeline-frame-offset, 0px)))`}
             <div
               class="pointer-events-auto absolute z-10 flex select-none items-center gap-1 whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none {textAnchor ===
               'end'
@@ -401,7 +409,7 @@
               class:overflow-hidden={shouldClampLabel}
               style:left={shouldClampLabel
                 ? clampedLabelLeft
-                : `${textPosition[0] - spanLeft}px`}
+                : `${labelTextPositionX - spanLeft}px`}
               style:top="{spanCy}px"
               style:max-width={shouldClampLabel
                 ? `${clampedLabelMaxWidth}px`

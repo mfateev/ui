@@ -240,6 +240,7 @@
 -->
   {#if workflow}
     <TimelineGraph
+      {namespace}
       displayMode="fixed-window"
       {workflow}
       groups={bufferGroups}

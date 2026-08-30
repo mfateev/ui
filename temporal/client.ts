@@ -7,6 +7,7 @@ import {
   MultiInputWorkflow,
   type PayloadCoverageResult,
   PayloadCoverageWorkflow,
+  RecursiveTimelineParentWorkflow,
   RunningWorkflow,
   UserMetadataWorkflow,
   Workflow,
@@ -111,7 +112,19 @@ export const startWorkflows = async (
     ],
   });
 
-  workflows.push(wf1, wf2, wf3, wf4, wf5, wf6, wf7);
+  const recursiveTimeline = await client.workflow.start(
+    RecursiveTimelineParentWorkflow,
+    {
+      taskQueue: 'e2e-1',
+      workflowId: 'recursive-timeline-parent',
+    },
+  );
+
+  console.log(
+    `Recursive timeline fixture: workflowId=${recursiveTimeline.workflowId} runId=${recursiveTimeline.firstExecutionRunId}`,
+  );
+
+  workflows.push(wf1, wf2, wf3, wf4, wf5, wf6, wf7, recursiveTimeline);
 
   if (config?.waitForResult) {
     return Promise.all(workflows.map((wf) => wf.result()));

@@ -87,13 +87,70 @@ export async function CompletedWorkflow(
   return await double(amount);
 }
 
+export async function BatchedContinueAsNewGrandchildWorkflow(
+  amount: number,
+  label: string,
+  activityDurationMs: number,
+): Promise<number> {
+  return delayedDouble.executeWithOptions(
+    { summary: `${label} grandchild activity` },
+    [amount, activityDurationMs],
+  );
+}
+
+export async function BatchedContinueAsNewChildWorkflow(
+  amount: number,
+  label: string,
+  activityDurationMs: number,
+  remainingContinueAsNewRuns = 0,
+  remainingChildLevels = 1,
+  childLevel = 1,
+): Promise<number> {
+  await delayedDouble.executeWithOptions(
+    { summary: `${label} child activity before grandchild` },
+    [amount, activityDurationMs],
+  );
+  const result =
+    remainingChildLevels > 1
+      ? await workflow.executeChild(BatchedContinueAsNewChildWorkflow, {
+          args: [
+            amount,
+            `${label}, child level ${childLevel + 1}`,
+            activityDurationMs,
+            0,
+            remainingChildLevels - 1,
+            childLevel + 1,
+          ],
+          workflowId: `${workflow.workflowInfo().workflowId}-${workflow.workflowInfo().runId}-level-${childLevel + 1}`,
+        })
+      : amount;
+  await delayedDouble.executeWithOptions(
+    { summary: `${label} child activity after grandchild` },
+    [amount, activityDurationMs],
+  );
+  if (remainingContinueAsNewRuns > 0) {
+    return await workflow.continueAsNew<
+      typeof BatchedContinueAsNewChildWorkflow
+    >(
+      amount,
+      label,
+      activityDurationMs,
+      remainingContinueAsNewRuns - 1,
+      remainingChildLevels,
+      childLevel,
+    );
+  }
+  return result;
+}
+
 export async function BatchedContinueAsNewWorkflow(
   amount: number,
   iterations = 0,
   activitiesPerRun = 9,
   activityDurationMs = 10_000,
   delayBetweenActivitiesMs = 0,
-  parallelActivityDurationMs = 90_000,
+  parallelActivityDurationMs = 10_000,
+  childWorkflowLevels = 1,
 ): Promise<number> {
   const runTrack = async ({
     label,
@@ -126,7 +183,31 @@ export async function BatchedContinueAsNewWorkflow(
     parallelActivityDurationMs > 0
       ? Math.max(1, Math.ceil(fastTrackDurationMs / parallelActivityDurationMs))
       : 0;
-  const [result] = await Promise.all([
+  const nestedActivityDurationMs = activityDurationMs;
+  const currentRunId = workflow.workflowInfo().runId;
+  const runChildTrack = async (): Promise<number> => {
+    let childResult = amount;
+    if (childWorkflowLevels < 1) return childResult;
+    for (let child = 1; child <= activitiesPerRun; child++) {
+      const label = `Child ${child} of ${activitiesPerRun}`;
+      childResult = await workflow.executeChild(
+        BatchedContinueAsNewChildWorkflow,
+        {
+          args: [
+            amount,
+            label,
+            nestedActivityDurationMs,
+            child % 2 === 0 ? 1 : 0,
+            Math.floor(childWorkflowLevels),
+            1,
+          ],
+          workflowId: `${workflow.workflowInfo().workflowId}-${currentRunId}-child-${child}`,
+        },
+      );
+    }
+    return childResult;
+  };
+  await Promise.all([
     runTrack({
       label: 'Fast track activity',
       activityCount: activitiesPerRun,
@@ -139,20 +220,18 @@ export async function BatchedContinueAsNewWorkflow(
       durationMs: parallelActivityDurationMs,
       delayMs: 0,
     }),
+    runChildTrack(),
   ]);
 
-  if (iterations) {
-    await workflow.continueAsNew<typeof BatchedContinueAsNewWorkflow>(
-      amount,
-      iterations - 1,
-      activitiesPerRun,
-      activityDurationMs,
-      delayBetweenActivitiesMs,
-      parallelActivityDurationMs,
-    );
-  }
-
-  return result;
+  return await workflow.continueAsNew<typeof BatchedContinueAsNewWorkflow>(
+    amount,
+    Math.max(0, iterations - 1),
+    activitiesPerRun,
+    activityDurationMs,
+    delayBetweenActivitiesMs,
+    parallelActivityDurationMs,
+    childWorkflowLevels,
+  );
 }
 
 export async function RunningWorkflow(): Promise<void> {
@@ -452,6 +531,46 @@ const { echo: pingActivity } = workflow.proxyActivities<typeof activities>({
 
 export async function HighVolumeEventChildWorkflow(n: number): Promise<number> {
   return n * 2;
+}
+
+export async function RecursiveTimelineLeafWorkflow(
+  label: string,
+): Promise<string> {
+  return Activity(`${label}:leaf`);
+}
+
+export async function RecursiveTimelineChildWorkflow({
+  label,
+  includeGrandchild,
+}: {
+  label: string;
+  includeGrandchild: boolean;
+}): Promise<string> {
+  await Activity(`${label}:before`);
+  if (includeGrandchild) {
+    await workflow.executeChild(RecursiveTimelineLeafWorkflow, {
+      args: [label],
+      workflowId: `${workflow.workflowInfo().workflowId}-grandchild`,
+    });
+  }
+  return Activity(`${label}:after`);
+}
+
+export async function RecursiveTimelineParentWorkflow(): Promise<string[]> {
+  const workflowId = workflow.workflowInfo().workflowId;
+  return Promise.all(
+    Array.from({ length: 6 }, (_, index) =>
+      workflow.executeChild(RecursiveTimelineChildWorkflow, {
+        args: [
+          {
+            label: `child-${index + 1}`,
+            includeGrandchild: index === 0,
+          },
+        ],
+        workflowId: `${workflowId}-child-${index + 1}`,
+      }),
+    ),
+  );
 }
 
 export async function HighVolumeEventWorkflow(

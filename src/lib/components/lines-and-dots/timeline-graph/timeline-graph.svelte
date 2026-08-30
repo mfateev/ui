@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { SvelteMap } from 'svelte/reactivity';
+
+  import { onDestroy, untrack } from 'svelte';
   import { twMerge } from 'tailwind-merge';
 
   import { timestamp } from '$lib/components/timestamp.svelte';
@@ -10,6 +13,7 @@
     type TimelineRun,
     toTimelineGroups,
   } from '$lib/services/chain-workflow-session';
+  import { RecursiveWorkflowSession } from '$lib/services/recursive-workflow-session.svelte';
   import { activeGroups, clearActiveGroups } from '$lib/stores/active-events';
   import { collapseIdleTime } from '$lib/stores/event-view';
   import { fullEventHistory, pauseLiveUpdates } from '$lib/stores/events';
@@ -23,7 +27,11 @@
   import EndTimeInterval from '../end-time-interval.svelte';
   import { DOT_STROKE, GUTTER, RADIUS, ROW_HEIGHT } from './constants';
   import {
-    getTimelineContainmentLayout,
+    flattenWorkflowNodes,
+    type TimelineChildEdge,
+  } from './recursive-timeline-model';
+  import {
+    getRecursiveTimelineContainmentLayout,
     type TimelineLayoutRow,
   } from './timeline-containment-layout';
   import {
@@ -31,10 +39,7 @@
     expandedDurationPerViewportMs,
   } from './timeline-display-mode';
   import { shouldMoveFocusToTimeline } from './timeline-focus';
-  import {
-    getChainFrameCandidate,
-    getParticipatingRunFrames,
-  } from './timeline-frame-visibility';
+  import { getRecursiveFrameCandidates } from './timeline-frame-visibility';
   import { timelineGroupIntersectsViewport } from './timeline-group-window';
   import { TimelineMotion } from './timeline-motion';
   import { getRowY, getTotalForY } from './timeline-positioning';
@@ -51,12 +56,14 @@
   import type { TimelineDisplayMode } from './types';
   import { syncTimelineViewport } from './viewport-lifecycle';
   import {
+    getWorkflowChainVerticalBounds,
     getWorkflowFrameGeometry,
     getWorkflowFrameVerticalBounds,
   } from './workflow-frame-geometry';
 
   import GroupDetailsRow from './group-details-row.svelte';
   import TimelineAxis from './timeline-axis.svelte';
+  import TimelineChildEdgeRow from './timeline-child-edge-row.svelte';
   import TimelineCollapsedLayer from './timeline-collapsed-layer.svelte';
   import TimelineGraphRow from './timeline-graph-row.svelte';
   import TimelineIconDefs from './timeline-icon-defs.svelte';
@@ -66,6 +73,7 @@
   import WorkflowFrame from './workflow-frame.svelte';
 
   interface Props {
+    namespace: string;
     workflow: WorkflowExecution;
     groups: EventGroups;
     readOnly?: boolean;
@@ -84,6 +92,7 @@
   }
 
   let {
+    namespace,
     workflow,
     groups,
     readOnly = false,
@@ -118,15 +127,62 @@
         ],
   );
 
-  const timelineGroupEntries = $derived(getTimelineGroupEntries(workflowRuns));
+  const recursiveSession = new RecursiveWorkflowSession({
+    namespace: untrack(() => namespace),
+    workflow: untrack(() => workflow),
+    runs: untrack(() => workflowRuns),
+  });
+
+  $effect(() => {
+    const root = { namespace, workflow, runs: workflowRuns };
+    untrack(() => recursiveSession.syncRoot(root));
+  });
+
+  $effect(() => {
+    const paused = $pauseLiveUpdates;
+    untrack(() => recursiveSession.setPaused(paused));
+  });
+
+  onDestroy(() => recursiveSession.dispose());
+
+  const workflowTree = $derived(recursiveSession.snapshot);
+  const workflowNodes = $derived(flattenWorkflowNodes(workflowTree));
+  const incomingEdgeByWorkflowKey = $derived.by(() => {
+    const incomingEdges = new SvelteMap<string, TimelineChildEdge>();
+    for (const node of workflowNodes) {
+      for (const edge of node.childrenByGroupKey.values()) {
+        if (edge.load.state === 'loaded') {
+          incomingEdges.set(edge.load.node.key, edge);
+        }
+      }
+    }
+    return incomingEdges;
+  });
+  const allWorkflowRuns = $derived(workflowNodes.flatMap((node) => node.runs));
+  const aggregateHasLive = $derived(
+    allWorkflowRuns.some(
+      (run) =>
+        run.active && (run.status === 'Running' || run.status === 'Paused'),
+    ),
+  );
+  const aggregateStartTimeMs = $derived(
+    Math.min(...allWorkflowRuns.map((run) => run.startTimeMs)),
+  );
+  const aggregateEndTimeMs = $derived(
+    aggregateHasLive
+      ? nowMs
+      : Math.max(...allWorkflowRuns.map((run) => run.endTimeMs)),
+  );
+
+  const timelineGroupEntries = $derived(
+    workflowNodes.flatMap((node) => getTimelineGroupEntries(node.runs)),
+  );
   const eventTypeFilteredEntries = $derived(
-    timelineRuns.length
-      ? filterTimelineGroupEntries({
-          entries: timelineGroupEntries,
-          eventTypes: $eventTypeFilter,
-          failedOrPending: false,
-        })
-      : timelineGroupEntries,
+    filterTimelineGroupEntries({
+      entries: timelineGroupEntries,
+      eventTypes: $eventTypeFilter,
+      failedOrPending: false,
+    }),
   );
   const renderedGroups = $derived(
     eventTypeFilteredEntries.map((entry) => entry.group),
@@ -192,7 +248,9 @@
     getCurrentTimeMs: () => nowMs,
     getLoading: () => timelineLoading,
     getShouldCollapseByDefault: () => $collapseIdleTime === 'on',
-    getStartTimeMs: () => workflowRuns[0]?.startTimeMs,
+    getStartTimeMs: () => aggregateStartTimeMs,
+    getEndTimeMs: () => aggregateEndTimeMs,
+    getEndUnbounded: () => aggregateHasLive,
   });
 
   const collapsedSegmentCount = $derived(
@@ -219,7 +277,7 @@
   const viewport = new Viewport();
   const viewportMotion = new TimelineMotion();
   const liveEdgeMotion = new TimelineMotion();
-  const workflowIsLive = $derived(workflow.isRunning || workflow.isPaused);
+  const workflowIsLive = $derived(aggregateHasLive);
   const shouldAnimateTimeline = $derived(
     displayMode === 'fixed-window' &&
       workflowIsLive &&
@@ -438,48 +496,46 @@
     return Math.max(0, totalExpectedEvents - visibleEntries.length);
   });
 
-  const participatingRunFrames = $derived(
-    displayMode === 'full-duration'
-      ? getParticipatingRunFrames({
-          runs: workflowRuns,
-          visibleRange: {
-            startPx: Number.NEGATIVE_INFINITY,
-            endPx: Number.POSITIVE_INFINITY,
-          },
-          project: (timeMs) => scale.project(timeMs),
-          liveEndTimeMs: timeline.workflowTimespan.endTimeMs,
-        })
-      : getParticipatingRunFrames({
-          runs: workflowRuns,
-          visibleRange: viewport.visibleRange,
-          project: (timeMs) => scale.project(timeMs),
-          liveEndTimeMs: timeline.workflowTimespan.endTimeMs,
-        }),
+  const frameCandidates = $derived(
+    getRecursiveFrameCandidates({
+      nodes: workflowNodes,
+      visibleRange:
+        displayMode === 'full-duration'
+          ? {
+              startPx: Number.NEGATIVE_INFINITY,
+              endPx: Number.POSITIVE_INFINITY,
+            }
+          : viewport.visibleRange,
+      project: (timeMs) => scale.project(timeMs),
+      liveEndTimeMs: timeline.workflowTimespan.endTimeMs,
+      rootKnownChainStartRunId: knownChainStartRunId,
+    }),
   );
-  const participatingRunIds = $derived(
-    new Set(participatingRunFrames.map((frame) => frame.runId)),
-  );
+  const participatingRunFrames = $derived(frameCandidates.runFrames);
   const containmentLayout = $derived(
-    getTimelineContainmentLayout({
-      runs: workflowRuns,
+    getRecursiveTimelineContainmentLayout({
+      root: workflowTree,
       visibleEntries,
-      participatingRunIds,
+      participatingRunKeys: frameCandidates.participatingRunKeys,
       reverseSort,
       pendingGroupCount,
       descMinId,
     }),
   );
   const layoutRows = $derived(containmentLayout.rows);
-  const chainFrameCandidate = $derived(
-    getChainFrameCandidate({
-      workflowId: workflow.id,
-      runs: workflowRuns,
-      participatingRuns: participatingRunFrames,
-      knownChainStartRunId,
-      visibleRange: viewport.visibleRange,
-      project: (timeMs) => scale.project(timeMs),
-      liveEndTimeMs: timeline.workflowTimespan.endTimeMs,
+  const chainFrameCandidates = $derived(frameCandidates.chainFrames);
+  const rootChainFrameCandidate = $derived(
+    chainFrameCandidates.find((candidate) => candidate.depth === 0),
+  );
+  const inheritedWorkflowFrameColor = $derived(
+    strokeColor({
+      status: rootChainFrameCandidate?.status ?? workflow.status,
+      delayed:
+        Boolean(rootChainFrameCandidate?.live) && isWorkflowDelayed(workflow),
     }),
+  );
+  const inheritedWorkflowDotColors = $derived(
+    dotColors(rootChainFrameCandidate?.status ?? workflow.status),
   );
 
   const rowHeightRetention = new TimelineRowHeightRetention();
@@ -665,7 +721,7 @@
   // scrolls with the page.
   const timelineHeight = $derived(
     Math.max(
-      ROW_HEIGHT * (heightRowCount + (chainFrameCandidate ? 3 : 2)),
+      ROW_HEIGHT * (heightRowCount + (chainFrameCandidates.length ? 3 : 2)),
       120,
     ) +
       panelHeight +
@@ -811,6 +867,24 @@
     return slots;
   });
 
+  const pooledEdgeKeys = $derived(
+    new Set(
+      pool.flatMap((slot) => {
+        const row = slot?.row;
+        if (!row) return [];
+        if (row.kind === 'group' && row.childEdge) {
+          return [row.childEdge.key];
+        }
+        return [];
+      }),
+    ),
+  );
+
+  $effect(() => {
+    const edgeKeys = pooledEdgeKeys;
+    untrack(() => recursiveSession.observeEdges(edgeKeys));
+  });
+
   let focusedGroupId = $state<string | null>(null);
   let focusedSlotIndex = $state<number | null>(null);
 
@@ -845,7 +919,10 @@
         }),
   );
 
-  function getFrameVerticalBounds(span: { rowStart: number; rowEnd: number }): {
+  function getFrameVerticalBounds(
+    span: { rowStart: number; rowEnd: number },
+    paddingPx = RADIUS,
+  ): {
     topPx: number;
     bottomPx: number;
   } {
@@ -853,7 +930,7 @@
       ...span,
       activeRowIndex,
       panelHeight,
-      paddingPx: RADIUS,
+      paddingPx,
     });
     return {
       topPx: bounds.topPx + TIMELINE_VERTICAL_PADDING,
@@ -862,13 +939,26 @@
   }
 
   const runFrameLayouts = $derived.by(() => {
-    const spansByRunId = new Map(
-      containmentLayout.runSpans.map((span) => [span.runId, span]),
+    const spansByRunKey = new Map(
+      containmentLayout.runSpans.map((span) => [span.key, span]),
     );
+    const firstRunRowByWorkflow = new SvelteMap<string, number>();
+    for (const span of containmentLayout.runSpans) {
+      if (!span.workflowKey) continue;
+      const firstRow = firstRunRowByWorkflow.get(span.workflowKey);
+      if (firstRow === undefined || span.rowStart < firstRow) {
+        firstRunRowByWorkflow.set(span.workflowKey, span.rowStart);
+      }
+    }
     return participatingRunFrames.flatMap((candidate) => {
-      const span = spansByRunId.get(candidate.runId);
+      const span = spansByRunKey.get(
+        `${candidate.workflowKey}:run:${candidate.runId}`,
+      );
       if (!span) return [];
-      const vertical = getFrameVerticalBounds(span);
+      const vertical = getFrameVerticalBounds(span, 0);
+      const hasPreviousRun =
+        span.workflowKey !== undefined &&
+        span.rowStart !== firstRunRowByWorkflow.get(span.workflowKey);
       return [
         {
           candidate,
@@ -878,7 +968,8 @@
             viewportOffsetPx: viewport.offsetPx,
             viewportWidthPx: timelineWidth,
             gutterPx: GUTTER,
-            ...vertical,
+            topPx: vertical.topPx + (hasPreviousRun ? RADIUS : 0),
+            bottomPx: vertical.bottomPx + RADIUS,
             startBoundaryKnown: candidate.startBoundaryKnown,
             endBoundaryKnown: candidate.endBoundaryKnown,
             labelInsetPx: 2 * RADIUS,
@@ -887,29 +978,36 @@
       ];
     });
   });
-  const CHAIN_FRAME_GAP_PX = ROW_HEIGHT;
-  const retainedChainHeightPx = $derived(
-    Math.max(0, heightRowCount - containmentLayout.totalRowCount) * ROW_HEIGHT,
-  );
-  const chainFrameLayout = $derived.by(() => {
-    if (!chainFrameCandidate || !containmentLayout.chainSpan) return null;
-    const vertical = getFrameVerticalBounds(containmentLayout.chainSpan);
-    return {
-      candidate: chainFrameCandidate,
-      geometry: getWorkflowFrameGeometry({
-        startWorldPx: chainFrameCandidate.startWorldPx,
-        endWorldPx: chainFrameCandidate.endWorldPx,
-        viewportOffsetPx: viewport.offsetPx,
-        viewportWidthPx: timelineWidth,
-        gutterPx: GUTTER,
-        topPx: vertical.topPx - CHAIN_FRAME_GAP_PX,
-        bottomPx:
-          vertical.bottomPx + CHAIN_FRAME_GAP_PX + retainedChainHeightPx,
-        startBoundaryKnown: chainFrameCandidate.startBoundaryKnown,
-        endBoundaryKnown: chainFrameCandidate.endBoundaryKnown,
-        labelInsetPx: 2 * RADIUS,
-      }),
-    };
+  const chainFrameLayouts = $derived.by(() => {
+    const spansByWorkflow = new Map(
+      containmentLayout.workflowSpans?.map((span) => [span.workflowKey, span]),
+    );
+    return chainFrameCandidates.flatMap((candidate) => {
+      const span = spansByWorkflow.get(candidate.workflowKey ?? '');
+      if (!span) return [];
+      const vertical = getFrameVerticalBounds(span);
+      const chainVertical = getWorkflowChainVerticalBounds({
+        ...vertical,
+        depth: candidate.depth ?? 0,
+      });
+      return [
+        {
+          candidate,
+          geometry: getWorkflowFrameGeometry({
+            startWorldPx: candidate.startWorldPx,
+            endWorldPx: candidate.endWorldPx,
+            viewportOffsetPx: viewport.offsetPx,
+            viewportWidthPx: timelineWidth,
+            gutterPx: GUTTER,
+            topPx: chainVertical.topPx,
+            bottomPx: chainVertical.bottomPx,
+            startBoundaryKnown: candidate.startBoundaryKnown,
+            endBoundaryKnown: candidate.endBoundaryKnown,
+            labelInsetPx: 2 * RADIUS,
+          }),
+        },
+      ];
+    });
   });
 
   // Border rails span the full timeline height so they meet the bottom axis.
@@ -933,7 +1031,13 @@
   bind:this={containerEl}
   tabindex="-1"
 >
-  <EndTimeInterval {workflow} {startTime} bind:currentTime={nowMs}>
+  <EndTimeInterval
+    {workflow}
+    {startTime}
+    live={aggregateHasLive}
+    endTimeOverride={aggregateEndTimeMs}
+    bind:currentTime={nowMs}
+  >
     {#snippet children({ endTime })}
       <div
         class="pointer-events-none sticky top-[120px]"
@@ -956,6 +1060,7 @@
         style:height="{svgHeight}px"
         style:--dot="{dotSize}px"
         style:--dot-r="{dotRadius}px"
+        style:--timeline-gutter="{GUTTER}px"
         style:--timeline-clip-inset="{GUTTER + RADIUS / 4}px"
       >
         <TimelineIconDefs />
@@ -986,26 +1091,24 @@
             {scale}
             viewportOffsetPx={viewport.offsetPx}
           />
-          <div class="timeline-motion-layer absolute inset-0">
-            {#if chainFrameLayout}
+          <div
+            class="timeline-motion-layer pointer-events-none absolute inset-0"
+          >
+            {#each chainFrameLayouts as frame (frame.candidate.key)}
               <WorkflowFrame
-                geometry={chainFrameLayout.geometry}
-                label={chainFrameLayout.candidate.label}
+                geometry={frame.geometry}
+                label={frame.candidate.label}
+                workflowType={frame.candidate.workflow?.name}
                 accessibleName=""
-                color={strokeColor({
-                  status: chainFrameLayout.candidate.status,
-                  delayed:
-                    chainFrameLayout.candidate.live &&
-                    isWorkflowDelayed(workflow),
-                })}
-                colors={dotColors(chainFrameLayout.candidate.status)}
-                live={chainFrameLayout.candidate.live}
+                color={inheritedWorkflowFrameColor}
+                colors={inheritedWorkflowDotColors}
+                live={frame.candidate.live}
                 kind="chain"
                 paint="background"
                 bandTop={layerBandTop}
                 bandHeight={layerBandHeight}
               />
-            {/if}
+            {/each}
             {#each runFrameLayouts as frame (frame.candidate.key)}
               <WorkflowFrame
                 geometry={frame.geometry}
@@ -1013,7 +1116,12 @@
                 accessibleName=""
                 color={strokeColor({
                   status: frame.candidate.status,
-                  delayed: frame.candidate.live && isWorkflowDelayed(workflow),
+                  delayed:
+                    frame.candidate.live &&
+                    Boolean(
+                      frame.candidate.workflow &&
+                      isWorkflowDelayed(frame.candidate.workflow),
+                    ),
                 })}
                 colors={dotColors(frame.candidate.status)}
                 live={frame.candidate.live}
@@ -1043,31 +1151,33 @@
             </div>
           {/if}
 
-          <div class="timeline-motion-layer absolute inset-0">
-            {#if chainFrameLayout}
+          <div
+            class="timeline-motion-layer pointer-events-none absolute inset-0 z-20"
+          >
+            {#each chainFrameLayouts as frame (frame.candidate.key)}
+              {@const incomingEdge = frame.candidate.workflowKey
+                ? incomingEdgeByWorkflowKey.get(frame.candidate.workflowKey)
+                : undefined}
               <WorkflowFrame
-                geometry={chainFrameLayout.geometry}
-                label={chainFrameLayout.candidate.label}
+                geometry={frame.geometry}
+                label={frame.candidate.label}
+                workflowType={frame.candidate.workflow?.name}
                 accessibleName={translate('workflows.row-accessible-name', {
-                  workflowId: workflow.id,
-                  status: getWorkflowStatusLabel(
-                    chainFrameLayout.candidate.status,
-                  ),
+                  workflowId: frame.candidate.workflow?.id ?? '',
+                  status: getWorkflowStatusLabel(frame.candidate.status),
                 })}
-                color={strokeColor({
-                  status: chainFrameLayout.candidate.status,
-                  delayed:
-                    chainFrameLayout.candidate.live &&
-                    isWorkflowDelayed(workflow),
-                })}
-                colors={dotColors(chainFrameLayout.candidate.status)}
-                live={chainFrameLayout.candidate.live}
+                color={inheritedWorkflowFrameColor}
+                colors={inheritedWorkflowDotColors}
+                live={frame.candidate.live}
                 kind="chain"
                 paint="foreground"
                 bandTop={layerBandTop}
                 bandHeight={layerBandHeight}
+                onToggle={incomingEdge
+                  ? () => recursiveSession.toggle(incomingEdge.key)
+                  : undefined}
               />
-            {/if}
+            {/each}
             {#each runFrameLayouts as frame (frame.candidate.key)}
               <WorkflowFrame
                 geometry={frame.geometry}
@@ -1075,14 +1185,19 @@
                 accessibleName={translate(
                   'workflows.chain-row-accessible-name',
                   {
-                    workflowId: workflow.id,
+                    workflowId: frame.candidate.workflow?.id ?? '',
                     runId: frame.candidate.runId,
                     status: getWorkflowStatusLabel(frame.candidate.status),
                   },
                 )}
                 color={strokeColor({
                   status: frame.candidate.status,
-                  delayed: frame.candidate.live && isWorkflowDelayed(workflow),
+                  delayed:
+                    frame.candidate.live &&
+                    Boolean(
+                      frame.candidate.workflow &&
+                      isWorkflowDelayed(frame.candidate.workflow),
+                    ),
                 })}
                 colors={dotColors(frame.candidate.status)}
                 live={frame.candidate.live}
@@ -1126,6 +1241,22 @@
               >
                 {#if slot?.row.kind === 'group'}
                   {@const timelineEntry = slot.row.entry}
+                  {@const childControlAfterX =
+                    projectX(timelineEntry.group.lastEvent.eventTime) +
+                    RADIUS * 1.5 +
+                    1}
+                  {@const childControlFitsAfter =
+                    childControlAfterX + 24 <= canvasWidth - GUTTER}
+                  {@const childControlX = slot.row.childEdge
+                    ? childControlFitsAfter
+                      ? childControlAfterX
+                      : Math.max(
+                          GUTTER + slot.row.childEdge.depth * 12,
+                          projectX(timelineEntry.group.initialEvent.eventTime) -
+                            RADIUS * 1.5 -
+                            24,
+                        )
+                    : undefined}
                   <div class="timeline-motion-layer absolute inset-0">
                     <TimelineGraphRow
                       group={timelineEntry.group}
@@ -1138,8 +1269,33 @@
                       retainedEndTimeMs={timelineEntry?.active
                         ? undefined
                         : timelineEntry?.runEndTimeMs}
+                      labelLeadingOffsetPx={slot.row.childEdge &&
+                      childControlFitsAfter
+                        ? 34
+                        : 0}
+                      labelTrailingOffsetPx={slot.row.childEdge &&
+                      !childControlFitsAfter
+                        ? 34
+                        : 0}
                     />
+                    {#if slot.row.childEdge}
+                      <TimelineChildEdgeRow
+                        edge={slot.row.childEdge}
+                        {canvasWidth}
+                        anchorX={childControlX}
+                        onToggle={(edgeKey) => recursiveSession.toggle(edgeKey)}
+                        onRetry={(edgeKey) => recursiveSession.retry(edgeKey)}
+                      />
+                    {/if}
                   </div>
+                {:else if slot?.row.kind === 'child-state'}
+                  <TimelineChildEdgeRow
+                    edge={slot.row.edge}
+                    {canvasWidth}
+                    presentation="state"
+                    onToggle={(edgeKey) => recursiveSession.toggle(edgeKey)}
+                    onRetry={(edgeKey) => recursiveSession.retry(edgeKey)}
+                  />
                 {/if}
               </li>
             {/each}

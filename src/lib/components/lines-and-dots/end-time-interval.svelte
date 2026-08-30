@@ -10,6 +10,8 @@
   interface Props {
     workflow: WorkflowExecution;
     startTime: string | Timestamp;
+    endTimeOverride?: string | number;
+    live?: boolean;
     currentTime?: number;
     children?: Snippet<
       [
@@ -25,11 +27,17 @@
   let {
     workflow,
     startTime,
+    endTimeOverride,
+    live = workflow.isRunning || workflow.isPaused,
     currentTime = $bindable(Date.now()),
     children,
   }: Props = $props();
 
-  const endTime = $derived(workflow?.endTime || currentTime + 1000);
+  const endTime = $derived(
+    live
+      ? currentTime + 1000
+      : endTimeOverride || workflow?.endTime || currentTime,
+  );
   const duration = $derived(
     getMillisecondDuration({
       start: startTime,
@@ -40,8 +48,7 @@
 
   $effect(() => {
     if ($pauseLiveUpdates) return;
-    if (workflow.endTime) return;
-    if (!(workflow.isRunning || workflow.isPaused)) return;
+    if (!live) return;
 
     // Resume from the actual current time immediately instead of waiting for
     // the first interval tick with a stale frozen clock.

@@ -1,8 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  import { page } from '$app/stores';
-
   import EventDetailsFull from '$lib/components/event/event-details-full.svelte';
   import WorkflowStatus from '$lib/components/execution-status.svelte';
   import Button from '$lib/holocene/button.svelte';
@@ -11,9 +9,6 @@
   import type { EventGroup } from '$lib/models/event-groups/event-groups';
   import { setActiveGroup } from '$lib/stores/active-events';
   import { formatEventGroupDuration } from '$lib/utilities/event-group-duration';
-  import { isChildWorkflowExecutionStartedEvent } from '$lib/utilities/is-event-type';
-
-  import GraphWidget from './graph-widget.svelte';
 
   type Props = {
     group: EventGroup;
@@ -55,12 +50,7 @@
     return () => observer.disconnect();
   });
 
-  const namespace = $derived($page.params.namespace);
   const title = $derived(group.displayName);
-
-  const childWorkflowStartedEvent = $derived(
-    group && group.eventList.find(isChildWorkflowExecutionStartedEvent),
-  );
 
   const duration = $derived(
     formatEventGroupDuration({ group, endTime, includeMilliseconds: true }),
@@ -113,24 +103,6 @@
     <div class="surface-primary">
       <EventDetailsFull {group} event={group.initialEvent} lazy={true} />
     </div>
-    {#if childWorkflowStartedEvent}
-      <div class="surface-primary p-4">
-        <div class="font-medium leading-4 text-secondary">Child Workflow</div>
-        {#key group.eventList.length}
-          {#if childWorkflowStartedEvent.attributes.workflowExecution?.workflowId}
-            <GraphWidget
-              {namespace}
-              workflowId={childWorkflowStartedEvent.attributes.workflowExecution
-                .workflowId}
-              runId={childWorkflowStartedEvent.attributes.workflowExecution
-                .runId ?? undefined}
-              viewportHeight={320}
-              class="surface-primary overflow-x-hidden border-t border-subtle"
-            />
-          {/if}
-        {/key}
-      </div>
-    {/if}
   </div>
 </div>
 

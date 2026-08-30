@@ -1,14 +1,16 @@
 <script lang="ts">
+  import Button from '$lib/holocene/button.svelte';
   import { translate } from '$lib/i18n/translate';
 
   import type { DotColors } from '../colors';
   import { GUTTER, RADIUS } from './constants';
-  import { dotBox } from './primitives';
+  import { alignedDotBox } from './primitives';
   import type { WorkflowFrameGeometry } from './workflow-frame-geometry';
 
   interface Props {
     geometry: WorkflowFrameGeometry;
     label: string;
+    workflowType?: string;
     accessibleName: string;
     color: string;
     colors: DotColors;
@@ -17,11 +19,14 @@
     paint: 'background' | 'foreground';
     bandTop: number;
     bandHeight: number;
+    onToggle?: () => void;
+    expanded?: boolean;
   }
 
   let {
     geometry,
     label,
+    workflowType,
     accessibleName,
     color,
     colors,
@@ -30,6 +35,8 @@
     paint,
     bandTop,
     bandHeight,
+    onToggle,
+    expanded = true,
   }: Props = $props();
 
   const bandBottom = $derived(bandTop + bandHeight);
@@ -48,11 +55,22 @@
       ? Math.max(0, geometry.horizontal.endPx - geometry.horizontal.startPx)
       : 0,
   );
-  const visibleDotPoints = $derived(
+  const visibleDots = $derived(
     [
-      geometry.startDotPx,
-      geometry.endDotPx === geometry.startDotPx ? null : geometry.endDotPx,
-    ].filter((point): point is number => point !== null),
+      geometry.startDotPx === null
+        ? null
+        : { point: geometry.startDotPx, alignment: 'start' as const },
+      geometry.endDotPx === null || geometry.endDotPx === geometry.startDotPx
+        ? null
+        : { point: geometry.endDotPx, alignment: 'end' as const },
+    ].filter(
+      (
+        dot,
+      ): dot is {
+        point: number;
+        alignment: 'start' | 'end';
+      } => dot !== null,
+    ),
   );
   let labelWidth = $state(0);
   const labelSafeInset = GUTTER + 1.5 * RADIUS;
@@ -71,8 +89,15 @@
       ? geometry.horizontal.endPx - labelWidth - 2 * RADIUS
       : 0,
   );
+  const compactLabel = $derived(
+    kind === 'run' && label.length > 18
+      ? `${label.slice(0, 8)}…${label.slice(-6)}`
+      : kind === 'chain' && label.length > 30
+        ? `${label.slice(0, 18)}…${label.slice(-8)}`
+        : label,
+  );
   const displayLabel = $derived(
-    `${translate(kind === 'chain' ? 'common.workflow-id' : 'common.run-id')}: ${label}`,
+    `${translate(kind === 'chain' ? 'common.workflow-id' : 'common.run-id')}: ${compactLabel}${kind === 'chain' && workflowType ? ` · ${workflowType}` : ''}`,
   );
 </script>
 
@@ -88,7 +113,7 @@
 
 {#if geometry.horizontal && paintHeight > 0}
   <div
-    aria-hidden="true"
+    aria-hidden={onToggle ? undefined : 'true'}
     data-frame-kind={kind}
     data-frame-paint={paint}
     class="pointer-events-none absolute inset-0"
@@ -168,7 +193,9 @@
         <span
           class:frame-label-chain={kind === 'chain'}
           class:workflow-run-label={kind === 'run'}
-          class="pointer-events-none absolute z-10 inline-flex min-h-[var(--dot)] items-center truncate whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none text-current"
+          class:pointer-events-none={!onToggle}
+          class:pointer-events-auto={Boolean(onToggle)}
+          class="absolute z-10 inline-flex min-h-[var(--dot)] items-center truncate whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none text-current"
           style:left={labelLeft}
           style:top="{geometry.topPx - RADIUS}px"
           style:max-width={labelMaxWidth}
@@ -177,12 +204,32 @@
           style:--workflow-label-end-attached-left="{labelEndAttachedLeft}px"
           style:--frame-color={color}
           title={displayLabel}
-          bind:clientWidth={labelWidth}>{displayLabel}</span
+          bind:clientWidth={labelWidth}
         >
+          {#if onToggle}
+            <Button
+              variant="ghost"
+              size="xs"
+              class="mr-1 h-4 w-4 shrink-0 p-0"
+              onclick={onToggle}
+              aria-label={`${expanded ? translate('workflows.child-timeline-collapse') : translate('workflows.child-timeline-expand')}: ${label}`}
+              aria-expanded={expanded}
+              leadingIcon={expanded ? 'chevron-down' : 'chevron-right'}
+              title={expanded
+                ? translate('workflows.child-timeline-collapse')
+                : translate('workflows.child-timeline-expand')}
+            />
+          {/if}
+          <span class="truncate">{displayLabel}</span>
+        </span>
       {/if}
       {#if drawTop && kind === 'chain'}
-        {#each visibleDotPoints as point (point)}
-          {@const bounds = dotBox(point, geometry.topPx)}
+        {#each visibleDots as dot (dot.point)}
+          {@const bounds = alignedDotBox(
+            dot.point,
+            geometry.topPx,
+            dot.alignment,
+          )}
           <div
             class="pointer-events-none absolute h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"
             style:left="{bounds.left}px"

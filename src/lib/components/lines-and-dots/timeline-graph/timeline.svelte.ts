@@ -23,6 +23,8 @@ interface TimelineInit {
   getLoading?: () => boolean;
   getShouldCollapseByDefault?: () => boolean;
   getStartTimeMs?: () => number | undefined;
+  getEndTimeMs?: () => number | undefined;
+  getEndUnbounded?: () => boolean;
 }
 
 export class Timeline {
@@ -40,6 +42,8 @@ export class Timeline {
   private _getLoading: () => boolean;
   private _getShouldCollapseByDefault: () => boolean;
   private _getStartTimeMs: () => number | undefined;
+  private _getEndTimeMs: () => number | undefined;
+  private _getEndUnbounded: () => boolean;
 
   constructor({
     getFullEventHistory,
@@ -51,6 +55,8 @@ export class Timeline {
     getLoading,
     getShouldCollapseByDefault,
     getStartTimeMs,
+    getEndTimeMs,
+    getEndUnbounded,
   }: TimelineInit) {
     this._getFullEventHistory = getFullEventHistory;
     this._getWorkflow = getWorkflow;
@@ -63,6 +69,9 @@ export class Timeline {
     this._getShouldCollapseByDefault =
       getShouldCollapseByDefault ?? (() => false);
     this._getStartTimeMs = getStartTimeMs ?? (() => undefined);
+    this._getEndTimeMs = getEndTimeMs ?? (() => undefined);
+    this._getEndUnbounded =
+      getEndUnbounded ?? (() => !this._getWorkflow().endTime);
 
     // Finalize once the fetch completes: releasing the freeze (see `segments`)
     // builds the real segment set, and collapsing the idle gaps by default is
@@ -77,12 +86,14 @@ export class Timeline {
 
   readonly workflow = $derived.by(() => this._getWorkflow());
   readonly eventGroups = $derived.by(() => this._getEventGroups());
-  private readonly _endUnbounded = $derived(!this.workflow.endTime);
+  private readonly _endUnbounded = $derived.by(() => this._getEndUnbounded());
 
   private readonly _endMs = $derived.by(() => {
     // `||` not `??`: a running workflow's endTime is often an empty string, not
     // null — fall back to "now" so validTimeToDate doesn't throw on "".
-    const end = this.workflow.endTime || this._getCurrentTimeMs();
+    const end =
+      this._getEndTimeMs() ??
+      (this.workflow.endTime || this._getCurrentTimeMs());
     return validTimeToDate(end).getTime();
   });
 

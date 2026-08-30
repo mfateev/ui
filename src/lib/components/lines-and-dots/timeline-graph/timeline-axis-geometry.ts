@@ -1,19 +1,86 @@
-import type { PixelRange } from './viewport-geometry';
-
 export interface TimelineAxisTick {
   screenPx: number;
   worldPx: number;
 }
 
-interface TimelineAxisTickOptions {
+export function getNiceTimelineIntervalMs(targetIntervalMs: number): number {
+  const targetSeconds = Math.max(1, targetIntervalMs / 1000);
+  const magnitude = 10 ** Math.floor(Math.log10(targetSeconds));
+  const candidates = [1, 2, 5, 10].map((multiple) => multiple * magnitude);
+  const intervalSeconds = candidates.reduce((closest, candidate) =>
+    Math.abs(candidate - targetSeconds) < Math.abs(closest - targetSeconds)
+      ? candidate
+      : closest,
+  );
+  return intervalSeconds * 1000;
+}
+
+export function getTimelineTimeTicks({
+  visibleStartTimeMs,
+  visibleEndTimeMs,
+  originTimeMs,
+  intervalMs,
+  project,
+  viewportOffsetPx,
+  gutterPx,
+  screenStartPx,
+  screenEndPx,
+  collapsedTimeRanges = [],
+}: {
+  visibleStartTimeMs: number;
+  visibleEndTimeMs: number;
+  originTimeMs: number;
+  intervalMs: number;
+  project: (timeMs: number) => number;
+  viewportOffsetPx: number;
+  gutterPx: number;
   screenStartPx: number;
   screenEndPx: number;
-  gutterPx: number;
-  viewportOffsetPx: number;
-  collapsedWorldRanges: PixelRange[];
-  targetTickPx?: number;
-  minTicks?: number;
-  maxTicks?: number;
+  collapsedTimeRanges?: { startTimeMs: number; endTimeMs: number }[];
+}): TimelineAxisTick[] {
+  if (intervalMs <= 0 || visibleEndTimeMs < visibleStartTimeMs) return [];
+
+  const firstIndex = Math.max(
+    0,
+    Math.ceil((visibleStartTimeMs - originTimeMs) / intervalMs),
+  );
+  const lastIndex = Math.floor((visibleEndTimeMs - originTimeMs) / intervalMs);
+  const collapsedRanges = [...collapsedTimeRanges].sort(
+    (a, b) => a.startTimeMs - b.startTimeMs,
+  );
+  const ticks: TimelineAxisTick[] = [];
+  let tickIndex = firstIndex;
+  let collapsedRangeIndex = 0;
+
+  while (tickIndex <= lastIndex) {
+    const timeMs = originTimeMs + tickIndex * intervalMs;
+
+    while (collapsedRanges[collapsedRangeIndex]?.endTimeMs < timeMs) {
+      collapsedRangeIndex += 1;
+    }
+
+    const collapsedRange = collapsedRanges[collapsedRangeIndex];
+    if (
+      collapsedRange &&
+      timeMs >= collapsedRange.startTimeMs &&
+      timeMs <= collapsedRange.endTimeMs
+    ) {
+      tickIndex = Math.max(
+        tickIndex + 1,
+        Math.floor((collapsedRange.endTimeMs - originTimeMs) / intervalMs) + 1,
+      );
+      continue;
+    }
+
+    const worldPx = project(timeMs);
+    const screenPx = worldPx - viewportOffsetPx + gutterPx;
+    if (screenPx >= screenStartPx && screenPx <= screenEndPx) {
+      ticks.push({ worldPx, screenPx });
+    }
+    tickIndex += 1;
+  }
+
+  return ticks;
 }
 
 export function screenToTimelineWorld(
@@ -22,71 +89,4 @@ export function screenToTimelineWorld(
   viewportOffsetPx: number,
 ): number {
   return screenPx - gutterPx + viewportOffsetPx;
-}
-
-export function getTimelineAxisTickCount({
-  screenDistancePx,
-  targetTickPx,
-  minTicks,
-  maxTicks,
-}: {
-  screenDistancePx: number;
-  targetTickPx: number;
-  minTicks: number;
-  maxTicks: number;
-}): number {
-  return Math.min(
-    maxTicks,
-    Math.max(
-      minTicks,
-      Math.round(Math.max(0, screenDistancePx) / targetTickPx),
-    ),
-  );
-}
-
-export function getTimelineAxisTicks({
-  screenStartPx,
-  screenEndPx,
-  gutterPx,
-  viewportOffsetPx,
-  collapsedWorldRanges,
-  targetTickPx = 60,
-  minTicks = 2,
-  maxTicks = 40,
-}: TimelineAxisTickOptions): TimelineAxisTick[] {
-  const screenDistancePx = Math.max(0, screenEndPx - screenStartPx);
-  const tickCount = getTimelineAxisTickCount({
-    screenDistancePx,
-    targetTickPx,
-    minTicks,
-    maxTicks,
-  });
-  const worldStartPx = screenToTimelineWorld(
-    screenStartPx,
-    gutterPx,
-    viewportOffsetPx,
-  );
-  const worldEndPx = worldStartPx + screenDistancePx;
-  const tickDistancePx = screenDistancePx / tickCount;
-  if (tickDistancePx <= 0) return [];
-
-  // Anchor ticks to the world origin. Deriving them from the viewport start
-  // gives every tick a new world coordinate whenever following advances,
-  // causing the entire grid to disappear and reappear on each coarse update.
-  const firstTickIndex = Math.floor(worldStartPx / tickDistancePx) + 1;
-  const endTickIndex = Math.floor(worldEndPx / tickDistancePx) + 2;
-  const visibleTickCount = Math.max(0, endTickIndex - firstTickIndex);
-
-  return Array.from({ length: visibleTickCount }, (_, index) => {
-    const worldPx = (firstTickIndex + index) * tickDistancePx;
-    return {
-      worldPx,
-      screenPx: screenStartPx + worldPx - worldStartPx,
-    };
-  }).filter(
-    ({ worldPx }) =>
-      !collapsedWorldRanges.some(
-        ({ startPx, endPx }) => worldPx >= startPx && worldPx <= endPx,
-      ),
-  );
 }

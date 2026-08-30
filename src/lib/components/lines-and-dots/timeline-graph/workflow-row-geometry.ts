@@ -12,6 +12,7 @@ interface WorkflowRowGeometryOptions {
   viewportOffsetPx: number;
   viewportWidthPx: number;
   gutterPx: number;
+  live?: boolean;
 }
 
 export function getWorkflowRowGeometry({
@@ -20,6 +21,7 @@ export function getWorkflowRowGeometry({
   viewportOffsetPx,
   viewportWidthPx,
   gutterPx,
+  live = false,
 }: WorkflowRowGeometryOptions): WorkflowRowGeometry {
   const viewport = { offsetPx: viewportOffsetPx, widthPx: viewportWidthPx };
   const clipped = clipConnectorToViewport(
@@ -39,6 +41,6 @@ export function getWorkflowRowGeometry({
         }
       : null,
     startDotPx: isVisible(startWorldPx) ? toScreen(startWorldPx) : null,
-    endDotPx: isVisible(endWorldPx) ? toScreen(endWorldPx) : null,
+    endDotPx: !live && isVisible(endWorldPx) ? toScreen(endWorldPx) : null,
   };
 }

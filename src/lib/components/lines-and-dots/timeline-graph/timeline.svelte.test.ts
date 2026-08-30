@@ -51,6 +51,26 @@ describe('Timeline.workflowTimespan', () => {
     cleanup();
   });
 
+  it('extends a delayed workflow to an earlier requested window start', () => {
+    const cleanup = $effect.root(() => {
+      const futureStartTimeMs = Date.now() + 100_000;
+      const timeline = makeTimeline({
+        currentTimeMs: futureStartTimeMs + 50_000,
+        workflow: {
+          startTime: new Date(futureStartTimeMs).toISOString(),
+          executionTime: new Date(futureStartTimeMs + 10_000).toISOString(),
+          endTime: undefined,
+        },
+        startTimeMs: futureStartTimeMs - 60_000,
+      });
+
+      expect(timeline.workflowTimespan.startTimeMs).toBe(
+        futureStartTimeMs - 60_000,
+      );
+    });
+    cleanup();
+  });
+
   it('starts at the earliest of the event history and executionTime', () => {
     const cleanup = $effect.root(() => {
       const timeline = makeTimeline({

@@ -1,119 +1,83 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
-  getTimelineAxisTicks,
+  getNiceTimelineIntervalMs,
+  getTimelineTimeTicks,
   screenToTimelineWorld,
 } from './timeline-axis-geometry';
+
+describe('getNiceTimelineIntervalMs', () => {
+  it('chooses whole-second intervals near the target density', () => {
+    expect(getNiceTimelineIntervalMs(400)).toBe(1_000);
+    expect(getNiceTimelineIntervalMs(2_400)).toBe(2_000);
+    expect(getNiceTimelineIntervalMs(4_200)).toBe(5_000);
+    expect(getNiceTimelineIntervalMs(8_000)).toBe(10_000);
+  });
+});
+
+describe('getTimelineTimeTicks', () => {
+  it('anchors ticks to exact seconds after the workflow start', () => {
+    expect(
+      getTimelineTimeTicks({
+        visibleStartTimeMs: 1_000,
+        visibleEndTimeMs: 7_000,
+        originTimeMs: 0,
+        intervalMs: 2_000,
+        project: (timeMs) => timeMs / 10,
+        viewportOffsetPx: 0,
+        gutterPx: 0,
+        screenStartPx: 0,
+        screenEndPx: 1_000,
+      }),
+    ).toEqual([
+      { worldPx: 200, screenPx: 200 },
+      { worldPx: 400, screenPx: 400 },
+      { worldPx: 600, screenPx: 600 },
+    ]);
+  });
+
+  it('does not create ticks before the workflow start', () => {
+    expect(
+      getTimelineTimeTicks({
+        visibleStartTimeMs: -60_000,
+        visibleEndTimeMs: 3_000,
+        originTimeMs: 0,
+        intervalMs: 1_000,
+        project: (timeMs) => timeMs,
+        viewportOffsetPx: 0,
+        gutterPx: 0,
+        screenStartPx: 0,
+        screenEndPx: 3_000,
+      }).map(({ worldPx }) => worldPx),
+    ).toEqual([0, 1_000, 2_000, 3_000]);
+  });
+
+  it('jumps over collapsed time instead of projecting every hidden tick', () => {
+    const project = vi.fn((timeMs: number) => timeMs / 1_000);
+
+    expect(
+      getTimelineTimeTicks({
+        visibleStartTimeMs: 0,
+        visibleEndTimeMs: 1_000_000,
+        originTimeMs: 0,
+        intervalMs: 1_000,
+        project,
+        viewportOffsetPx: 0,
+        gutterPx: 0,
+        screenStartPx: 0,
+        screenEndPx: 1_000,
+        collapsedTimeRanges: [{ startTimeMs: 1_000, endTimeMs: 999_000 }],
+      }),
+    ).toEqual([
+      { worldPx: 0, screenPx: 0 },
+      { worldPx: 1_000, screenPx: 1_000 },
+    ]);
+    expect(project).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe('screenToTimelineWorld', () => {
   it('adds the viewport offset after removing the screen gutter', () => {
     expect(screenToTimelineWorld(80, 20, 300)).toBe(360);
-  });
-});
-
-describe('getTimelineAxisTicks', () => {
-  it('maps visible screen positions to the offset world interval', () => {
-    expect(
-      getTimelineAxisTicks({
-        screenStartPx: 20,
-        screenEndPx: 220,
-        gutterPx: 20,
-        viewportOffsetPx: 300,
-        collapsedWorldRanges: [],
-        targetTickPx: 50,
-      }),
-    ).toEqual([
-      { screenPx: 70, worldPx: 350 },
-      { screenPx: 120, worldPx: 400 },
-      { screenPx: 170, worldPx: 450 },
-      { screenPx: 220, worldPx: 500 },
-      { screenPx: 270, worldPx: 550 },
-    ]);
-  });
-
-  it('filters ticks whose world positions are inside collapsed segments', () => {
-    expect(
-      getTimelineAxisTicks({
-        screenStartPx: 20,
-        screenEndPx: 220,
-        gutterPx: 20,
-        viewportOffsetPx: 300,
-        collapsedWorldRanges: [{ startPx: 390, endPx: 410 }],
-        targetTickPx: 50,
-      }),
-    ).toEqual([
-      { screenPx: 70, worldPx: 350 },
-      { screenPx: 170, worldPx: 450 },
-      { screenPx: 220, worldPx: 500 },
-      { screenPx: 270, worldPx: 550 },
-    ]);
-  });
-
-  it('keeps tick world identities stable as the viewport advances', () => {
-    const initial = getTimelineAxisTicks({
-      screenStartPx: 20,
-      screenEndPx: 220,
-      gutterPx: 20,
-      viewportOffsetPx: 300,
-      collapsedWorldRanges: [],
-      targetTickPx: 50,
-    });
-    const advanced = getTimelineAxisTicks({
-      screenStartPx: 20,
-      screenEndPx: 220,
-      gutterPx: 20,
-      viewportOffsetPx: 310,
-      collapsedWorldRanges: [],
-      targetTickPx: 50,
-    });
-
-    expect(initial).toEqual([
-      { screenPx: 70, worldPx: 350 },
-      { screenPx: 120, worldPx: 400 },
-      { screenPx: 170, worldPx: 450 },
-      { screenPx: 220, worldPx: 500 },
-      { screenPx: 270, worldPx: 550 },
-    ]);
-    expect(advanced).toEqual([
-      { screenPx: 60, worldPx: 350 },
-      { screenPx: 110, worldPx: 400 },
-      { screenPx: 160, worldPx: 450 },
-      { screenPx: 210, worldPx: 500 },
-      { screenPx: 260, worldPx: 550 },
-    ]);
-  });
-
-  it('keeps tick density bounded for very small and large viewports', () => {
-    expect(
-      getTimelineAxisTicks({
-        screenStartPx: 0,
-        screenEndPx: 10,
-        gutterPx: 0,
-        viewportOffsetPx: 0,
-        collapsedWorldRanges: [],
-      }),
-    ).toHaveLength(3);
-    expect(
-      getTimelineAxisTicks({
-        screenStartPx: 0,
-        screenEndPx: 10_000,
-        gutterPx: 0,
-        viewportOffsetPx: 0,
-        collapsedWorldRanges: [],
-      }),
-    ).toHaveLength(41);
-  });
-
-  it('keeps the next tick mounted beyond the right edge', () => {
-    const ticks = getTimelineAxisTicks({
-      screenStartPx: 20,
-      screenEndPx: 220,
-      gutterPx: 20,
-      viewportOffsetPx: 310,
-      collapsedWorldRanges: [],
-      targetTickPx: 50,
-    });
-
-    expect(ticks.at(-1)).toEqual({ screenPx: 260, worldPx: 550 });
   });
 });

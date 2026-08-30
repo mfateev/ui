@@ -306,6 +306,102 @@ test.describe('Timeline live completion', () => {
     await expect(timeline.locator('.timeline-clamped-label')).toBeVisible();
   });
 
+  test('constrains the workflow label while it enters, pins, and exits', async ({
+    page,
+  }) => {
+    await mockWorkflowApis(page, runningWorkflow);
+    await page.route(EVENT_HISTORY_API, (route) =>
+      route.fulfill({
+        json: historyPage(
+          route.request().url().includes('waitNewEvent=true') ? [] : inProgress,
+        ),
+      }),
+    );
+    await page.route(EVENT_HISTORY_API_REVERSE, (route) =>
+      route.fulfill({ json: historyPage([...inProgress].reverse()) }),
+    );
+
+    await page.goto(timelineUrl);
+
+    const timeline = page.locator('#event-history-timeline-graph');
+    const label = timeline.locator('.workflow-run-label');
+    await expect(label).toBeVisible();
+    await page.getByTestId('pause').click();
+    await expect(timeline).toHaveAttribute('data-live-paused', 'true');
+
+    const positions = await timeline.evaluate(async (element) => {
+      const workflowLabel = element.querySelector<HTMLElement>(
+        '.workflow-run-label',
+      );
+      const liveLine = element.querySelector<HTMLElement>('.tl-line--live');
+      if (!workflowLabel || !liveLine) {
+        throw new Error('Expected a workflow label and live workflow line');
+      }
+
+      const styles = getComputedStyle(workflowLabel);
+      const numberProperty = (name: string) =>
+        Number.parseFloat(styles.getPropertyValue(name));
+      const originalEndAttachedLeft = numberProperty(
+        '--workflow-label-end-attached-left',
+      );
+      const committedWidth = Number.parseFloat(
+        getComputedStyle(liveLine).getPropertyValue(
+          '--tl-live-committed-width',
+        ),
+      );
+      const endScreenPx = liveLine.offsetLeft + committedWidth;
+      const exitGap =
+        endScreenPx - (originalEndAttachedLeft + workflowLabel.offsetWidth);
+
+      const attachedLeft = 100;
+      const safeInset = 150;
+      const endAttachedLeft = 300;
+      workflowLabel.style.setProperty(
+        '--workflow-label-attached-left',
+        `${attachedLeft}px`,
+      );
+      workflowLabel.style.setProperty(
+        '--workflow-label-safe-inset',
+        `${safeInset}px`,
+      );
+      workflowLabel.style.setProperty(
+        '--workflow-label-end-attached-left',
+        `${endAttachedLeft}px`,
+      );
+      const atFrameOffset = async (frameOffset: number) => {
+        element.style.setProperty(
+          '--timeline-frame-offset',
+          `${frameOffset}px`,
+        );
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+        return workflowLabel.offsetLeft;
+      };
+
+      const attached = await atFrameOffset(-100);
+      const pinnedTarget = 200;
+      const pinned = await atFrameOffset(50);
+      const exiting = await atFrameOffset(200);
+      element.style.setProperty('--timeline-frame-offset', '0px');
+
+      return {
+        attached,
+        attachedLeft,
+        pinned,
+        pinnedTarget,
+        exiting,
+        endAttachedLeft,
+        exitGap,
+      };
+    });
+
+    expect(positions.attached).toBeCloseTo(positions.attachedLeft, 0);
+    expect(positions.pinned).toBeCloseTo(positions.pinnedTarget, 0);
+    expect(positions.exiting).toBeCloseTo(positions.endAttachedLeft, 0);
+    expect(positions.exitGap).toBeGreaterThan(0);
+  });
+
   test('freezes the viewport while paused and follows the latest edge after resume', async ({
     page,
   }) => {
@@ -402,14 +498,11 @@ test.describe('Timeline live completion', () => {
 
     const liveEdgePositions = await timeline.evaluate(
       (element) =>
-        new Promise<{ anchors: number[]; extensions: number[] }>((resolve) => {
-          const anchors: number[] = [];
+        new Promise<number[]>((resolve) => {
           const extensions: number[] = [];
           const sample = () => {
-            const anchor = element.querySelector('.timeline-live-edge-anchor');
             const liveLine = element.querySelector('.tl-line--live');
-            if (anchor && liveLine) {
-              anchors.push(anchor.getBoundingClientRect().right);
+            if (liveLine) {
               const committedWidth = Number.parseFloat(
                 getComputedStyle(liveLine).getPropertyValue(
                   '--tl-live-committed-width',
@@ -426,7 +519,7 @@ test.describe('Timeline live completion', () => {
                   extensionWidth,
               );
             }
-            if (anchors.length === 8) resolve({ anchors, extensions });
+            if (extensions.length === 8) resolve(extensions);
             else requestAnimationFrame(sample);
           };
           requestAnimationFrame(sample);
@@ -434,8 +527,7 @@ test.describe('Timeline live completion', () => {
     );
     const range = (values: number[]) =>
       Math.max(...values) - Math.min(...values);
-    expect(range(liveEdgePositions.anchors)).toBeLessThan(1);
-    expect(range(liveEdgePositions.extensions)).toBeLessThan(1);
+    expect(range(liveEdgePositions)).toBeLessThan(1);
 
     const clippedPatternCommitDelta = await timeline.evaluate(
       (element) =>

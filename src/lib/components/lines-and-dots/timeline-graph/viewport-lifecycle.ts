@@ -23,6 +23,7 @@ export function syncTimelineViewport({
       widthPx: viewport.widthPx,
       totalWorldWidthPx,
       anchoredOffsetPx: 0,
+      allowLeadingSpace: false,
     });
     return;
   }
@@ -32,5 +33,5 @@ export function syncTimelineViewport({
     return;
   }
 
-  viewport.resume(totalWorldWidthPx);
+  viewport.resume(totalWorldWidthPx, true);
 }

@@ -1,11 +1,14 @@
 <script lang="ts">
   import type { Timestamp } from '$lib/types';
-  import { formatDistanceAbbreviated } from '$lib/utilities/format-time';
+  import {
+    formatDistanceAbbreviated,
+    validTimeToDate,
+  } from '$lib/utilities/format-time';
 
   import { RADIUS } from './constants';
   import {
-    getTimelineAxisTickCount,
-    getTimelineAxisTicks,
+    getNiceTimelineIntervalMs,
+    getTimelineTimeTicks,
     screenToTimelineWorld,
   } from './timeline-axis-geometry';
 
@@ -31,18 +34,8 @@
   }: Props = $props();
 
   const TARGET_TICK_PX = 60;
-  const MIN_TICKS = 2;
-  const MAX_TICKS = 40;
 
   const distance = $derived(x2 - x1);
-  const tickCount = $derived(
-    getTimelineAxisTickCount({
-      screenDistancePx: distance,
-      targetTickPx: TARGET_TICK_PX,
-      minTicks: MIN_TICKS,
-      maxTicks: MAX_TICKS,
-    }),
-  );
   const startWorldPx = $derived(
     screenToTimelineWorld(x1, gutter, viewportOffsetPx),
   );
@@ -51,26 +44,33 @@
   );
   const startMs = $derived(scale.unproject(startWorldPx));
   const endMs = $derived(scale.unproject(endWorldPx));
-  const includeMilliseconds = $derived((endMs - startMs) / tickCount < 1000);
+  const originTimeMs = $derived(
+    scale.segments[0]?.startTimeMs ?? validTimeToDate(startTime).getTime(),
+  );
+  const intervalMs = $derived(
+    getNiceTimelineIntervalMs(TARGET_TICK_PX / scale.expandedPxPerMs),
+  );
 
-  const collapsedWorldRanges = $derived(
+  const collapsedTimeRanges = $derived(
     scale.segments
       .filter((segment) => segment.isCollapsed)
       .map((segment) => ({
-        startPx: segment.startPx,
-        endPx: segment.endPx,
+        startTimeMs: segment.startTimeMs,
+        endTimeMs: segment.endTimeMs,
       })),
   );
   const ticks = $derived(
-    getTimelineAxisTicks({
+    getTimelineTimeTicks({
+      visibleStartTimeMs: startMs,
+      visibleEndTimeMs: endMs,
+      originTimeMs,
+      intervalMs,
+      project: (timeMs) => scale.project(timeMs),
+      viewportOffsetPx,
+      gutterPx: gutter,
       screenStartPx: x1,
       screenEndPx: x2,
-      gutterPx: gutter,
-      viewportOffsetPx,
-      collapsedWorldRanges,
-      targetTickPx: TARGET_TICK_PX,
-      minTicks: MIN_TICKS,
-      maxTicks: MAX_TICKS,
+      collapsedTimeRanges,
     }),
   );
 
@@ -100,9 +100,9 @@
       style:top="{timelineHeight + RADIUS}px"
     >
       {formatDistanceAbbreviated({
-        start: startTime,
+        start: originTimeMs,
         end: new Date(scale.unproject(tick.worldPx)),
-        includeMilliseconds,
+        includeMilliseconds: false,
       })}
     </div>
   {/each}

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { getWorkflowRowGeometry } from './workflow-row-geometry';
 
 describe('getWorkflowRowGeometry', () => {
-  it('keeps a short running workflow anchored at the left while it grows', () => {
+  it('renders only the real start marker for a running workflow', () => {
     expect(
       getWorkflowRowGeometry({
         startWorldPx: 0,
@@ -11,11 +11,12 @@ describe('getWorkflowRowGeometry', () => {
         viewportOffsetPx: 0,
         viewportWidthPx: 100,
         gutterPx: 20,
+        live: true,
       }),
     ).toEqual({
       line: { startPx: 20, endPx: 60 },
       startDotPx: 20,
-      endDotPx: 60,
+      endDotPx: null,
     });
   });
 

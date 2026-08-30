@@ -2,6 +2,7 @@ interface ViewportGeometry {
   widthPx: number;
   totalWorldWidthPx: number;
   anchoredOffsetPx?: number;
+  allowLeadingSpace?: boolean;
 }
 
 interface ViewportInit {
@@ -19,6 +20,7 @@ export class Viewport {
 
   private _totalWorldWidthPx = $state(0);
   private _isFollowing = $state(true);
+  private _allowLeadingSpace = false;
 
   readonly visibleRange = $derived({
     startPx: this.offsetPx,
@@ -46,16 +48,22 @@ export class Viewport {
     widthPx,
     totalWorldWidthPx,
     anchoredOffsetPx,
+    allowLeadingSpace,
   }: ViewportGeometry): void {
     this.widthPx = nonNegative(widthPx);
     this._totalWorldWidthPx = nonNegative(totalWorldWidthPx);
+    this._allowLeadingSpace = allowLeadingSpace ?? this._allowLeadingSpace;
     this.offsetPx = this._isFollowing
       ? this._rightEdgeOffset()
       : this._clampOffset(anchoredOffsetPx ?? this.offsetPx);
   }
 
-  resume(totalWorldWidthPx = this._totalWorldWidthPx): void {
+  resume(
+    totalWorldWidthPx = this._totalWorldWidthPx,
+    allowLeadingSpace = this._allowLeadingSpace,
+  ): void {
     this._totalWorldWidthPx = nonNegative(totalWorldWidthPx);
+    this._allowLeadingSpace = allowLeadingSpace;
     this._isFollowing = true;
     this.offsetPx = this._rightEdgeOffset();
   }
@@ -65,10 +73,15 @@ export class Viewport {
   }
 
   private _rightEdgeOffset(): number {
-    return Math.max(0, this._totalWorldWidthPx - this.widthPx);
+    const offset = this._totalWorldWidthPx - this.widthPx;
+    return this._allowLeadingSpace ? offset : Math.max(0, offset);
   }
 
   private _clampOffset(offsetPx: number): number {
-    return Math.min(nonNegative(offsetPx), this._rightEdgeOffset());
+    const rightEdgeOffset = this._rightEdgeOffset();
+    const leftEdgeOffset = this._allowLeadingSpace
+      ? Math.min(0, rightEdgeOffset)
+      : 0;
+    return Math.min(Math.max(leftEdgeOffset, offsetPx), rightEdgeOffset);
   }
 }

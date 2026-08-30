@@ -45,10 +45,7 @@
   import TimelineCollapsedLayer from './timeline-collapsed-layer.svelte';
   import TimelineGraphRow from './timeline-graph-row.svelte';
   import TimelineIconDefs from './timeline-icon-defs.svelte';
-  import {
-    DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS,
-    TimelineScale,
-  } from './timeline-scale.svelte';
+  import { TimelineScale } from './timeline-scale.svelte';
   import { Timeline } from './timeline.svelte';
   import { Viewport } from './viewport.svelte';
   import WorkflowRow from './workflow-row.svelte';
@@ -188,18 +185,7 @@
     getCurrentTimeMs: () => nowMs,
     getLoading: () => timelineLoading,
     getShouldCollapseByDefault: () => $collapseIdleTime === 'on',
-    getStartTimeMs: () => {
-      const chainStartTimeMs = workflowRuns[0]?.startTimeMs;
-      if (
-        displayMode !== 'fixed-window' ||
-        (!workflow.isRunning && !workflow.isPaused)
-      ) {
-        return chainStartTimeMs;
-      }
-      const windowStartTimeMs =
-        nowMs - DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS;
-      return Math.min(chainStartTimeMs ?? windowStartTimeMs, windowStartTimeMs);
-    },
+    getStartTimeMs: () => workflowRuns[0]?.startTimeMs,
   });
 
   const collapsedSegmentCount = $derived(
@@ -307,7 +293,7 @@
         nowMs: frameTimeMs,
         committedOffsetPx: viewport.offsetPx,
         expandedPxPerMs: scale.liveEdgePxPerMs,
-        animate: viewport.offsetPx > 0,
+        animate: true,
         freeze: false,
         snapThresholdPx,
       });
@@ -1038,10 +1024,6 @@
      The coarse viewport update repositions these hit targets often enough to
      remain aligned without making pointer and keyboard interaction chase rAF. */
   .canvas :global(.timeline-motion-hit-target) {
-    transform: translateX(var(--timeline-frame-offset, 0));
-  }
-
-  .canvas :global(.timeline-live-edge-anchor) {
     transform: translateX(var(--timeline-frame-offset, 0));
   }
 

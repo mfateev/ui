@@ -86,14 +86,13 @@ export class Timeline {
     return validTimeToDate(end).getTime();
   });
 
-  private readonly _startMs = $derived.by(() => {
+  private readonly _workflowStartMs = $derived.by(() => {
     // History is ascending by time, so the earliest event is the first entry.
     const firstEventTime = this._getFullEventHistory()[0]?.eventTime;
 
     const startCandidates = [
       firstEventTime,
       this.workflow.executionTime,
-      this._getStartTimeMs(),
     ].filter(isNotNullish);
 
     const earliestStartTime = startCandidates.length
@@ -102,14 +101,22 @@ export class Timeline {
         )
       : undefined;
 
-    const start =
+    const workflowStart =
       (isWorkflowDelayed(this.workflow) && this.workflow.startTime
         ? this.workflow.startTime
         : earliestStartTime) ??
       this.workflow.startTime ??
       this._endMs;
 
-    return Math.min(validTimeToDate(start).getTime(), this._endMs);
+    return Math.min(validTimeToDate(workflowStart).getTime(), this._endMs);
+  });
+
+  private readonly _startMs = $derived.by(() => {
+    const requestedStart = this._getStartTimeMs();
+    return Math.min(
+      requestedStart ?? this._workflowStartMs,
+      this._workflowStartMs,
+    );
   });
 
   // Primitive-number deriveds above so the Timespan (and everything downstream)

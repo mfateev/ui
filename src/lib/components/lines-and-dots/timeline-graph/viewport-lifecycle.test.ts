@@ -22,6 +22,16 @@ const sync = (
   });
 
 describe('syncTimelineViewport', () => {
+  it('follows a short running workflow from a negative leading offset', () => {
+    const viewport = new Viewport({ widthPx: 100, totalWorldWidthPx: 20 });
+
+    sync(viewport, { paused: false, total: 20 });
+
+    expect(viewport.offsetPx).toBe(-80);
+    expect(viewport.visibleRange).toEqual({ startPx: -80, endPx: 20 });
+    expect(viewport.isFollowing).toBe(true);
+  });
+
   it('follows a running workflow at the right edge', () => {
     const viewport = new Viewport({ widthPx: 100, totalWorldWidthPx: 200 });
 

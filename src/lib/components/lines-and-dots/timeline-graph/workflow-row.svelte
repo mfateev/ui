@@ -5,7 +5,7 @@
   import { isWorkflowDelayed } from '$lib/utilities/delayed-workflows';
   import { getWorkflowStatusLabel } from '$lib/utilities/get-status-label';
 
-  import { GUTTER, ROW_HEIGHT } from './constants';
+  import { GUTTER, RADIUS, ROW_HEIGHT } from './constants';
   import { dotBox, lineBox } from './primitives';
   import { dotColors, strokeColor } from '../colors';
   import { getWorkflowRowGeometry } from './workflow-row-geometry';
@@ -43,6 +43,7 @@
       viewportOffsetPx,
       viewportWidthPx: canvasWidth - 2 * GUTTER,
       gutterPx: GUTTER,
+      live,
     }),
   );
   const lineBounds = $derived(
@@ -61,6 +62,18 @@
   );
   const colors = $derived(dotColors(status));
   const workflowIsLive = $derived(live);
+  let labelWidth = $state(0);
+
+  const startScreenPx = $derived(startWorldPx - viewportOffsetPx + GUTTER);
+  const endScreenPx = $derived(endWorldPx - viewportOffsetPx + GUTTER);
+  const labelIconOffset = 2 * RADIUS;
+  const labelSafeInset = GUTTER + 1.5 * RADIUS;
+  const labelLeft =
+    'clamp(var(--workflow-label-attached-left), calc(var(--workflow-label-safe-inset) + var(--timeline-frame-offset, 0px)), var(--workflow-label-end-attached-left))';
+  const labelAttachedLeft = $derived(startScreenPx + labelIconOffset);
+  const labelEndAttachedLeft = $derived(
+    endScreenPx - labelWidth - labelIconOffset,
+  );
 
   const accessibleName = $derived(
     translate('workflows.chain-row-accessible-name', {
@@ -68,6 +81,13 @@
       runId,
       status: getWorkflowStatusLabel(status),
     }),
+  );
+
+  const visibleDotPoints = $derived(
+    [
+      geometry.startDotPx,
+      geometry.endDotPx === geometry.startDotPx ? null : geometry.endDotPx,
+    ].filter((point): point is number => point !== null),
   );
 </script>
 
@@ -96,23 +116,24 @@
       style:--tl-line-color={color}
       style:--tl-live-committed-width="{lineBounds.width}px"
     ></div>
-    {#if lineBounds.width >= 160}
-      <span
-        class="absolute max-w-36 -translate-x-1/2 truncate rounded bg-primary/80 px-1 font-mono text-xs text-secondary"
-        style:left={`${lineBounds.left + lineBounds.width / 2}px`}
-        style:top={`${centerY - 22}px`}
-        title={runId}
-      >
-        {runId}
-      </span>
-    {/if}
+    <span
+      class="workflow-run-label absolute z-10 inline-flex min-h-[var(--dot)] -translate-y-1/2 items-center truncate whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none text-current"
+      style:left={labelLeft}
+      style:top={`${centerY}px`}
+      style:max-width={`${Math.max(0, canvasWidth - 2 * labelSafeInset)}px`}
+      style:--workflow-label-attached-left={`${labelAttachedLeft}px`}
+      style:--workflow-label-safe-inset={`${labelSafeInset}px`}
+      style:--workflow-label-end-attached-left={`${labelEndAttachedLeft}px`}
+      title={runId}
+      bind:clientWidth={labelWidth}
+    >
+      {runId}
+    </span>
   {/if}
-  {#each [geometry.startDotPx, geometry.endDotPx].filter((point) => point !== null) as pointX, pointIndex (pointIndex)}
+  {#each visibleDotPoints as pointX (pointX)}
     {@const dotBounds = dotBox(pointX, centerY)}
     <div
       class="absolute h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"
-      class:timeline-live-edge-anchor={workflowIsLive &&
-        pointX === geometry.endDotPx}
       style:left="{dotBounds.left}px"
       style:top="{dotBounds.top}px"
       style:border-color={colors.stroke}

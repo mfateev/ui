@@ -35,7 +35,6 @@
   import { clearActives } from '$lib/stores/active-events';
   import { collapseIdleTime, eventFilterSort } from '$lib/stores/event-view';
   import { bufferVersion, pauseLiveUpdates } from '$lib/stores/events';
-  import { eventTypeFilter } from '$lib/stores/filters';
   import { workflowRun } from '$lib/stores/workflow-run';
   import type {
     WorkflowTaskFailedEvent,
@@ -68,7 +67,7 @@
 
   const reverseSort = $derived($eventFilterSort === 'descending');
 
-  const filteredBufferGroups = $derived.by(() => {
+  const bufferGroups = $derived.by(() => {
     void $bufferVersion;
     // The buffer owns its run identity. Never infer that identity from the
     // independently refreshed workflow model: a stale Describe response must
@@ -80,10 +79,7 @@
         $workflowRun.workflow?.pendingNexusOperations ?? [],
       );
     }
-    const active = $eventTypeFilter;
-    return getGroupArray({ excludeWorkflowTasks: true }).filter((group) =>
-      active.includes(group.category),
-    );
+    return getGroupArray({ excludeWorkflowTasks: true });
   });
 
   const timelineRuns = $derived.by<TimelineRun[]>(() => {
@@ -99,7 +95,7 @@
         status: workflow.status,
         startTimeMs: Date.parse(workflow.startTime),
         endTimeMs: workflow.endTime ? Date.parse(workflow.endTime) : Date.now(),
-        groups: toTimelineGroups(workflow.runId, filteredBufferGroups),
+        groups: toTimelineGroups(workflow.runId, bufferGroups),
         active: true,
       },
     ];
@@ -134,9 +130,9 @@
   // virtualizes internally from the visible page band, so there's no bounded
   // scroll container, no scroll-offset bridge, and no height plumbing here.
   const estimatedTotalGroups = $derived.by(() => {
-    if (historyCtx.fetchComplete) return filteredBufferGroups.length;
+    if (historyCtx.fetchComplete) return bufferGroups.length;
     const totalEvents = historyCtx.totalExpectedEvents ?? 0;
-    return Math.max(filteredBufferGroups.length, Math.ceil(totalEvents * 0.5));
+    return Math.max(bufferGroups.length, Math.ceil(totalEvents * 0.5));
   });
 
   onMount(() => {
@@ -246,7 +242,7 @@
     <TimelineGraph
       displayMode="fixed-window"
       {workflow}
-      groups={filteredBufferGroups}
+      groups={bufferGroups}
       {reverseSort}
       loading={!historyCtx.fetchComplete}
       totalExpectedEvents={estimatedTotalGroups}
@@ -257,6 +253,7 @@
       rowHeightRetentionScopeId={workflowRunCtx.following
         ? workflowRunCtx.chainRunId
         : workflow.runId}
+      knownChainStartRunId={workflowRunCtx.chainRunId}
       {timelineRuns}
     />
     {#if workflowRunCtx.truncation?.affectsVisibleInterval}

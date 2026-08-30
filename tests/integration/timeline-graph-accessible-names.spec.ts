@@ -23,6 +23,30 @@ test.describe('Timeline graph node accessible names', () => {
     ).toBeVisible();
   });
 
+  test('renders one noninteractive run-frame identity', async ({ page }) => {
+    const timeline = page.locator('#event-history-timeline-graph');
+    await timeline.scrollIntoViewIfNeeded();
+    await expect(timeline.locator('[data-frame-identity]')).toHaveCount(1);
+    await expect(
+      timeline.locator('[data-frame-identity][data-frame-kind="run"]'),
+    ).toHaveCount(1);
+    await expect(
+      timeline.locator('[data-frame-identity][data-frame-kind="chain"]'),
+    ).toHaveCount(0);
+    await expect(
+      timeline.locator('[data-frame-paint="background"]'),
+    ).toHaveAttribute('aria-hidden', 'true');
+    expect(
+      await timeline
+        .locator('[data-frame-kind]')
+        .evaluateAll((frames) =>
+          frames.every(
+            (frame) => getComputedStyle(frame).pointerEvents === 'none',
+          ),
+        ),
+    ).toBe(true);
+  });
+
   test('event nodes announce their type and classification', async ({
     page,
   }) => {

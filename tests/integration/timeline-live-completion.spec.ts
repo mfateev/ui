@@ -325,6 +325,7 @@ test.describe('Timeline live completion', () => {
 
     const timeline = page.locator('#event-history-timeline-graph');
     const label = timeline.locator('.workflow-run-label');
+    await timeline.scrollIntoViewIfNeeded();
     await expect(label).toBeVisible();
     await page.getByTestId('pause').click();
     await expect(timeline).toHaveAttribute('data-live-paused', 'true');
@@ -423,6 +424,7 @@ test.describe('Timeline live completion', () => {
     ).toBeVisible();
 
     const timeline = page.locator('#event-history-timeline-graph');
+    await timeline.scrollIntoViewIfNeeded();
     const clipping = await timeline.evaluate((element) => {
       const clip = element.querySelector<HTMLElement>(
         '.timeline-viewport-clip',

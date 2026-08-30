@@ -8,6 +8,7 @@
     type ChainRetentionWindow,
     getChainRetentionWindow,
     type TimelineRun,
+    toTimelineGroups,
   } from '$lib/services/chain-workflow-session';
   import { activeGroups, clearActiveGroups } from '$lib/stores/active-events';
   import { collapseIdleTime } from '$lib/stores/event-view';
@@ -16,29 +17,40 @@
   import type { WorkflowExecution } from '$lib/types/workflows';
   import { isWorkflowDelayed } from '$lib/utilities/delayed-workflows';
   import { type ValidTime, validTimeToDate } from '$lib/utilities/format-time';
-  import { getFailedOrPendingGroups } from '$lib/utilities/get-failed-or-pending';
+  import { getWorkflowStatusLabel } from '$lib/utilities/get-status-label';
 
+  import { dotColors, strokeColor } from '../colors';
   import EndTimeInterval from '../end-time-interval.svelte';
   import { DOT_STROKE, GUTTER, RADIUS, ROW_HEIGHT } from './constants';
+  import {
+    getTimelineContainmentLayout,
+    type TimelineLayoutRow,
+  } from './timeline-containment-layout';
   import {
     DEFAULT_TIMELINE_DISPLAY_MODE,
     expandedDurationPerViewportMs,
   } from './timeline-display-mode';
   import { shouldMoveFocusToTimeline } from './timeline-focus';
+  import {
+    getChainFrameCandidate,
+    getParticipatingRunFrames,
+  } from './timeline-frame-visibility';
   import { timelineGroupIntersectsViewport } from './timeline-group-window';
   import { TimelineMotion } from './timeline-motion';
-  import {
-    getDescStart,
-    getPendingBlockY,
-    getRowY,
-    getTotalForY,
-  } from './timeline-positioning';
+  import { getRowY, getTotalForY } from './timeline-positioning';
   import {
     TIMELINE_ROW_HEIGHT_GRACE_MS,
     TimelineRowHeightRetention,
   } from './timeline-row-height-retention';
+  import {
+    filterTimelineGroupEntries,
+    filterTimelineGroupEntriesByStatus,
+    getTimelineEntryMaps,
+    getTimelineGroupEntries,
+  } from './timeline-run-entries';
   import type { TimelineDisplayMode } from './types';
   import { syncTimelineViewport } from './viewport-lifecycle';
+  import { getWorkflowFrameGeometry } from './workflow-frame-geometry';
 
   import GroupDetailsRow from './group-details-row.svelte';
   import TimelineAxis from './timeline-axis.svelte';
@@ -48,7 +60,7 @@
   import { TimelineScale } from './timeline-scale.svelte';
   import { Timeline } from './timeline.svelte';
   import { Viewport } from './viewport.svelte';
-  import WorkflowRow from './workflow-row.svelte';
+  import WorkflowFrame from './workflow-frame.svelte';
 
   interface Props {
     workflow: WorkflowExecution;
@@ -65,6 +77,7 @@
     timelineRuns?: TimelineRun[];
     onRetentionWindow?: (window: ChainRetentionWindow) => void;
     rowHeightRetentionScopeId?: string;
+    knownChainStartRunId?: string;
   }
 
   let {
@@ -82,6 +95,7 @@
     timelineRuns = [],
     onRetentionWindow,
     rowHeightRetentionScopeId,
+    knownChainStartRunId = workflow.runId,
   }: Props = $props();
 
   let nowMs = $state(Date.now());
@@ -95,40 +109,30 @@
             status: workflow.status,
             startTimeMs: Date.parse(workflow.startTime),
             endTimeMs: workflow.endTime ? Date.parse(workflow.endTime) : nowMs,
-            groups: [],
+            groups: toTimelineGroups(workflow.runId, groups),
             active: true,
           },
         ],
   );
 
-  const timelineGroupEntries = $derived(
+  const timelineGroupEntries = $derived(getTimelineGroupEntries(workflowRuns));
+  const eventTypeFilteredEntries = $derived(
     timelineRuns.length
-      ? timelineRuns.flatMap((run) =>
-          run.groups.map((entry) => ({
-            ...entry,
-            active: run.active,
-            runEndTimeMs: run.endTimeMs,
-          })),
-        )
-      : groups.map((group) => ({
-          timelineKey: `${workflow.runId}:${group.id}`,
-          runId: workflow.runId,
-          group,
-          active: true,
-          runEndTimeMs: nowMs,
-        })),
+      ? filterTimelineGroupEntries({
+          entries: timelineGroupEntries,
+          eventTypes: $eventTypeFilter,
+          failedOrPending: false,
+        })
+      : timelineGroupEntries,
   );
   const renderedGroups = $derived(
-    timelineGroupEntries.map((entry) => entry.group),
+    eventTypeFilteredEntries.map((entry) => entry.group),
   );
-  const timelineKeys = $derived(
-    new Map(
-      timelineGroupEntries.map((entry) => [entry.group, entry.timelineKey]),
-    ),
+  const timelineEntryMaps = $derived(
+    getTimelineEntryMaps(eventTypeFilteredEntries),
   );
-  const timelineEntryByGroup = $derived(
-    new Map(timelineGroupEntries.map((entry) => [entry.group, entry])),
-  );
+  const timelineKeys = $derived(timelineEntryMaps.keyByGroup);
+  const timelineEntryByGroup = $derived(timelineEntryMaps.entryByGroup);
   const getRetainedEndTimeMs = (
     group: EventGroups[number],
   ): number | undefined => {
@@ -338,23 +342,27 @@
     }
   };
 
-  const filteredGroups = $derived(
-    getFailedOrPendingGroups(renderedGroups, $eventStatusFilter),
+  const filteredEntries = $derived(
+    filterTimelineGroupEntriesByStatus(
+      eventTypeFilteredEntries,
+      $eventStatusFilter,
+    ),
   );
 
-  const visibleGroups = $derived(
+  const visibleEntries = $derived(
     displayMode === 'full-duration'
-      ? filteredGroups
-      : filteredGroups.filter((group) =>
+      ? filteredEntries
+      : filteredEntries.filter((entry) =>
           timelineGroupIntersectsViewport({
-            group,
+            group: entry.group,
             currentTimeMs: nowMs,
-            retainedEndTimeMs: getRetainedEndTimeMs(group),
+            retainedEndTimeMs: entry.active ? undefined : entry.runEndTimeMs,
             project: (timeMs) => scale.project(timeMs),
             visibleRange: viewport.visibleRange,
           }),
         ),
   );
+  const visibleGroups = $derived(visibleEntries.map((entry) => entry.group));
 
   const visibleGroupIds = $derived(
     new Set(visibleGroups.map((group) => getTimelineKey(group))),
@@ -412,10 +420,69 @@
     rowStackEntryOffsetPx = 0;
   };
 
+  // Unfetched skeleton rows. totalExpectedEvents is already a density-adjusted
+  // group count, so subtracting the loaded count is correct.
+  const pendingGroupCount = $derived.by(() => {
+    if (!timelineLoading) return 0;
+    if (displayMode === 'fixed-window') {
+      return visibleEntries.length === 0 && filteredEntries.length === 0
+        ? Math.min(totalExpectedEvents || 50, 50)
+        : 0;
+    }
+    if (!totalExpectedEvents) {
+      return visibleGroups.length === 0 ? 50 : 0;
+    }
+    return Math.max(0, totalExpectedEvents - visibleEntries.length);
+  });
+
+  const participatingRunFrames = $derived(
+    displayMode === 'full-duration'
+      ? getParticipatingRunFrames({
+          runs: workflowRuns,
+          visibleRange: {
+            startPx: Number.NEGATIVE_INFINITY,
+            endPx: Number.POSITIVE_INFINITY,
+          },
+          project: (timeMs) => scale.project(timeMs),
+          liveEndTimeMs: timeline.workflowTimespan.endTimeMs,
+        })
+      : getParticipatingRunFrames({
+          runs: workflowRuns,
+          visibleRange: viewport.visibleRange,
+          project: (timeMs) => scale.project(timeMs),
+          liveEndTimeMs: timeline.workflowTimespan.endTimeMs,
+        }),
+  );
+  const participatingRunIds = $derived(
+    new Set(participatingRunFrames.map((frame) => frame.runId)),
+  );
+  const containmentLayout = $derived(
+    getTimelineContainmentLayout({
+      runs: workflowRuns,
+      visibleEntries,
+      participatingRunIds,
+      reverseSort,
+      pendingGroupCount,
+      descMinId,
+    }),
+  );
+  const layoutRows = $derived(containmentLayout.rows);
+  const chainFrameCandidate = $derived(
+    getChainFrameCandidate({
+      workflowId: workflow.id,
+      runs: workflowRuns,
+      participatingRuns: participatingRunFrames,
+      knownChainStartRunId,
+      visibleRange: viewport.visibleRange,
+      project: (timeMs) => scale.project(timeMs),
+      liveEndTimeMs: timeline.workflowTimespan.endTimeMs,
+    }),
+  );
+
   const rowHeightRetention = new TimelineRowHeightRetention();
   const heightRowCount = $derived(
     rowHeightRetention.update({
-      visibleRowCount: visibleGroups.length,
+      visibleRowCount: containmentLayout.totalRowCount,
       nowMs,
       retain:
         displayMode === 'fixed-window' &&
@@ -424,21 +491,6 @@
       retentionKey: `${rowHeightRetentionScopeId ?? workflow.runId}:${$eventStatusFilter}:${$eventTypeFilter.join(',')}`,
     }),
   );
-
-  // Unfetched skeleton rows. totalExpectedEvents is already a density-adjusted
-  // group count, so subtracting the loaded count is correct.
-  const pendingGroupCount = $derived.by(() => {
-    if (!timelineLoading) return 0;
-    if (displayMode === 'fixed-window') {
-      return visibleGroups.length === 0 && filteredGroups.length === 0
-        ? Math.min(totalExpectedEvents || 50, 50)
-        : 0;
-    }
-    if (!totalExpectedEvents) {
-      return visibleGroups.length === 0 ? 50 : 0;
-    }
-    return Math.max(0, totalExpectedEvents - visibleGroups.length);
-  });
 
   // Rows mounted beyond the viewport, so edge rows survive small scrolls and
   // direction reversals and are ready ahead of a fast fling.
@@ -547,13 +599,23 @@
   );
 
   const groupIndexMap = $derived(
-    new Map(visibleGroups.map((g, i) => [getTimelineKey(g), i])),
+    new Map(
+      layoutRows.flatMap((row, index) =>
+        row.kind === 'group' ? [[row.entry.timelineKey, index] as const] : [],
+      ),
+    ),
   );
 
   // Active group's index in visibleGroups (-1 = none). Derived here so the row
   // pool doesn't subscribe to $activeGroups directly.
   const activeIdx = $derived(
     $activeGroups.length > 0 ? (groupIndexMap.get($activeGroups[0]) ?? -1) : -1,
+  );
+  const activeLayoutRow = $derived(
+    activeIdx >= 0 ? layoutRows[activeIdx] : undefined,
+  );
+  const activeRowIndex = $derived(
+    activeLayoutRow?.kind === 'group' ? activeLayoutRow.rowIndex : -1,
   );
 
   $effect(() => {
@@ -571,20 +633,22 @@
     panelHeight = 0;
   });
 
-  // Open detail panel pushes rows below the active one down by panelHeight.
-  // reverseSort flips "below" to i < activeIdx.
+  // Rows are already in physical display order, so an open panel shifts every
+  // later row regardless of the selected event sort direction.
   function shiftFor(i: number): number {
     if (activeIdx < 0 || panelHeight === 0) return 0;
-    const shifted = reverseSort ? i < activeIdx : i > activeIdx;
-    return shifted ? panelHeight : 0;
+    return i > activeIdx ? panelHeight : 0;
   }
 
   const descStart = $derived(
-    getDescStart(visibleGroups, descMinId, timelineLoading, pendingGroupCount),
+    containmentLayout.pendingGap?.insertionIndex ?? layoutRows.length,
+  );
+  const layoutPendingCount = $derived(
+    containmentLayout.pendingGap?.rowCount ?? 0,
   );
 
   const totalForY = $derived(
-    getTotalForY(visibleGroups.length, pendingGroupCount, descStart),
+    getTotalForY(layoutRows.length, layoutPendingCount, descStart),
   );
 
   // Widen the mount window by the panel's row span: shiftFor moves rows down but
@@ -596,8 +660,7 @@
   // Full drawn height (rows + axis + detail panel). The container is this tall and
   // scrolls with the page.
   const timelineHeight = $derived(
-    Math.max(ROW_HEIGHT * (heightRowCount + pendingGroupCount + 2), 120) +
-      panelHeight,
+    Math.max(ROW_HEIGHT * (heightRowCount + 2), 120) + panelHeight,
   );
   const AXIS_LABEL_ZONE = 150;
   const svgHeight = $derived(timelineHeight + AXIS_LABEL_ZONE);
@@ -695,11 +758,11 @@
     return getWindowBounds({
       bandTop,
       bandHeight,
-      total: visibleGroups.length,
+      total: layoutRows.length,
       overscan: windowOverscan,
-      reverseSort,
+      reverseSort: false,
       descStart,
-      pendingCount: pendingGroupCount,
+      pendingCount: layoutPendingCount,
       totalForY,
     });
   });
@@ -719,20 +782,20 @@
   // stays put; span capped at poolSize so slots never collide). Reuse the prior
   // slot object when unchanged — a fresh object each pass would change the {#each}
   // item and re-run the row derived for rows that didn't move.
-  let prevSlots: ({ index: number; group: EventGroups[number] } | null)[] = [];
+  let prevSlots: ({ index: number; row: TimelineLayoutRow } | null)[] = [];
   const pool = $derived.by(() => {
-    const total = visibleGroups.length;
-    const slots: ({ index: number; group: EventGroups[number] } | null)[] =
+    const total = layoutRows.length;
+    const slots: ({ index: number; row: TimelineLayoutRow } | null)[] =
       new Array(poolSize).fill(null);
     const end = Math.min(windowEnd, total, windowStart + poolSize);
     for (let index = windowStart; index < end; index++) {
       const slot = index % poolSize;
-      const group = visibleGroups[index];
+      const row = layoutRows[index];
       const prev = prevSlots[slot];
-      if (prev && prev.index === index && prev.group === group) {
+      if (prev && prev.index === index && prev.row === row) {
         slots[slot] = prev;
       } else {
-        slots[slot] = { index, group };
+        slots[slot] = { index, row };
       }
     }
     prevSlots = slots;
@@ -751,7 +814,7 @@
       focusedSlotIndex,
       visibleGroupIds,
       slotGroupIds: pool.map((slot) =>
-        slot ? getTimelineKey(slot.group) : null,
+        slot?.row.kind === 'group' ? slot.row.entry.timelineKey : null,
       ),
     });
 
@@ -766,11 +829,73 @@
       (i: number): number =>
         getRowY(i, {
           descStart,
-          pendingGroupCount,
+          pendingGroupCount: layoutPendingCount,
           totalForY,
-          reverseSort,
+          reverseSort: false,
         }),
   );
+
+  function getFrameVerticalBounds(span: { rowStart: number; rowEnd: number }): {
+    topPx: number;
+    bottomPx: number;
+  } {
+    let topPx = (span.rowStart + 1.5) * ROW_HEIGHT;
+    let bottomPx = (span.rowEnd + 1.5) * ROW_HEIGHT;
+    if (activeRowIndex >= 0 && panelHeight > 0) {
+      if (span.rowStart > activeRowIndex) {
+        topPx += panelHeight;
+        bottomPx += panelHeight;
+      } else if (span.rowEnd > activeRowIndex) {
+        bottomPx += panelHeight;
+      }
+    }
+    return { topPx, bottomPx };
+  }
+
+  const runFrameLayouts = $derived(
+    participatingRunFrames.flatMap((candidate) => {
+      const span = containmentLayout.runSpans.find(
+        (runSpan) => runSpan.runId === candidate.runId,
+      );
+      if (!span) return [];
+      const vertical = getFrameVerticalBounds(span);
+      return [
+        {
+          candidate,
+          geometry: getWorkflowFrameGeometry({
+            startWorldPx: candidate.startWorldPx,
+            endWorldPx: candidate.endWorldPx,
+            viewportOffsetPx: viewport.offsetPx,
+            viewportWidthPx: timelineWidth,
+            gutterPx: GUTTER,
+            ...vertical,
+            startBoundaryKnown: candidate.startBoundaryKnown,
+            endBoundaryKnown: candidate.endBoundaryKnown,
+            labelInsetPx: 2 * RADIUS,
+          }),
+        },
+      ];
+    }),
+  );
+  const chainFrameLayout = $derived.by(() => {
+    if (!chainFrameCandidate || !containmentLayout.chainSpan) return null;
+    const vertical = getFrameVerticalBounds(containmentLayout.chainSpan);
+    return {
+      candidate: chainFrameCandidate,
+      geometry: getWorkflowFrameGeometry({
+        startWorldPx: chainFrameCandidate.startWorldPx,
+        endWorldPx: chainFrameCandidate.endWorldPx,
+        viewportOffsetPx: viewport.offsetPx,
+        viewportWidthPx: timelineWidth,
+        gutterPx: GUTTER,
+        topPx: vertical.topPx - 4,
+        bottomPx: vertical.bottomPx + 4,
+        startBoundaryKnown: chainFrameCandidate.startBoundaryKnown,
+        endBoundaryKnown: chainFrameCandidate.endBoundaryKnown,
+        labelInsetPx: 2 * RADIUS,
+      }),
+    };
+  });
 
   // Border rails span the full timeline height so they meet the bottom axis.
   const lineTop = 0;
@@ -847,21 +972,40 @@
             viewportOffsetPx={viewport.offsetPx}
           />
           <div class="timeline-motion-layer absolute inset-0">
-            {#each workflowRuns as run (run.runId)}
-              <WorkflowRow
-                {workflow}
-                runId={run.runId}
-                status={run.status}
-                live={run.active && workflowIsLive}
-                y={ROW_HEIGHT}
-                {canvasWidth}
-                startWorldPx={scale.project(run.startTimeMs)}
-                endWorldPx={scale.project(
-                  run.active
-                    ? timeline.workflowTimespan.endTimeMs
-                    : run.endTimeMs,
-                )}
-                viewportOffsetPx={viewport.offsetPx}
+            {#if chainFrameLayout}
+              <WorkflowFrame
+                geometry={chainFrameLayout.geometry}
+                label={chainFrameLayout.candidate.label}
+                accessibleName=""
+                color={strokeColor({
+                  status: chainFrameLayout.candidate.status,
+                  delayed:
+                    chainFrameLayout.candidate.live &&
+                    isWorkflowDelayed(workflow),
+                })}
+                colors={dotColors(chainFrameLayout.candidate.status)}
+                live={chainFrameLayout.candidate.live}
+                kind="chain"
+                paint="background"
+                bandTop={layerBandTop}
+                bandHeight={layerBandHeight}
+              />
+            {/if}
+            {#each runFrameLayouts as frame (frame.candidate.key)}
+              <WorkflowFrame
+                geometry={frame.geometry}
+                label={frame.candidate.label}
+                accessibleName=""
+                color={strokeColor({
+                  status: frame.candidate.status,
+                  delayed: frame.candidate.live && isWorkflowDelayed(workflow),
+                })}
+                colors={dotColors(frame.candidate.status)}
+                live={frame.candidate.live}
+                kind="run"
+                paint="background"
+                bandTop={layerBandTop}
+                bandHeight={layerBandHeight}
               />
             {/each}
           </div>
@@ -883,6 +1027,57 @@
               />
             </div>
           {/if}
+
+          <div class="timeline-motion-layer absolute inset-0">
+            {#if chainFrameLayout}
+              <WorkflowFrame
+                geometry={chainFrameLayout.geometry}
+                label={chainFrameLayout.candidate.label}
+                accessibleName={translate('workflows.row-accessible-name', {
+                  workflowId: workflow.id,
+                  status: getWorkflowStatusLabel(
+                    chainFrameLayout.candidate.status,
+                  ),
+                })}
+                color={strokeColor({
+                  status: chainFrameLayout.candidate.status,
+                  delayed:
+                    chainFrameLayout.candidate.live &&
+                    isWorkflowDelayed(workflow),
+                })}
+                colors={dotColors(chainFrameLayout.candidate.status)}
+                live={chainFrameLayout.candidate.live}
+                kind="chain"
+                paint="foreground"
+                bandTop={layerBandTop}
+                bandHeight={layerBandHeight}
+              />
+            {/if}
+            {#each runFrameLayouts as frame (frame.candidate.key)}
+              <WorkflowFrame
+                geometry={frame.geometry}
+                label={frame.candidate.label}
+                accessibleName={translate(
+                  'workflows.chain-row-accessible-name',
+                  {
+                    workflowId: workflow.id,
+                    runId: frame.candidate.runId,
+                    status: getWorkflowStatusLabel(frame.candidate.status),
+                  },
+                )}
+                color={strokeColor({
+                  status: frame.candidate.status,
+                  delayed: frame.candidate.live && isWorkflowDelayed(workflow),
+                })}
+                colors={dotColors(frame.candidate.status)}
+                live={frame.candidate.live}
+                kind="run"
+                paint="foreground"
+                bandTop={layerBandTop}
+                bandHeight={layerBandHeight}
+              />
+            {/each}
+          </div>
 
           <!-- Keyed by slot index so Svelte reuses the <li>s in place; the <li>
              persists when its slot is null, only the inner row toggles.
@@ -906,17 +1101,21 @@
                   ? `translateY(${getY(slot.index) - ROW_HEIGHT / 2 + shiftFor(slot.index)}px)`
                   : undefined}
                 onfocusin={() => {
-                  focusedGroupId = slot ? getTimelineKey(slot.group) : null;
-                  focusedSlotIndex = slot ? slotIndex : null;
+                  focusedGroupId =
+                    slot?.row.kind === 'group'
+                      ? slot.row.entry.timelineKey
+                      : null;
+                  focusedSlotIndex =
+                    slot?.row.kind === 'group' ? slotIndex : null;
                 }}
               >
-                {#if slot}
-                  {@const timelineEntry = timelineEntryByGroup.get(slot.group)}
+                {#if slot?.row.kind === 'group'}
+                  {@const timelineEntry = slot.row.entry}
                   <div class="timeline-motion-layer absolute inset-0">
                     <TimelineGraphRow
-                      group={slot.group}
-                      timelineKey={getTimelineKey(slot.group)}
-                      eventCount={slot.group.eventList.length}
+                      group={timelineEntry.group}
+                      timelineKey={timelineEntry.timelineKey}
+                      eventCount={timelineEntry.group.eventList.length}
                       {canvasWidth}
                       project={projectX}
                       {readOnly}
@@ -932,13 +1131,12 @@
           </ul>
         </div>
 
-        {#if timelineLoading && pendingGroupCount > 0}
-          {@const rectY = getPendingBlockY({
-            descStart,
-            filteredGroupsLength: visibleGroups.length,
-            reverseSort,
-          })}
-          {@const rectH = pendingGroupCount * ROW_HEIGHT + RADIUS}
+        {#if timelineLoading && containmentLayout.pendingGap}
+          {@const rectY =
+            (containmentLayout.pendingGap.rowStart + 1.5) * ROW_HEIGHT +
+            shiftFor(containmentLayout.pendingGap.insertionIndex)}
+          {@const rectH =
+            containmentLayout.pendingGap.rowCount * ROW_HEIGHT + RADIUS}
           <div
             class="absolute animate-pulse rounded bg-slate-400/30"
             style:left="{GUTTER}px"
@@ -950,9 +1148,9 @@
 
         <!-- Last child so it paints above rows; onHeight feeds shiftFor. -->
         {#if !readOnly && activeIdx >= 0}
-          {@const activeGroup = visibleGroups[activeIdx]}
-          {#if activeGroup}
-            {@const activeTimelineEntry = timelineEntryByGroup.get(activeGroup)}
+          {#if activeLayoutRow?.kind === 'group'}
+            {@const activeTimelineEntry = activeLayoutRow.entry}
+            {@const activeGroup = activeTimelineEntry.group}
             {@const panelY = getY(activeIdx) + 1.33 * RADIUS}
             <GroupDetailsRow
               y={panelY}

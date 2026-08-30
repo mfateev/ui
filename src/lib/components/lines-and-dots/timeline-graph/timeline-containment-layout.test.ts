@@ -52,17 +52,11 @@ describe('getTimelineContainmentLayout', () => {
         runId: 'old',
         rowStart: 0,
         rowEnd: 2,
-        empty: false,
-        pendingRowStart: null,
-        pendingRowCount: 0,
       },
       {
         runId: 'active',
         rowStart: 3,
         rowEnd: 4,
-        empty: false,
-        pendingRowStart: null,
-        pendingRowCount: 0,
       },
     ]);
   });
@@ -130,8 +124,6 @@ describe('getTimelineContainmentLayout', () => {
     expect(layout.runSpans[1]).toMatchObject({
       rowStart: 2,
       rowEnd: 8,
-      pendingRowStart: 3,
-      pendingRowCount: 4,
     });
   });
 

@@ -22,9 +22,6 @@ export type TimelineRunSpan = {
   runId: string;
   rowStart: number;
   rowEnd: number;
-  empty: boolean;
-  pendingRowStart: number | null;
-  pendingRowCount: number;
 };
 
 export type TimelineContainmentLayout = {
@@ -32,7 +29,6 @@ export type TimelineContainmentLayout = {
   runSpans: TimelineRunSpan[];
   chainSpan: { rowStart: number; rowEnd: number } | null;
   pendingGap: {
-    runId: string;
     insertionIndex: number;
     rowStart: number;
     rowCount: number;
@@ -109,7 +105,6 @@ export function getTimelineContainmentLayout({
     );
     const empty = ordered.length === 0;
     const rowStart = rowIndex;
-    let pendingRowStart: number | null = null;
     const runPendingCount = run.active ? pendingGroupCount : 0;
 
     if (empty) {
@@ -121,9 +116,7 @@ export function getTimelineContainmentLayout({
       });
       rowIndex += 1;
       if (runPendingCount > 0) {
-        pendingRowStart = rowIndex;
         pendingGap = {
-          runId: run.runId,
           insertionIndex: rows.length,
           rowStart: rowIndex,
           rowCount: runPendingCount,
@@ -140,9 +133,7 @@ export function getTimelineContainmentLayout({
           !gapInserted &&
           (reverseSort ? !isHighCursorEntry : isHighCursorEntry);
         if (shouldInsertGap) {
-          pendingRowStart = rowIndex;
           pendingGap = {
-            runId: run.runId,
             insertionIndex: rows.length,
             rowStart: rowIndex,
             rowCount: runPendingCount,
@@ -159,9 +150,7 @@ export function getTimelineContainmentLayout({
         rowIndex += 1;
       }
       if (runPendingCount > 0 && !gapInserted) {
-        pendingRowStart = rowIndex;
         pendingGap = {
-          runId: run.runId,
           insertionIndex: rows.length,
           rowStart: rowIndex,
           rowCount: runPendingCount,
@@ -174,9 +163,6 @@ export function getTimelineContainmentLayout({
       runId: run.runId,
       rowStart,
       rowEnd: rowIndex,
-      empty,
-      pendingRowStart,
-      pendingRowCount: runPendingCount,
     });
   }
 

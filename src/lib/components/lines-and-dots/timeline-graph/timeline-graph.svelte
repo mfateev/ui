@@ -861,11 +861,12 @@
     };
   }
 
-  const runFrameLayouts = $derived(
-    participatingRunFrames.flatMap((candidate) => {
-      const span = containmentLayout.runSpans.find(
-        (runSpan) => runSpan.runId === candidate.runId,
-      );
+  const runFrameLayouts = $derived.by(() => {
+    const spansByRunId = new Map(
+      containmentLayout.runSpans.map((span) => [span.runId, span]),
+    );
+    return participatingRunFrames.flatMap((candidate) => {
+      const span = spansByRunId.get(candidate.runId);
       if (!span) return [];
       const vertical = getFrameVerticalBounds(span);
       return [
@@ -884,8 +885,8 @@
           }),
         },
       ];
-    }),
-  );
+    });
+  });
   const CHAIN_FRAME_GAP_PX = ROW_HEIGHT;
   const retainedChainHeightPx = $derived(
     Math.max(0, heightRowCount - containmentLayout.totalRowCount) * ROW_HEIGHT,

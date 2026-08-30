@@ -164,7 +164,7 @@
           style:--frame-color={color}
         ></div>
       {/if}
-      {#if showLabel && (kind === 'chain' ? drawBottom : drawTop)}
+      {#if showLabel && drawTop}
         <span
           class:frame-label-chain={kind === 'chain'}
           class:workflow-run-label={kind === 'run'}

@@ -220,6 +220,13 @@ test.describe('Timeline live completion', () => {
     });
     await expect(appended).toBeAttached();
     await expect(rowStack).toHaveClass(/timeline-rows-entering/);
+    await expect(
+      page
+        .locator(
+          '#event-history-timeline-graph [data-timeline-bottom-entry-offset="-24"]',
+        )
+        .first(),
+    ).toBeAttached();
     const movingY = (await existing.boundingBox())?.y;
     await expect(appended).toBeVisible();
     await expect(rowStack).not.toHaveClass(/timeline-rows-entering/);

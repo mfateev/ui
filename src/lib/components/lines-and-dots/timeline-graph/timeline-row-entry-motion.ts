@@ -26,3 +26,14 @@ export const getTimelineRowEntryOffsets = (
 
   return offsets;
 };
+
+export const getTimelineFrameBoundaryOffset = ({
+  offsets,
+  topKey,
+  bottomKey,
+}: {
+  offsets: ReadonlyMap<string, number>;
+  topKey: string;
+  bottomKey: string | undefined;
+}): number =>
+  (bottomKey ? (offsets.get(bottomKey) ?? 0) : 0) - (offsets.get(topKey) ?? 0);

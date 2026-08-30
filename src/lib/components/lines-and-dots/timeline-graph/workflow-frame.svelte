@@ -21,6 +21,7 @@
     bandHeight: number;
     entryOffsetPx?: number;
     entryKey?: string;
+    bottomEntryOffsetPx?: number;
     entryPending?: boolean;
     onToggle?: () => void;
     expanded?: boolean;
@@ -40,6 +41,7 @@
     bandHeight,
     entryOffsetPx = 0,
     entryKey,
+    bottomEntryOffsetPx = 0,
     entryPending = false,
     onToggle,
     expanded = true,
@@ -113,6 +115,7 @@
   class:timeline-frame-entry-pending={entryPending}
   data-timeline-entry-offset={entryOffsetPx || undefined}
   data-timeline-entry-key={entryKey}
+  data-timeline-bottom-entry-offset={bottomEntryOffsetPx || undefined}
   style:--timeline-row-entry-offset={`${entryOffsetPx}px`}
 >
   {#if paint === 'foreground'}
@@ -166,12 +169,17 @@
         {/if}
         {#if drawBottom}
           <div
+            class:timeline-frame-boundary-entering={bottomEntryOffsetPx !== 0}
             class:frame-edge-chain={kind === 'chain'}
             class:frame-dashed={live && kind === 'run'}
             class:tl-line--animate={live && kind === 'run'}
             class:tl-line--dashed={live && kind === 'run'}
             class:tl-line--live={live}
             class="frame-edge pointer-events-none absolute"
+            data-timeline-entry-offset={bottomEntryOffsetPx || undefined}
+            data-timeline-entry-key={entryKey
+              ? `${entryKey}:bottom`
+              : undefined}
             style:left="{geometry.horizontal.startPx}px"
             style:top="{geometry.bottomPx}px"
             style:right={live ? '0' : undefined}
@@ -179,6 +187,7 @@
             style:--frame-color={color}
             style:--tl-line-color={color}
             style:--tl-live-committed-width="{horizontalWidth}px"
+            style:--timeline-frame-boundary-offset={`${bottomEntryOffsetPx}px`}
           ></div>
         {/if}
         {#if geometry.drawStartSide}
@@ -273,8 +282,16 @@
     visibility: hidden;
   }
 
+  .timeline-frame-boundary-entering {
+    translate: 0 var(--timeline-frame-boundary-offset);
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .timeline-frame-entering {
+      translate: none;
+    }
+
+    .timeline-frame-boundary-entering {
       translate: none;
     }
   }

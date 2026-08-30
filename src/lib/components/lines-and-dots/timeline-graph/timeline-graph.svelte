@@ -44,7 +44,10 @@
   import { timelineGroupIntersectsViewport } from './timeline-group-window';
   import { TimelineMotion } from './timeline-motion';
   import { getRowY, getTotalForY } from './timeline-positioning';
-  import { getTimelineRowEntryOffsets } from './timeline-row-entry-motion';
+  import {
+    getTimelineFrameBoundaryOffset,
+    getTimelineRowEntryOffsets,
+  } from './timeline-row-entry-motion';
   import {
     TIMELINE_ROW_HEIGHT_GRACE_MS,
     TimelineRowHeightRetention,
@@ -693,6 +696,18 @@
     rowEntryOffsets.get(`${workflowKey}:workflow-header`) ?? 0;
   const frameEntryPending = (entryKey: string): boolean =>
     !rowEntryAnimating && rowEntryNewKeys.has(entryKey);
+  const frameBottomEntryOffset = ({
+    topKey,
+    rowEnd,
+  }: {
+    topKey: string;
+    rowEnd: number;
+  }): number =>
+    getTimelineFrameBoundaryOffset({
+      offsets: rowEntryOffsets,
+      topKey,
+      bottomKey: layoutRows[rowEnd - 1]?.key,
+    });
   const rootChainFrameCandidate = $derived(
     chainFrameCandidates.find((candidate) => candidate.depth === 0),
   );
@@ -1100,13 +1115,19 @@
 
   const runFrameLayouts = $derived.by(() => {
     return participatingRunFrames.flatMap((candidate) => {
-      const vertical = frameVerticalLayout.runBoundsByKey.get(
-        timelineRunKey(candidate.workflowKey ?? '', candidate.runId),
+      const runKey = timelineRunKey(
+        candidate.workflowKey ?? '',
+        candidate.runId,
       );
-      if (!vertical) return [];
+      const vertical = frameVerticalLayout.runBoundsByKey.get(runKey);
+      const span = containmentLayout.runSpans.find(
+        (candidateSpan) => candidateSpan.key === runKey,
+      );
+      if (!vertical || !span) return [];
       return [
         {
           candidate,
+          span,
           geometry: getWorkflowFrameGeometry({
             startWorldPx: candidate.startWorldPx,
             endWorldPx: candidate.endWorldPx,
@@ -1125,13 +1146,16 @@
   });
   const chainFrameLayouts = $derived.by(() => {
     return chainFrameCandidates.flatMap((candidate) => {
-      const vertical = frameVerticalLayout.workflowBoundsByKey.get(
-        candidate.workflowKey ?? '',
+      const workflowKey = candidate.workflowKey ?? '';
+      const vertical = frameVerticalLayout.workflowBoundsByKey.get(workflowKey);
+      const span = containmentLayout.workflowSpans.find(
+        (candidateSpan) => candidateSpan.workflowKey === workflowKey,
       );
-      if (!vertical) return [];
+      if (!vertical || !span) return [];
       return [
         {
           candidate,
+          span,
           geometry: getWorkflowFrameGeometry({
             startWorldPx: candidate.startWorldPx,
             endWorldPx: candidate.endWorldPx,
@@ -1250,6 +1274,10 @@
                   frame.candidate.workflowKey ?? '',
                 )}
                 entryKey={`${frame.candidate.workflowKey ?? ''}:workflow-header`}
+                bottomEntryOffsetPx={frameBottomEntryOffset({
+                  topKey: `${frame.candidate.workflowKey ?? ''}:workflow-header`,
+                  rowEnd: frame.span.rowEnd,
+                })}
                 entryPending={frameEntryPending(
                   `${frame.candidate.workflowKey ?? ''}:workflow-header`,
                 )}
@@ -1285,6 +1313,13 @@
                   frame.candidate.workflowKey ?? '',
                   frame.candidate.runId,
                 )}:frame-header`}
+                bottomEntryOffsetPx={frameBottomEntryOffset({
+                  topKey: `${timelineRunKey(
+                    frame.candidate.workflowKey ?? '',
+                    frame.candidate.runId,
+                  )}:frame-header`,
+                  rowEnd: frame.span.rowEnd,
+                })}
                 entryPending={frameEntryPending(
                   `${timelineRunKey(
                     frame.candidate.workflowKey ?? '',
@@ -1339,6 +1374,10 @@
                   frame.candidate.workflowKey ?? '',
                 )}
                 entryKey={`${frame.candidate.workflowKey ?? ''}:workflow-header`}
+                bottomEntryOffsetPx={frameBottomEntryOffset({
+                  topKey: `${frame.candidate.workflowKey ?? ''}:workflow-header`,
+                  rowEnd: frame.span.rowEnd,
+                })}
                 entryPending={frameEntryPending(
                   `${frame.candidate.workflowKey ?? ''}:workflow-header`,
                 )}
@@ -1384,6 +1423,13 @@
                   frame.candidate.workflowKey ?? '',
                   frame.candidate.runId,
                 )}:frame-header`}
+                bottomEntryOffsetPx={frameBottomEntryOffset({
+                  topKey: `${timelineRunKey(
+                    frame.candidate.workflowKey ?? '',
+                    frame.candidate.runId,
+                  )}:frame-header`,
+                  rowEnd: frame.span.rowEnd,
+                })}
                 entryPending={frameEntryPending(
                   `${timelineRunKey(
                     frame.candidate.workflowKey ?? '',

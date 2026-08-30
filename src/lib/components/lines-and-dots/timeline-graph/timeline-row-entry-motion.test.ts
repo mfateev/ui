@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { getTimelineRowEntryOffsets } from './timeline-row-entry-motion';
+import {
+  getTimelineFrameBoundaryOffset,
+  getTimelineRowEntryOffsets,
+} from './timeline-row-entry-motion';
 
 describe('getTimelineRowEntryOffsets', () => {
   it('slides a batch in from above while preserving existing row positions', () => {
@@ -80,5 +83,33 @@ describe('getTimelineRowEntryOffsets', () => {
         24,
       ),
     ).toEqual(new Map([['replacement', 0]]));
+  });
+});
+
+describe('getTimelineFrameBoundaryOffset', () => {
+  it('holds a growing frame bottom with the rows while its header stays fixed', () => {
+    expect(
+      getTimelineFrameBoundaryOffset({
+        offsets: new Map([
+          ['header', 0],
+          ['last-row', -24],
+        ]),
+        topKey: 'header',
+        bottomKey: 'last-row',
+      }),
+    ).toBe(-24);
+  });
+
+  it('subtracts frame translation so nested boundary motion stays absolute', () => {
+    expect(
+      getTimelineFrameBoundaryOffset({
+        offsets: new Map([
+          ['header', -48],
+          ['last-row', -72],
+        ]),
+        topKey: 'header',
+        bottomKey: 'last-row',
+      }),
+    ).toBe(-24);
   });
 });

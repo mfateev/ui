@@ -223,4 +223,48 @@ describe('getRecursiveTimelineContainmentLayout', () => {
     });
     expect(filtered.rows.some((row) => row.key === 'stable-edge')).toBe(false);
   });
+
+  it('keeps the relationship layout stable while an expanded child loads', () => {
+    const relationship = entry('root-run', 1);
+    const edge = {
+      key: 'loading-edge',
+      parentGroupKey: relationship.timelineKey,
+      reference: {
+        namespace: 'default',
+        workflowId: 'child',
+        runId: 'child-run',
+      },
+      expansion: 'expanded',
+      load: { state: 'idle' },
+      depth: 1,
+      lastVisibleAt: 0,
+    } as TimelineChildEdge;
+    const root = {
+      key: 'root',
+      namespace: 'default',
+      workflowId: 'root',
+      firstRunId: 'root-run',
+      workflow: { id: 'root' } as WorkflowExecution,
+      runs: [{ ...run('root-run', 0), groups: [relationship] }],
+      childrenByGroupKey: new Map([[relationship.timelineKey, edge]]),
+      depth: 0,
+    } as TimelineWorkflowNode;
+    const input = {
+      root,
+      visibleEntries: [relationship],
+      participatingRunKeys: new Set([timelineRunKey('root', 'root-run')]),
+      reverseSort: true,
+      pendingGroupCount: 0,
+      descMinId: 0,
+    };
+    const idleRows = getRecursiveTimelineContainmentLayout(input).rows;
+
+    edge.load = { state: 'loading', requestKey: 'child-request' };
+    const loadingRows = getRecursiveTimelineContainmentLayout(input).rows;
+
+    expect(loadingRows.map((row) => row.key)).toEqual(
+      idleRows.map((row) => row.key),
+    );
+    expect(loadingRows.some((row) => row.kind === 'child-state')).toBe(false);
+  });
 });

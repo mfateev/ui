@@ -194,6 +194,26 @@ test.describe('Timeline live completion', () => {
     await expect(rowStack).not.toHaveClass(/timeline-rows-entering/);
     const initialY = (await existing.boundingBox())?.y;
 
+    const insertionPositions = existing.evaluate(
+      (element) =>
+        new Promise<number[]>((resolve) => {
+          const positions: number[] = [];
+          const rowStack = element.closest('ul');
+          let sawEntry = false;
+          const sample = () => {
+            positions.push(element.getBoundingClientRect().y);
+            if (rowStack?.classList.contains('timeline-rows-entering')) {
+              sawEntry = true;
+            } else if (sawEntry) {
+              resolve(positions);
+              return;
+            }
+            requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        }),
+    );
+
     releaseActivity();
     const appended = page.getByRole('button', {
       name: /^Event VerifyNetwork:/,
@@ -203,8 +223,14 @@ test.describe('Timeline live completion', () => {
     const movingY = (await existing.boundingBox())?.y;
     await expect(appended).toBeVisible();
     await expect(rowStack).not.toHaveClass(/timeline-rows-entering/);
+    const positions = await insertionPositions;
 
     const finalExistingY = (await existing.boundingBox())?.y;
+    for (let index = 1; index < positions.length; index++) {
+      expect(positions[index] - positions[index - 1]).toBeGreaterThanOrEqual(
+        -1,
+      );
+    }
     expect(movingY).toBeLessThan(finalExistingY ?? 0);
     expect(finalExistingY).toBeGreaterThan(initialY ?? 0);
     expect((await appended.boundingBox())?.y).toBeLessThan(finalExistingY ?? 0);

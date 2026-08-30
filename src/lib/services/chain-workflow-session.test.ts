@@ -11,6 +11,7 @@ import {
   createRunRuntime,
   getChainRetentionWindow,
   getPredecessorFromEvents,
+  getRenderableTimelineRuns,
   getSuccessorFromEvents,
   isCurrentRun,
   limitRetainedRuns,
@@ -91,6 +92,49 @@ const retainedRun = (
 });
 
 describe('chain workflow session', () => {
+  it('holds a successor run until its initial history is ready', () => {
+    const retained = {
+      ...retainedRun('run-1', 0, 100, []),
+      active: false,
+    };
+    const successor = {
+      ...retainedRun('run-2', 100, 200, []),
+      status: 'Running' as const,
+      active: true,
+    };
+
+    expect(
+      getRenderableTimelineRuns({
+        retainedRuns: [retained],
+        activeRun: successor,
+        activeHistoryReady: false,
+      }),
+    ).toEqual([retained]);
+    expect(
+      getRenderableTimelineRuns({
+        retainedRuns: [retained],
+        activeRun: successor,
+        activeHistoryReady: true,
+      }),
+    ).toEqual([retained, successor]);
+  });
+
+  it('renders the active run while an initial workflow history loads', () => {
+    const activeRun = {
+      ...retainedRun('run-1', 0, 100, []),
+      status: 'Running' as const,
+      active: true,
+    };
+
+    expect(
+      getRenderableTimelineRuns({
+        retainedRuns: [],
+        activeRun,
+        activeHistoryReady: false,
+      }),
+    ).toEqual([activeRun]);
+  });
+
   it('namespaces timeline identities by run without changing group ids', () => {
     const group = { id: '12' } as EventGroup;
     const [wrapped] = toTimelineGroups('run-2', [group]);

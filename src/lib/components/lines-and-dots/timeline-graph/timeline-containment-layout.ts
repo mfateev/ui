@@ -270,7 +270,10 @@ export function getRecursiveTimelineContainmentLayout({
           if (edge.load.truncation) {
             appendState({ edge, node, run, runKey, ancestorRunKeys: owners });
           }
-        } else if (edge.load.state !== 'idle') {
+        } else if (
+          edge.load.state !== 'idle' &&
+          edge.load.state !== 'loading'
+        ) {
           appendState({ edge, node, run, runKey, ancestorRunKeys: owners });
         }
       }

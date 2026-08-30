@@ -24,6 +24,7 @@
   import ToggleButtons from '$lib/holocene/toggle-button/toggle-buttons.svelte';
   import { translate } from '$lib/i18n/translate';
   import {
+    getRenderableTimelineRuns,
     type TimelineRun,
     toTimelineGroups,
   } from '$lib/services/chain-workflow-session';
@@ -88,17 +89,19 @@
       active: false,
     }));
     if (!workflow) return retained;
-    return [
-      ...retained,
-      {
-        runId: workflow.runId,
-        status: workflow.status,
-        startTimeMs: Date.parse(workflow.startTime),
-        endTimeMs: workflow.endTime ? Date.parse(workflow.endTime) : Date.now(),
-        groups: toTimelineGroups(workflow.runId, bufferGroups),
-        active: true,
-      },
-    ];
+    const active: TimelineRun = {
+      runId: workflow.runId,
+      status: workflow.status,
+      startTimeMs: Date.parse(workflow.startTime),
+      endTimeMs: workflow.endTime ? Date.parse(workflow.endTime) : Date.now(),
+      groups: toTimelineGroups(workflow.runId, bufferGroups),
+      active: true,
+    };
+    return getRenderableTimelineRuns({
+      retainedRuns: retained,
+      activeRun: active,
+      activeHistoryReady: historyCtx.fetchComplete,
+    });
   });
 
   const workflowTaskFailedError = $derived.by(() => {

@@ -44,6 +44,7 @@
   import { timelineGroupIntersectsViewport } from './timeline-group-window';
   import { TimelineMotion } from './timeline-motion';
   import { getRowY, getTotalForY } from './timeline-positioning';
+  import { getTimelineRowEntryOffsets } from './timeline-row-entry-motion';
   import {
     TIMELINE_ROW_HEIGHT_GRACE_MS,
     TimelineRowHeightRetention,
@@ -430,56 +431,21 @@
   );
 
   let observedRunId: string | undefined;
-  let knownGroupIds = new Set<string>();
-  let hasSeenInitialGroups = false;
-  let rowStackEntryOffsetPx = $state(0);
 
-  $effect(() => {
+  $effect.pre(() => {
     const currentRunId = workflow.runId;
-    const currentGroupIds = renderedGroups.map((group) =>
-      getTimelineKey(group),
-    );
-
-    if (observedRunId === undefined || currentRunId !== observedRunId) {
+    if (observedRunId === undefined) {
       observedRunId = currentRunId;
-      knownGroupIds = new Set(currentGroupIds);
-      hasSeenInitialGroups = currentGroupIds.length > 0;
-      rowStackEntryOffsetPx = 0;
-      // A handoff can rebase the retained timeline's world coordinates. The
-      // compositor offsets are only valid within one coordinate basis; carrying
-      // them into the successor adds the old translation a second time and
-      // makes every run boundary jump left.
-      viewportMotion.reset(viewport.offsetPx);
-      liveEdgeMotion.reset(scale.totalWorldWidthPx);
-      containerEl?.style.setProperty('--timeline-frame-offset', '0px');
-      containerEl?.style.setProperty('--timeline-live-edge-extension', '0px');
       return;
     }
+    if (currentRunId === observedRunId) return;
 
-    if (!hasSeenInitialGroups && currentGroupIds.length > 0) {
-      knownGroupIds = new Set(currentGroupIds);
-      hasSeenInitialGroups = true;
-      return;
-    }
-
-    const addedVisibleGroupCount = currentGroupIds.filter(
-      (groupId) => !knownGroupIds.has(groupId) && visibleGroupIds.has(groupId),
-    ).length;
-    knownGroupIds = new Set([...knownGroupIds, ...currentGroupIds]);
-
-    if (!reverseSort) {
-      rowStackEntryOffsetPx = 0;
-    } else if (
-      addedVisibleGroupCount > 0 &&
-      !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    ) {
-      rowStackEntryOffsetPx = -addedVisibleGroupCount * ROW_HEIGHT;
-    }
+    observedRunId = currentRunId;
+    viewportMotion.reset(viewport.offsetPx);
+    liveEdgeMotion.reset(scale.totalWorldWidthPx);
+    containerEl?.style.setProperty('--timeline-frame-offset', '0px');
+    containerEl?.style.setProperty('--timeline-live-edge-extension', '0px');
   });
-
-  const finishRowStackEntry = () => {
-    rowStackEntryOffsetPx = 0;
-  };
 
   // Unfetched skeleton rows. totalExpectedEvents is already a density-adjusted
   // group count, so subtracting the loaded count is correct.
@@ -523,7 +489,210 @@
     }),
   );
   const layoutRows = $derived(containmentLayout.rows);
+  const layoutRowKey = (row: TimelineLayoutRow): string => row.key;
+  let previousLayoutKeys: string[] | null = null;
+  let rowEntryOffsets = $state.raw(new Map<string, number>());
+  let rowEntryNewKeys = $state.raw(new Set<string>());
+  let rowEntryAnimating = $state(false);
+  let rowEntryFrame = 0;
+  let rowStackEl: HTMLUListElement | null = null;
+  let rowEntryObserver: MutationObserver | null = null;
+  let rowEntryAnimations: Animation[] = [];
+  let rowEntryGeneration = 0;
+  let rowEntryDeadlineMs: number | null = null;
+  let rowEntrySettleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Live polling can split one server-side event burst across adjacent refreshes.
+  // Keep the previous layout painted until that burst has gone quiet, then admit
+  // every new row in one motion instead of rewinding an animation in progress.
+  const ROW_ENTRY_SETTLE_MS = 1100;
+
+  onDestroy(() => {
+    rowEntryGeneration += 1;
+    cancelAnimationFrame(rowEntryFrame);
+    if (rowEntrySettleTimer !== null) clearTimeout(rowEntrySettleTimer);
+    rowEntryObserver?.disconnect();
+    rowEntryAnimations.forEach((animation) => animation.cancel());
+  });
+
+  const finishRowEntry = () => {
+    rowEntryGeneration += 1;
+    cancelAnimationFrame(rowEntryFrame);
+    if (rowEntrySettleTimer !== null) clearTimeout(rowEntrySettleTimer);
+    rowEntrySettleTimer = null;
+    rowEntryObserver?.disconnect();
+    rowEntryAnimations.forEach((animation) => animation.cancel());
+    rowEntryAnimations = [];
+    rowEntryDeadlineMs = null;
+    rowEntryAnimating = false;
+    rowEntryOffsets = new Map();
+    rowEntryNewKeys = new Set();
+  };
+
+  const currentEntryVisualOffsets = (): Map<string, number> => {
+    if (!rowEntryOffsets.size) return new Map();
+    // This is a one-shot compositor snapshot, not reactive component state.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const offsets = new Map<string, number>();
+    for (const element of containerEl?.querySelectorAll<HTMLElement>(
+      '[data-timeline-entry-key]',
+    ) ?? []) {
+      const key = element.dataset.timelineEntryKey;
+      if (!key) continue;
+      const translate = getComputedStyle(element).translate;
+      const y = Number.parseFloat(translate.split(/\s+/).at(-1) ?? '0');
+      if (Number.isFinite(y)) offsets.set(key, y);
+    }
+    return offsets;
+  };
+
+  $effect.pre(() => {
+    const currentKeys = layoutRows.map(layoutRowKey);
+    const previousKeys = previousLayoutKeys;
+    previousLayoutKeys = currentKeys;
+
+    if (
+      previousKeys === null ||
+      timelineLoading ||
+      !reverseSort ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      finishRowEntry();
+      return;
+    }
+
+    const previousKeySet = new Set(previousKeys);
+    const addedKeys = currentKeys.filter((key) => !previousKeySet.has(key));
+    const layoutChanged =
+      previousKeys.length !== currentKeys.length ||
+      previousKeys.some((key, index) => key !== currentKeys[index]);
+    if (!layoutChanged) return;
+
+    const visualOffsets = currentEntryVisualOffsets();
+    const offsets = getTimelineRowEntryOffsets(
+      previousKeys,
+      currentKeys,
+      ROW_HEIGHT,
+      visualOffsets,
+    );
+
+    const entryWasAnimating = rowEntryAnimations.length > 0;
+    rowEntryAnimating = entryWasAnimating;
+    rowEntryOffsets = offsets;
+    rowEntryNewKeys = new Set([
+      ...[...rowEntryNewKeys].filter((key) => currentKeys.includes(key)),
+      ...addedKeys,
+    ]);
+    rowEntryGeneration += 1;
+    const generation = rowEntryGeneration;
+    cancelAnimationFrame(rowEntryFrame);
+    if (rowEntrySettleTimer !== null) clearTimeout(rowEntrySettleTimer);
+    rowEntrySettleTimer = null;
+    rowEntryObserver?.disconnect();
+    rowEntryAnimations.forEach((animation) => animation.cancel());
+    rowEntryAnimations = [];
+
+    const element = rowStackEl;
+    if (!element) return;
+    const added = new Set(addedKeys);
+    const beginAfterSettle = () => {
+      if (rowEntryOffsets !== offsets || rowEntryGeneration !== generation) {
+        return;
+      }
+      if (!entryWasAnimating && recursiveSession.requestCount > 0) {
+        rowEntrySettleTimer = setTimeout(beginAfterSettle, 50);
+        return;
+      }
+
+      rowEntrySettleTimer = null;
+      cancelAnimationFrame(rowEntryFrame);
+      rowEntryFrame = requestAnimationFrame(() => {
+        rowEntryFrame = requestAnimationFrame(() => {
+          if (
+            rowEntryOffsets !== offsets ||
+            rowEntryGeneration !== generation
+          ) {
+            return;
+          }
+          if (!entryWasAnimating && recursiveSession.requestCount > 0) {
+            rowEntrySettleTimer = setTimeout(beginAfterSettle, 50);
+            return;
+          }
+
+          const elements = Array.from(
+            containerEl?.querySelectorAll<HTMLElement>(
+              '[data-timeline-entry-offset]',
+            ) ?? [],
+          );
+          const durationMs = entryWasAnimating
+            ? Math.max(
+                1,
+                (rowEntryDeadlineMs ?? performance.now()) - performance.now(),
+              )
+            : 1200;
+          const animations = elements.flatMap((element) => {
+            const offsetPx = Number(element.dataset.timelineEntryOffset);
+            if (!offsetPx) return [];
+            return [
+              element.animate(
+                [{ translate: `0 ${offsetPx}px` }, { translate: '0 0' }],
+                {
+                  duration: durationMs,
+                  easing: entryWasAnimating
+                    ? 'linear'
+                    : 'cubic-bezier(0.22, 1, 0.36, 1)',
+                  fill: 'both',
+                },
+              ),
+            ];
+          });
+          if (!animations.length) {
+            finishRowEntry();
+            return;
+          }
+
+          if (!entryWasAnimating) {
+            rowEntryDeadlineMs = performance.now() + 1200;
+          }
+          const startTime = document.timeline.currentTime;
+          if (startTime !== null) {
+            animations.forEach((animation) => {
+              animation.startTime = startTime;
+            });
+          }
+          rowEntryAnimations = animations;
+          rowEntryAnimating = true;
+          void Promise.allSettled(
+            animations.map((animation) => animation.finished),
+          ).then(() => {
+            if (rowEntryGeneration === generation) finishRowEntry();
+          });
+        });
+      });
+    };
+
+    rowEntryObserver = new MutationObserver(() => {
+      const mounted = Array.from(
+        element.querySelectorAll<HTMLElement>('[data-timeline-key]'),
+      ).some((row) => !added.size || added.has(row.dataset.timelineKey ?? ''));
+      if (!mounted) return;
+      rowEntryObserver?.disconnect();
+      rowEntrySettleTimer = setTimeout(beginAfterSettle, ROW_ENTRY_SETTLE_MS);
+    });
+    rowEntryObserver.observe(element, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+  });
+
   const chainFrameCandidates = $derived(frameCandidates.chainFrames);
+  const runFrameEntryOffset = (runKey: string): number =>
+    rowEntryOffsets.get(`${runKey}:frame-header`) ?? 0;
+  const workflowFrameEntryOffset = (workflowKey: string): number =>
+    rowEntryOffsets.get(`${workflowKey}:workflow-header`) ?? 0;
+  const frameEntryPending = (entryKey: string): boolean =>
+    !rowEntryAnimating && rowEntryNewKeys.has(entryKey);
   const rootChainFrameCandidate = $derived(
     chainFrameCandidates.find((candidate) => candidate.depth === 0),
   );
@@ -1077,6 +1246,13 @@
                 paint="background"
                 bandTop={layerBandTop}
                 bandHeight={layerBandHeight}
+                entryOffsetPx={workflowFrameEntryOffset(
+                  frame.candidate.workflowKey ?? '',
+                )}
+                entryKey={`${frame.candidate.workflowKey ?? ''}:workflow-header`}
+                entryPending={frameEntryPending(
+                  `${frame.candidate.workflowKey ?? ''}:workflow-header`,
+                )}
               />
             {/each}
             {#each runFrameLayouts as frame (frame.candidate.key)}
@@ -1099,6 +1275,22 @@
                 paint="background"
                 bandTop={layerBandTop}
                 bandHeight={layerBandHeight}
+                entryOffsetPx={runFrameEntryOffset(
+                  timelineRunKey(
+                    frame.candidate.workflowKey ?? '',
+                    frame.candidate.runId,
+                  ),
+                )}
+                entryKey={`${timelineRunKey(
+                  frame.candidate.workflowKey ?? '',
+                  frame.candidate.runId,
+                )}:frame-header`}
+                entryPending={frameEntryPending(
+                  `${timelineRunKey(
+                    frame.candidate.workflowKey ?? '',
+                    frame.candidate.runId,
+                  )}:frame-header`,
+                )}
               />
             {/each}
           </div>
@@ -1143,6 +1335,13 @@
                 paint="foreground"
                 bandTop={layerBandTop}
                 bandHeight={layerBandHeight}
+                entryOffsetPx={workflowFrameEntryOffset(
+                  frame.candidate.workflowKey ?? '',
+                )}
+                entryKey={`${frame.candidate.workflowKey ?? ''}:workflow-header`}
+                entryPending={frameEntryPending(
+                  `${frame.candidate.workflowKey ?? ''}:workflow-header`,
+                )}
                 onToggle={incomingEdge
                   ? () => recursiveSession.toggle(incomingEdge.key)
                   : undefined}
@@ -1175,6 +1374,22 @@
                 paint="foreground"
                 bandTop={layerBandTop}
                 bandHeight={layerBandHeight}
+                entryOffsetPx={runFrameEntryOffset(
+                  timelineRunKey(
+                    frame.candidate.workflowKey ?? '',
+                    frame.candidate.runId,
+                  ),
+                )}
+                entryKey={`${timelineRunKey(
+                  frame.candidate.workflowKey ?? '',
+                  frame.candidate.runId,
+                )}:frame-header`}
+                entryPending={frameEntryPending(
+                  `${timelineRunKey(
+                    frame.candidate.workflowKey ?? '',
+                    frame.candidate.runId,
+                  )}:frame-header`,
+                )}
               />
             {/each}
           </div>
@@ -1185,18 +1400,26 @@
              event buttons opt back in with pointer-events:auto. -->
           <ul
             class="pointer-events-none absolute inset-0 m-0 list-none p-0"
-            class:timeline-rows-entering={rowStackEntryOffsetPx < 0}
-            style:--timeline-row-stack-offset={`${rowStackEntryOffsetPx}px`}
-            onanimationend={(event) => {
-              if (event.currentTarget === event.target) finishRowStackEntry();
-            }}
+            class:timeline-rows-entering={rowEntryOffsets.size > 0}
+            class:timeline-rows-animating={rowEntryAnimating}
+            bind:this={rowStackEl}
           >
             {#each pool as slot, slotIndex (slotIndex)}
+              {@const rowKey = slot ? layoutRowKey(slot.row) : ''}
+              {@const entryOffsetPx = rowEntryOffsets.get(rowKey) ?? 0}
               <li
                 class="absolute left-0 right-0 top-0"
+                class:timeline-row-entering={entryOffsetPx !== 0}
+                class:timeline-row-animating={rowEntryAnimating}
+                class:timeline-row-entry-pending={!rowEntryAnimating &&
+                  rowEntryNewKeys.has(rowKey)}
+                data-timeline-key={rowKey || undefined}
+                data-timeline-entry-offset={entryOffsetPx || undefined}
+                data-timeline-entry-key={rowKey || undefined}
                 style:display={slot ? 'block' : 'none'}
                 style:height="{ROW_HEIGHT}px"
                 style:contain="layout"
+                style:--timeline-row-entry-offset={`${entryOffsetPx}px`}
                 style:transform={slot
                   ? `translateY(${getY(slot.index) - ROW_HEIGHT / 2 + shiftFor(slot.index)}px)`
                   : undefined}
@@ -1340,23 +1563,17 @@
     will-change: transform;
   }
 
-  .timeline-rows-entering {
-    animation: timeline-rows-enter 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+  .timeline-row-entering {
+    translate: 0 var(--timeline-row-entry-offset);
   }
 
-  @keyframes timeline-rows-enter {
-    from {
-      transform: translateY(var(--timeline-row-stack-offset));
-    }
-
-    to {
-      transform: translateY(0);
-    }
+  .timeline-row-entry-pending {
+    visibility: hidden;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .timeline-rows-entering {
-      animation: none;
+    .timeline-row-entering {
+      translate: none;
     }
   }
 

@@ -100,6 +100,7 @@
     aria-controls={edge.load.state === 'loaded' && expanded
       ? regionId
       : undefined}
+    loading={edge.load.state === 'loading'}
     leadingIcon={expanded ? 'chevron-down' : 'chevron-right'}
     title={expanded
       ? translate('workflows.child-timeline-collapse')

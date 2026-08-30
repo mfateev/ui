@@ -22,6 +22,19 @@ export type TimelineRun = {
   successorRunId?: string;
 };
 
+export const getRenderableTimelineRuns = ({
+  retainedRuns,
+  activeRun,
+  activeHistoryReady,
+}: {
+  retainedRuns: TimelineRun[];
+  activeRun: TimelineRun;
+  activeHistoryReady: boolean;
+}): TimelineRun[] => {
+  if (!activeHistoryReady && retainedRuns.length > 0) return retainedRuns;
+  return [...retainedRuns, activeRun];
+};
+
 export type RetainedTimelineRun = Omit<TimelineRun, 'active'> & {
   predecessorRunId?: string;
   successorRunId?: string;

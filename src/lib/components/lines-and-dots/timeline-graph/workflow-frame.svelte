@@ -19,6 +19,9 @@
     paint: 'background' | 'foreground';
     bandTop: number;
     bandHeight: number;
+    entryOffsetPx?: number;
+    entryKey?: string;
+    entryPending?: boolean;
     onToggle?: () => void;
     expanded?: boolean;
   }
@@ -35,6 +38,9 @@
     paint,
     bandTop,
     bandHeight,
+    entryOffsetPx = 0,
+    entryKey,
+    entryPending = false,
     onToggle,
     expanded = true,
   }: Props = $props();
@@ -101,155 +107,178 @@
   );
 </script>
 
-{#if paint === 'foreground'}
-  <div
-    role="img"
-    aria-label={accessibleName}
-    data-frame-kind={kind}
-    data-frame-identity
-    class="pointer-events-none absolute inset-0"
-  ></div>
-{/if}
+<div
+  class="pointer-events-none absolute inset-0"
+  class:timeline-frame-entering={entryOffsetPx !== 0}
+  class:timeline-frame-entry-pending={entryPending}
+  data-timeline-entry-offset={entryOffsetPx || undefined}
+  data-timeline-entry-key={entryKey}
+  style:--timeline-row-entry-offset={`${entryOffsetPx}px`}
+>
+  {#if paint === 'foreground'}
+    <div
+      role="img"
+      aria-label={accessibleName}
+      data-frame-kind={kind}
+      data-frame-identity
+      class="pointer-events-none absolute inset-0"
+    ></div>
+  {/if}
 
-{#if geometry.horizontal && paintHeight > 0}
-  <div
-    aria-hidden={onToggle ? undefined : 'true'}
-    data-frame-kind={kind}
-    data-frame-paint={paint}
-    class="pointer-events-none absolute inset-0"
-  >
-    {#if paint === 'background'}
-      <div
-        class:frame-live-reveal={live}
-        class="pointer-events-none absolute rounded"
-        style:left="{geometry.horizontal.startPx}px"
-        style:top="{paintTop}px"
-        style:right={live ? '0' : undefined}
-        style:width={live ? undefined : `${horizontalWidth}px`}
-        style:height="{paintHeight}px"
-        style:background={`color-mix(in srgb, ${color} 3%, transparent)`}
-        style:--frame-committed-width="{horizontalWidth}px"
-      ></div>
-    {:else}
-      {#if drawTop}
+  {#if geometry.horizontal && paintHeight > 0}
+    <div
+      aria-hidden={onToggle ? undefined : 'true'}
+      data-frame-kind={kind}
+      data-frame-paint={paint}
+      class="pointer-events-none absolute inset-0"
+    >
+      {#if paint === 'background'}
         <div
-          class:frame-edge-chain={kind === 'chain'}
-          class:frame-dashed={live && kind === 'run'}
-          class:tl-line--animate={live && kind === 'run'}
-          class:tl-line--dashed={live && kind === 'run'}
-          class:tl-line--live={live}
-          class:tl-line--viewport-clipped-start={live &&
-            !geometry.drawStartSide}
-          class="frame-edge pointer-events-none absolute"
-          style:left="{geometry.horizontal.startPx}px"
-          style:top="{geometry.topPx}px"
-          style:right={live ? '0' : undefined}
-          style:width={live ? undefined : `${horizontalWidth}px`}
-          style:--frame-color={color}
-          style:--tl-line-color={color}
-          style:--tl-live-committed-width="{horizontalWidth}px"
-        ></div>
-      {/if}
-      {#if drawBottom}
-        <div
-          class:frame-edge-chain={kind === 'chain'}
-          class:frame-dashed={live && kind === 'run'}
-          class:tl-line--animate={live && kind === 'run'}
-          class:tl-line--dashed={live && kind === 'run'}
-          class:tl-line--live={live}
-          class="frame-edge pointer-events-none absolute"
-          style:left="{geometry.horizontal.startPx}px"
-          style:top="{geometry.bottomPx}px"
-          style:right={live ? '0' : undefined}
-          style:width={live ? undefined : `${horizontalWidth}px`}
-          style:--frame-color={color}
-          style:--tl-line-color={color}
-          style:--tl-live-committed-width="{horizontalWidth}px"
-        ></div>
-      {/if}
-      {#if geometry.drawStartSide}
-        <div
-          class:frame-side-chain={kind === 'chain'}
-          class:frame-side-dashed={live && kind === 'run'}
-          class="frame-side pointer-events-none absolute"
+          class:frame-live-reveal={live}
+          class="pointer-events-none absolute rounded"
           style:left="{geometry.horizontal.startPx}px"
           style:top="{paintTop}px"
+          style:right={live ? '0' : undefined}
+          style:width={live ? undefined : `${horizontalWidth}px`}
           style:height="{paintHeight}px"
-          style:--frame-color={color}
+          style:background={`color-mix(in srgb, ${color} 3%, transparent)`}
+          style:--frame-committed-width="{horizontalWidth}px"
         ></div>
-      {/if}
-      {#if geometry.drawEndSide}
-        <div
-          class:frame-side-chain={kind === 'chain'}
-          class:frame-side-dashed={live && kind === 'run'}
-          class="frame-side pointer-events-none absolute"
-          style:left="{geometry.horizontal.endPx}px"
-          style:top="{paintTop}px"
-          style:height="{paintHeight}px"
-          style:--frame-color={color}
-        ></div>
-      {/if}
-      {#if showLabel && drawTop}
-        <span
-          class:frame-label-chain={kind === 'chain'}
-          class:workflow-run-label={kind === 'run'}
-          class:pointer-events-none={!onToggle}
-          class:pointer-events-auto={Boolean(onToggle)}
-          class="absolute z-10 inline-flex min-h-[var(--dot)] items-center truncate whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none text-current"
-          style:left={labelLeft}
-          style:top="{geometry.topPx - RADIUS}px"
-          style:max-width={labelMaxWidth}
-          style:--workflow-label-attached-left="{geometry.labelStartPx}px"
-          style:--workflow-label-safe-inset="{labelSafeInset}px"
-          style:--workflow-label-end-attached-left="{labelEndAttachedLeft}px"
-          style:--frame-color={color}
-          title={displayLabel}
-          bind:clientWidth={labelWidth}
-        >
-          {#if onToggle}
-            <Button
-              variant="ghost"
-              size="xs"
-              class="mr-1 h-4 w-4 shrink-0 p-0"
-              onclick={onToggle}
-              aria-label={`${expanded ? translate('workflows.child-timeline-collapse') : translate('workflows.child-timeline-expand')}: ${label}`}
-              aria-expanded={expanded}
-              leadingIcon={expanded ? 'chevron-down' : 'chevron-right'}
-              title={expanded
-                ? translate('workflows.child-timeline-collapse')
-                : translate('workflows.child-timeline-expand')}
-            />
-          {/if}
-          <span class="truncate">{displayLabel}</span>
-        </span>
-      {/if}
-      {#if drawTop && kind === 'chain'}
-        {#each visibleDots as dot (dot.point)}
-          {@const bounds = alignedDotBox(
-            dot.point,
-            geometry.topPx,
-            dot.alignment,
-          )}
+      {:else}
+        {#if drawTop}
           <div
-            class="pointer-events-none absolute h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"
-            style:left="{bounds.left}px"
-            style:top="{bounds.top}px"
-            style:border-color={colors.stroke}
-            style:background={colors.fill}
+            class:frame-edge-chain={kind === 'chain'}
+            class:frame-dashed={live && kind === 'run'}
+            class:tl-line--animate={live && kind === 'run'}
+            class:tl-line--dashed={live && kind === 'run'}
+            class:tl-line--live={live}
+            class:tl-line--viewport-clipped-start={live &&
+              !geometry.drawStartSide}
+            class="frame-edge pointer-events-none absolute"
+            style:left="{geometry.horizontal.startPx}px"
+            style:top="{geometry.topPx}px"
+            style:right={live ? '0' : undefined}
+            style:width={live ? undefined : `${horizontalWidth}px`}
+            style:--frame-color={color}
+            style:--tl-line-color={color}
+            style:--tl-live-committed-width="{horizontalWidth}px"
+          ></div>
+        {/if}
+        {#if drawBottom}
+          <div
+            class:frame-edge-chain={kind === 'chain'}
+            class:frame-dashed={live && kind === 'run'}
+            class:tl-line--animate={live && kind === 'run'}
+            class:tl-line--dashed={live && kind === 'run'}
+            class:tl-line--live={live}
+            class="frame-edge pointer-events-none absolute"
+            style:left="{geometry.horizontal.startPx}px"
+            style:top="{geometry.bottomPx}px"
+            style:right={live ? '0' : undefined}
+            style:width={live ? undefined : `${horizontalWidth}px`}
+            style:--frame-color={color}
+            style:--tl-line-color={color}
+            style:--tl-live-committed-width="{horizontalWidth}px"
+          ></div>
+        {/if}
+        {#if geometry.drawStartSide}
+          <div
+            class:frame-side-chain={kind === 'chain'}
+            class:frame-side-dashed={live && kind === 'run'}
+            class="frame-side pointer-events-none absolute"
+            style:left="{geometry.horizontal.startPx}px"
+            style:top="{paintTop}px"
+            style:height="{paintHeight}px"
+            style:--frame-color={color}
+          ></div>
+        {/if}
+        {#if geometry.drawEndSide}
+          <div
+            class:frame-side-chain={kind === 'chain'}
+            class:frame-side-dashed={live && kind === 'run'}
+            class="frame-side pointer-events-none absolute"
+            style:left="{geometry.horizontal.endPx}px"
+            style:top="{paintTop}px"
+            style:height="{paintHeight}px"
+            style:--frame-color={color}
+          ></div>
+        {/if}
+        {#if showLabel && drawTop}
+          <span
+            class:frame-label-chain={kind === 'chain'}
+            class:workflow-run-label={kind === 'run'}
+            class:pointer-events-none={!onToggle}
+            class:pointer-events-auto={Boolean(onToggle)}
+            class="absolute z-10 inline-flex min-h-[var(--dot)] items-center truncate whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none text-current"
+            style:left={labelLeft}
+            style:top="{geometry.topPx - RADIUS}px"
+            style:max-width={labelMaxWidth}
+            style:--workflow-label-attached-left="{geometry.labelStartPx}px"
+            style:--workflow-label-safe-inset="{labelSafeInset}px"
+            style:--workflow-label-end-attached-left="{labelEndAttachedLeft}px"
+            style:--frame-color={color}
+            title={displayLabel}
+            bind:clientWidth={labelWidth}
           >
-            <svg
-              aria-hidden="true"
-              class="absolute left-1/2 top-1/2 h-[55%] w-[55%] -translate-x-1/2 -translate-y-1/2 text-black"
-              viewBox="0 0 24 24"><use href="#ti-workflow" /></svg
+            {#if onToggle}
+              <Button
+                variant="ghost"
+                size="xs"
+                class="mr-1 h-4 w-4 shrink-0 p-0"
+                onclick={onToggle}
+                aria-label={`${expanded ? translate('workflows.child-timeline-collapse') : translate('workflows.child-timeline-expand')}: ${label}`}
+                aria-expanded={expanded}
+                leadingIcon={expanded ? 'chevron-down' : 'chevron-right'}
+                title={expanded
+                  ? translate('workflows.child-timeline-collapse')
+                  : translate('workflows.child-timeline-expand')}
+              />
+            {/if}
+            <span class="truncate">{displayLabel}</span>
+          </span>
+        {/if}
+        {#if drawTop && kind === 'chain'}
+          {#each visibleDots as dot (dot.point)}
+            {@const bounds = alignedDotBox(
+              dot.point,
+              geometry.topPx,
+              dot.alignment,
+            )}
+            <div
+              class="pointer-events-none absolute h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"
+              style:left="{bounds.left}px"
+              style:top="{bounds.top}px"
+              style:border-color={colors.stroke}
+              style:background={colors.fill}
             >
-          </div>
-        {/each}
+              <svg
+                aria-hidden="true"
+                class="absolute left-1/2 top-1/2 h-[55%] w-[55%] -translate-x-1/2 -translate-y-1/2 text-black"
+                viewBox="0 0 24 24"><use href="#ti-workflow" /></svg
+              >
+            </div>
+          {/each}
+        {/if}
       {/if}
-    {/if}
-  </div>
-{/if}
+    </div>
+  {/if}
+</div>
 
 <style lang="postcss">
+  .timeline-frame-entering {
+    translate: 0 var(--timeline-row-entry-offset);
+  }
+
+  .timeline-frame-entry-pending {
+    visibility: hidden;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .timeline-frame-entering {
+      translate: none;
+    }
+  }
+
   .frame-edge {
     height: 2px;
     background: var(--frame-color);

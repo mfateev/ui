@@ -19,14 +19,7 @@ const isBlockedQuery = workflow.defineQuery<boolean>('is-blocked');
 const unblockSignal = workflow.defineSignal('unblock');
 const proceedSignal = workflow.defineSignal('proceed');
 
-const { double } = workflow.proxyActivities<typeof activities>({
-  startToCloseTimeout: '1 hour',
-  retry: {
-    maximumAttempts: 1,
-  },
-});
-
-const { delayedDouble } = workflow.proxyActivities<typeof activities>({
+const { double, delayedDouble } = workflow.proxyActivities<typeof activities>({
   startToCloseTimeout: '1 hour',
   retry: {
     maximumAttempts: 1,
@@ -85,17 +78,6 @@ export async function CompletedWorkflow(
   }
 
   return await double(amount);
-}
-
-export async function BatchedContinueAsNewGrandchildWorkflow(
-  amount: number,
-  label: string,
-  activityDurationMs: number,
-): Promise<number> {
-  return delayedDouble.executeWithOptions(
-    { summary: `${label} grandchild activity` },
-    [amount, activityDurationMs],
-  );
 }
 
 export async function BatchedContinueAsNewChildWorkflow(

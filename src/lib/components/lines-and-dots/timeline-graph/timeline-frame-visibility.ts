@@ -2,6 +2,7 @@ import type { TimelineRun } from '$lib/services/chain-workflow-session';
 import type { WorkflowStatus } from '$lib/types/workflows';
 
 import {
+  timelineRunKey,
   type TimelineWorkflowNode,
   workflowFrameKey,
 } from './recursive-timeline-model';
@@ -109,7 +110,7 @@ export function getRecursiveFrameCandidates({
       workflow: node.workflow,
     }));
     for (const candidate of nodeRuns) {
-      participatingRunKeys.add(`${node.key}:run:${candidate.runId}`);
+      participatingRunKeys.add(timelineRunKey(node.key, candidate.runId));
     }
     runFrames.push(...nodeRuns);
     const chain = getChainFrameCandidate({

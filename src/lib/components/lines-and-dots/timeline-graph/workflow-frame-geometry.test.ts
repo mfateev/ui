@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  getTimelineFrameVerticalLayout,
   getWorkflowChainVerticalBounds,
   getWorkflowFrameGeometry,
   getWorkflowFrameVerticalBounds,
@@ -107,6 +108,93 @@ describe('getWorkflowFrameVerticalBounds', () => {
         paddingPx: 9,
       }),
     ).toEqual({ topPx: 27, bottomPx: 193 });
+  });
+});
+
+describe('getTimelineFrameVerticalLayout', () => {
+  const runSpan = (
+    key: string,
+    workflowKey: string,
+    rowStart: number,
+    rowEnd: number,
+    depth = 0,
+  ) => ({
+    key,
+    workflowKey,
+    runId: key,
+    rowStart,
+    rowEnd,
+    depth,
+    ancestorRunKeys: [],
+  });
+
+  const workflowSpan = (
+    workflowKey: string,
+    rowStart: number,
+    rowEnd: number,
+    depth: number,
+  ) => ({
+    key: `${workflowKey}:span`,
+    workflowKey,
+    rowStart,
+    rowEnd,
+    depth,
+    ancestorRunKeys: [],
+  });
+
+  it('places adjoining run borders on one shared boundary', () => {
+    const layout = getTimelineFrameVerticalLayout({
+      runSpans: [
+        runSpan('first', 'workflow', 1, 3),
+        runSpan('second', 'workflow', 3, 5),
+      ],
+      workflowSpans: [],
+      activeRowIndex: -1,
+      panelHeight: 0,
+      verticalPaddingPx: 12,
+    });
+
+    expect(layout.runBoundsByKey.get('first')).toEqual({
+      topPx: 72,
+      bottomPx: 129,
+    });
+    expect(layout.runBoundsByKey.get('second')).toEqual({
+      topPx: 129,
+      bottomPx: 177,
+    });
+  });
+
+  it('keeps workflow padding outside the run activity border', () => {
+    const layout = getTimelineFrameVerticalLayout({
+      runSpans: [runSpan('run', 'root', 1, 5)],
+      workflowSpans: [workflowSpan('root', 0, 6, 0)],
+      activeRowIndex: -1,
+      panelHeight: 0,
+      verticalPaddingPx: 12,
+    });
+    const run = layout.runBoundsByKey.get('run')!;
+    const workflow = layout.workflowBoundsByKey.get('root')!;
+
+    expect(run.bottomPx).toBe(177);
+    expect(workflow).toEqual({ topPx: 39, bottomPx: 234 });
+    expect(workflow.topPx).toBeLessThan(run.topPx);
+    expect(workflow.bottomPx).toBeGreaterThan(run.bottomPx);
+  });
+
+  it('reduces nested workflow padding without crossing its activity border', () => {
+    const layout = getTimelineFrameVerticalLayout({
+      runSpans: [runSpan('child-run', 'child', 2, 4, 2)],
+      workflowSpans: [workflowSpan('child', 1, 5, 2)],
+      activeRowIndex: -1,
+      panelHeight: 0,
+      verticalPaddingPx: 12,
+    });
+    const run = layout.runBoundsByKey.get('child-run')!;
+    const workflow = layout.workflowBoundsByKey.get('child')!;
+
+    expect(workflow).toEqual({ topPx: 75, bottomPx: 198 });
+    expect(workflow.topPx).toBeLessThan(run.topPx);
+    expect(workflow.bottomPx).toBeGreaterThan(run.bottomPx);
   });
 });
 

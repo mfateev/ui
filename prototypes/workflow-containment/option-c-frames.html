@@ -1,35 +1,249 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Option C — Nested duration frames</title><link rel="stylesheet" href="common.css"></head>
-<body><div class="app">
-<aside class="sidebar"><div class="brand"><i class="brand-mark"></i> Web UI</div><nav><a class="nav-item" href="#"><span class="nav-icon">◇</span>Namespaces</a><a class="nav-item active" href="#"><span class="nav-icon">◎</span>Workflows</a><a class="nav-item" href="#"><span class="nav-icon">◇</span>Standalone Activities</a><a class="nav-item" href="#"><span class="nav-icon">◷</span>Schedules</a><a class="nav-item" href="#"><span class="nav-icon">▱</span>Batch</a><a class="nav-item" href="#"><span class="nav-icon">⚙</span>Workers</a></nav><div class="sidebar-foot">STATIC DESIGN PROTOTYPE</div></aside>
-<main class="main"><header class="topbar"><div class="namespace">◉ &nbsp; default</div><div class="top-actions">◷ local⌄ &nbsp; ◇ &nbsp; ◉⌄</div></header><div class="content">
-<a class="back" href="index.html">‹ All design options</a><div class="workflow-heading"><div class="title-wrap"><span class="status">Running</span><h1>order-2026-1842</h1></div><div><button class="header-button primary">Pause</button><button class="header-button">More Actions⌄</button></div></div>
-<div class="metadata"><div><span>Start</span><strong>Aug 30, 2026, 9:41:06 UTC</strong><span>Duration</span><strong>19s</strong></div><div><span>Run ID</span><strong>6684a0b2…f932</strong><span>Type</span><strong>OrderFulfillmentWorkflow</strong></div><div><span>History Size</span><strong>8.4 KB</strong><span>Task Queue</span><strong>orders-v3</strong></div></div>
-<div class="tabs"><span class="tab active">Timeline</span><span class="tab">Event History <b>34</b></span><span class="tab">Relationships <b>2</b></span><span class="tab">Workers</span><span class="tab">Pending Activities <b>1</b></span><span class="tab">Call Stack</span></div>
-<div class="prototype-intro"><div><h2>Option C: Nested duration frames · Temporal-native</h2><p>Workflow lifetime becomes the boundary of a visible frame, rendered with the existing timeline’s grid, compact bars, dots, labels, and status colors. Root and child frames have identical chrome.</p></div><span class="concept-badge">Strongest containment</span></div>
-<nav class="prototype-nav"><a href="index.html">Overview</a><a href="option-a-nested-lanes.html">A · Nested lanes</a><a href="option-b-brackets.html">B · Brackets</a><a class="current" href="option-c-frames.html">C · Frames</a><a href="option-c-horizontal-window.html">C · Auto-scroll proposal</a></nav>
-<section class="timeline-card temporal-native"><div class="timeline-toolbar"><h3>Timeline <span style="font-size:12px;color:#52627a">ⓘ</span></h3><div class="toolbar-actions"><button>↧ Descending⌄</button><button>⋈ Hide idle time</button><button>▽ Filter</button><button>Auto Refresh On</button><button>⇩ Download</button></div></div>
-<div class="axis"><span>0s</span><span>3s</span><span>6s</span><span>9s</span><span>12s</span><span>15s</span><span>18s</span><span>21s</span><span>24s</span></div>
-<div class="native-canvas time-grid">
-  <div class="native-frame running" style="--start:1%;--end:99%;--top:24px;--height:512px;--status:#3b82f6">
-    <div class="native-frame-title"><i class="workflow-node"></i><strong>OrderFulfillmentWorkflow</strong><code>6684a0b2…f932</code><span class="native-status">Running</span></div><span class="native-frame-depth">workflow</span>
-    <div class="native-action" style="--left:3%;--width:13%;--row:44px"><i class="dot activity"></i><i class="bar activity"></i><i class="dot completed end"></i><span class="event-label">validateOrder</span></div>
-    <div class="native-action" style="--left:17%;--width:20%;--row:80px"><i class="dot activity"></i><i class="bar activity"></i><i class="dot completed end"></i><span class="event-label">reserveInventory</span></div>
-    <div class="native-frame" style="--start:27%;--end:79%;--top:139px;--height:190px;--status:#1ff1a5">
-      <div class="native-frame-title"><i class="workflow-node"></i><strong>PaymentWorkflow</strong><code>payment-order-1842</code><span class="native-status">Completed</span></div><span class="native-frame-depth">workflow</span>
-      <div class="native-action" style="--left:5%;--width:18%;--row:43px"><i class="dot activity"></i><i class="bar activity"></i><i class="dot completed end"></i><span class="event-label">tokenizeCard</span></div>
-      <div class="native-action" style="--left:27%;--width:26%;--row:82px"><i class="dot activity"></i><i class="bar activity"></i><i class="dot completed end"></i><span class="event-label">checkFraud</span></div>
-      <div class="native-action" style="--left:58%;--width:34%;--row:121px"><i class="dot activity"></i><i class="bar activity"></i><i class="dot completed end"></i><span class="event-label">capturePayment</span></div>
-      <span class="native-frame-note">3 actions · 12 events</span>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Option C — Nested duration frames</title>
+    <link rel="stylesheet" href="common.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand"><i class="brand-mark"></i> Web UI</div>
+        <nav>
+          <a class="nav-item" href="#"
+            ><span class="nav-icon">◇</span>Namespaces</a
+          ><a class="nav-item active" href="#"
+            ><span class="nav-icon">◎</span>Workflows</a
+          ><a class="nav-item" href="#"
+            ><span class="nav-icon">◇</span>Standalone Activities</a
+          ><a class="nav-item" href="#"
+            ><span class="nav-icon">◷</span>Schedules</a
+          ><a class="nav-item" href="#"><span class="nav-icon">▱</span>Batch</a
+          ><a class="nav-item" href="#"
+            ><span class="nav-icon">⚙</span>Workers</a
+          >
+        </nav>
+        <div class="sidebar-foot">STATIC DESIGN PROTOTYPE</div>
+      </aside>
+      <main class="main">
+        <header class="topbar">
+          <div class="namespace">◉ &nbsp; default</div>
+          <div class="top-actions">◷ local⌄ &nbsp; ◇ &nbsp; ◉⌄</div>
+        </header>
+        <div class="content">
+          <a class="back" href="index.html">‹ All design options</a>
+          <div class="workflow-heading">
+            <div class="title-wrap">
+              <span class="status">Running</span>
+              <h1>order-2026-1842</h1>
+            </div>
+            <div>
+              <button class="header-button primary">Pause</button
+              ><button class="header-button">More Actions⌄</button>
+            </div>
+          </div>
+          <div class="metadata">
+            <div>
+              <span>Start</span><strong>Aug 30, 2026, 9:41:06 UTC</strong
+              ><span>Duration</span><strong>19s</strong>
+            </div>
+            <div>
+              <span>Run ID</span><strong>6684a0b2…f932</strong><span>Type</span
+              ><strong>OrderFulfillmentWorkflow</strong>
+            </div>
+            <div>
+              <span>History Size</span><strong>8.4 KB</strong
+              ><span>Task Queue</span><strong>orders-v3</strong>
+            </div>
+          </div>
+          <div class="tabs">
+            <span class="tab active">Timeline</span
+            ><span class="tab">Event History <b>34</b></span
+            ><span class="tab">Relationships <b>2</b></span
+            ><span class="tab">Workers</span
+            ><span class="tab">Pending Activities <b>1</b></span
+            ><span class="tab">Call Stack</span>
+          </div>
+          <div class="prototype-intro">
+            <div>
+              <h2>Option C: Nested duration frames · Temporal-native</h2>
+              <p>
+                Workflow lifetime becomes the boundary of a visible frame,
+                rendered with the existing timeline’s grid, compact bars, dots,
+                labels, and status colors. Root and child frames have identical
+                chrome.
+              </p>
+            </div>
+            <span class="concept-badge">Strongest containment</span>
+          </div>
+          <nav class="prototype-nav">
+            <a href="index.html">Overview</a
+            ><a href="option-a-nested-lanes.html">A · Nested lanes</a
+            ><a href="option-b-brackets.html">B · Brackets</a
+            ><a class="current" href="option-c-frames.html">C · Frames</a
+            ><a href="option-c-horizontal-window.html"
+              >C · Auto-scroll proposal</a
+            >
+          </nav>
+          <section class="timeline-card temporal-native">
+            <div class="timeline-toolbar">
+              <h3>
+                Timeline <span style="font-size: 12px; color: #52627a">ⓘ</span>
+              </h3>
+              <div class="toolbar-actions">
+                <button>↧ Descending⌄</button><button>⋈ Hide idle time</button
+                ><button>▽ Filter</button><button>Auto Refresh On</button
+                ><button>⇩ Download</button>
+              </div>
+            </div>
+            <div class="axis">
+              <span>0s</span><span>3s</span><span>6s</span><span>9s</span
+              ><span>12s</span><span>15s</span><span>18s</span><span>21s</span
+              ><span>24s</span>
+            </div>
+            <div class="native-canvas time-grid">
+              <div
+                class="native-frame running"
+                style="
+                  --start: 1%;
+                  --end: 99%;
+                  --top: 24px;
+                  --height: 512px;
+                  --status: #3b82f6;
+                "
+              >
+                <div class="native-frame-title">
+                  <i class="workflow-node"></i
+                  ><strong>OrderFulfillmentWorkflow</strong
+                  ><code>6684a0b2…f932</code
+                  ><span class="native-status">Running</span>
+                </div>
+                <span class="native-frame-depth">workflow</span>
+                <div
+                  class="native-action"
+                  style="--left: 3%; --width: 13%; --row: 44px"
+                >
+                  <i class="dot activity"></i><i class="bar activity"></i
+                  ><i class="dot completed end"></i
+                  ><span class="event-label">validateOrder</span>
+                </div>
+                <div
+                  class="native-action"
+                  style="--left: 17%; --width: 20%; --row: 80px"
+                >
+                  <i class="dot activity"></i><i class="bar activity"></i
+                  ><i class="dot completed end"></i
+                  ><span class="event-label">reserveInventory</span>
+                </div>
+                <div
+                  class="native-frame"
+                  style="
+                    --start: 27%;
+                    --end: 79%;
+                    --top: 139px;
+                    --height: 190px;
+                    --status: #1ff1a5;
+                  "
+                >
+                  <div class="native-frame-title">
+                    <i class="workflow-node"></i><strong>PaymentWorkflow</strong
+                    ><code>payment-order-1842</code
+                    ><span class="native-status">Completed</span>
+                  </div>
+                  <span class="native-frame-depth">workflow</span>
+                  <div
+                    class="native-action"
+                    style="--left: 5%; --width: 18%; --row: 43px"
+                  >
+                    <i class="dot activity"></i><i class="bar activity"></i
+                    ><i class="dot completed end"></i
+                    ><span class="event-label">tokenizeCard</span>
+                  </div>
+                  <div
+                    class="native-action"
+                    style="--left: 27%; --width: 26%; --row: 82px"
+                  >
+                    <i class="dot activity"></i><i class="bar activity"></i
+                    ><i class="dot completed end"></i
+                    ><span class="event-label">checkFraud</span>
+                  </div>
+                  <div
+                    class="native-action"
+                    style="--left: 58%; --width: 34%; --row: 121px"
+                  >
+                    <i class="dot activity"></i><i class="bar activity"></i
+                    ><i class="dot completed end"></i
+                    ><span class="event-label">capturePayment</span>
+                  </div>
+                  <span class="native-frame-note">3 actions · 12 events</span>
+                </div>
+                <div
+                  class="native-action"
+                  style="--left: 39%; --width: 45%; --row: 348px"
+                >
+                  <i class="dot timer"></i><i class="bar timer"></i
+                  ><i class="dot completed end"></i
+                  ><span class="event-label">packing timeout</span>
+                </div>
+                <div
+                  class="native-action"
+                  style="--left: 66%; --width: 3%; --row: 382px"
+                >
+                  <i class="bar signal"></i><i class="dot signal end"></i
+                  ><span class="event-label">packingReady</span>
+                </div>
+                <div
+                  class="native-frame"
+                  style="
+                    --start: 74%;
+                    --end: 97%;
+                    --top: 400px;
+                    --height: 88px;
+                    --status: #1ff1a5;
+                  "
+                >
+                  <div class="native-frame-title">
+                    <i class="workflow-node"></i><strong>InvoiceWorkflow</strong
+                    ><code>invoice-order-1842</code
+                    ><span class="native-status">Completed</span>
+                  </div>
+                  <span class="native-frame-depth">workflow</span>
+                  <div
+                    class="native-action"
+                    style="--left: 9%; --width: 80%; --row: 40px"
+                  >
+                    <i class="dot activity"></i><i class="bar activity"></i
+                    ><i class="dot completed end"></i
+                    ><span class="event-label">generateInvoice</span>
+                  </div>
+                </div>
+                <div
+                  class="native-action"
+                  style="--left: 86%; --width: 10%; --row: 485px"
+                >
+                  <i class="dot activity"></i><i class="bar activity"></i
+                  ><i class="dot completed end"></i
+                  ><span class="event-label flip">notify</span>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <span style="--swatch: #3b82f6">Running workflow</span
+              ><span style="--swatch: #1ff1a5">Completed workflow</span
+              ><span style="--swatch: #a78bfa">Activity</span
+              ><span style="--swatch: #fbbf24">Timer</span
+              ><span style="--swatch: #e879f9">Signal</span>
+            </div>
+          </section>
+          <div class="callout">
+            <strong>Visual rule:</strong> every workflow is the same
+            duration-frame component. Status controls border color and line
+            style; position inside another frame communicates parentage. No
+            special “child workflow” glyph, row type, or color is needed.
+          </div>
+        </div>
+      </main>
     </div>
-    <div class="native-action" style="--left:39%;--width:45%;--row:348px"><i class="dot timer"></i><i class="bar timer"></i><i class="dot completed end"></i><span class="event-label">packing timeout</span></div>
-    <div class="native-action" style="--left:66%;--width:3%;--row:382px"><i class="bar signal"></i><i class="dot signal end"></i><span class="event-label">packingReady</span></div>
-    <div class="native-frame" style="--start:74%;--end:97%;--top:400px;--height:88px;--status:#1ff1a5">
-      <div class="native-frame-title"><i class="workflow-node"></i><strong>InvoiceWorkflow</strong><code>invoice-order-1842</code><span class="native-status">Completed</span></div><span class="native-frame-depth">workflow</span>
-      <div class="native-action" style="--left:9%;--width:80%;--row:40px"><i class="dot activity"></i><i class="bar activity"></i><i class="dot completed end"></i><span class="event-label">generateInvoice</span></div>
-    </div>
-    <div class="native-action" style="--left:86%;--width:10%;--row:485px"><i class="dot activity"></i><i class="bar activity"></i><i class="dot completed end"></i><span class="event-label flip">notify</span></div>
-  </div>
-</div><div class="legend"><span style="--swatch:#3b82f6">Running workflow</span><span style="--swatch:#1ff1a5">Completed workflow</span><span style="--swatch:#a78bfa">Activity</span><span style="--swatch:#fbbf24">Timer</span><span style="--swatch:#e879f9">Signal</span></div></section>
-<div class="callout"><strong>Visual rule:</strong> every workflow is the same duration-frame component. Status controls border color and line style; position inside another frame communicates parentage. No special “child workflow” glyph, row type, or color is needed.</div>
-</div></main></div></body></html>
+  </body>
+</html>

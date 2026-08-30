@@ -143,6 +143,9 @@ export const workflowFrameKey = ({
 }): string =>
   `frame:${keyPart(ownerKey)}:${kind}${runId ? `:${keyPart(runId)}` : ''}`;
 
+export const timelineRunKey = (workflowKey: string, runId: string): string =>
+  `${workflowKey}:run:${runId}`;
+
 export const countNodeData = (
   node: TimelineWorkflowNode,
 ): { runs: number; groups: number; events: number } => ({

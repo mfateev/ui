@@ -1,175 +1,629 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Nested frames in Temporal's auto-scrolling time window</title>
-  <style>
-    :root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:#171717; }
-    * { box-sizing:border-box; }
-    html,body { margin:0; min-width:1120px; background:#f5f7fb; overflow:auto; }
-    button { font:inherit; }
-    .scale-shell { width:1920px; height:1080px; position:relative; transform-origin:top left; }
-    .template { position:absolute; inset:0; width:1920px; height:1080px; display:block; }
-    .proposal-tag { position:absolute; left:359px; top:612px; height:32px; display:flex; align-items:center; gap:10px; z-index:20; }
-    .badge { border:1px solid #8899b2; background:#fff; padding:5px 8px; color:#43536b; font-size:11px; }
-    .controls { position:absolute; right:32px; top:613px; z-index:21; display:flex; align-items:center; background:white; border:1px solid #aab8cc; }
-    .controls button { height:30px; padding:0 10px; border:0; border-left:1px solid #c7d1df; background:#fff; font-size:11px; cursor:pointer; }
-    .controls button:first-of-type { border-left:0; }
-    .controls button:hover { background:#eef2ff; }
-    .readout { padding:0 10px; color:#52627a; font:10px ui-monospace, SFMono-Regular, Menlo, monospace; min-width:128px; }
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Nested frames in Temporal's auto-scrolling time window</title>
+    <style>
+      :root {
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+        color: #171717;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-width: 1120px;
+        background: #f5f7fb;
+        overflow: auto;
+      }
+      button {
+        font: inherit;
+      }
+      .scale-shell {
+        width: 1920px;
+        height: 1080px;
+        position: relative;
+        transform-origin: top left;
+      }
+      .template {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        display: block;
+      }
+      .proposal-tag {
+        position: absolute;
+        left: 359px;
+        top: 612px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        z-index: 20;
+      }
+      .badge {
+        border: 1px solid #8899b2;
+        background: #fff;
+        padding: 5px 8px;
+        color: #43536b;
+        font-size: 11px;
+      }
+      .controls {
+        position: absolute;
+        right: 32px;
+        top: 613px;
+        z-index: 21;
+        display: flex;
+        align-items: center;
+        background: white;
+        border: 1px solid #aab8cc;
+      }
+      .controls button {
+        height: 30px;
+        padding: 0 10px;
+        border: 0;
+        border-left: 1px solid #c7d1df;
+        background: #fff;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .controls button:first-of-type {
+        border-left: 0;
+      }
+      .controls button:hover {
+        background: #eef2ff;
+      }
+      .readout {
+        padding: 0 10px;
+        color: #52627a;
+        font:
+          10px ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        min-width: 128px;
+      }
 
-    .proposal-window { position:absolute; left:335px; top:666px; width:1504px; height:266px; z-index:15; overflow:hidden; background:#fff; border-left:4px solid #141414; border-right:4px solid #141414; border-bottom:4px solid #141414; }
-    .proposal-window::before { content:''; position:absolute; inset:0; background:repeating-linear-gradient(90deg,transparent 0 49px,#c8d0dc 49px 50px); z-index:0; }
-    .clip { position:absolute; inset:0 0 26px; overflow:hidden; z-index:2; }
-    .root-frame { position:absolute; left:0; right:0; top:14px; height:216px; border-top:2px dashed #3b82f6; border-bottom:2px dashed #3b82f6; background:rgb(59 130 246 / 2.5%); }
-    .root-frame::before,.root-frame::after { content:'⋯'; position:absolute; top:-10px; background:white; color:#3b82f6; font-weight:700; font-size:14px; padding:0 2px; z-index:8; }
-    .root-frame::before { left:2px; }.root-frame::after { right:2px; }
-    .frame-title { position:absolute; left:10px; top:-13px; height:25px; display:flex; align-items:center; gap:6px; max-width:360px; padding:2px 8px 2px 3px; border:1px solid #aebbd0; border-radius:13px; background:#fff; box-shadow:0 1px 3px rgb(15 23 42 / 12%); white-space:nowrap; z-index:10; }
-    .frame-title.clamped { left:10px; }
-    .workflow-icon { width:18px; height:18px; display:grid; place-items:center; flex:0 0 auto; border:2px solid color-mix(in srgb,var(--status) 72%,#141414); border-radius:5px; background:color-mix(in srgb,var(--status) 66%,white); font-size:10px; }
-    .frame-title strong { font-size:11px; font-weight:550; }
-    .frame-title code { color:#52627a; font:9px ui-monospace,SFMono-Regular,Menlo,monospace; }
-    .frame-title small { color:color-mix(in srgb,var(--status) 72%,#183044); font-size:9px; }
-    .root-label { --status:#3b82f6; position:absolute; left:10px; top:2px; z-index:12; }
-    .motion-world { position:absolute; left:0; top:0; width:2800px; height:100%; will-change:transform; }
-    .child-frame { position:absolute; left:var(--x); top:var(--y); width:var(--w); height:var(--h); border:2px solid var(--status); border-radius:5px; background:color-mix(in srgb,var(--status) 4%,white); box-shadow:0 0 0 3px white; }
-    .child-frame.running { border-style:dashed; }
-    .child-frame .frame-title { --status:inherit; }
-    .frame-depth { position:absolute; right:6px; top:5px; color:#718096; font-size:9px; }
-    .action { position:absolute; left:var(--x); top:var(--y); width:var(--w); height:26px; }
-    .bar { position:absolute; left:0; right:0; top:11px; height:7px; border-radius:5px; background:#a78bfa; border:1px solid #6d4fd0; }
-    .bar.timer { background:#fbbf24; border-color:#c48109; }
-    .dot { position:absolute; top:6px; width:17px; height:17px; border:2px solid #141414; border-radius:5px; background:#a78bfa; z-index:3; }
-    .dot.start { left:-8px; }.dot.end { right:-8px; background:#21dfa1; border-color:#008b5d; }
-    .dot::after { content:'›'; position:absolute; inset:-3px 0 0; display:grid; place-items:center; font-size:11px; color:#111827; }
-    .dot.timer { background:#fbbf24; }
-    .action-label { position:absolute; left:5px; top:6px; height:17px; padding:1px 4px; white-space:nowrap; background:rgb(255 255 255 / 88%); color:#28364a; font-size:11px; z-index:4; }
-    .loose-action { position:absolute; }
-    .axis-labels { position:absolute; left:0; bottom:0; height:26px; width:2800px; color:#27364c; font-size:10px; }
-    .axis-labels span { position:absolute; bottom:3px; transform:rotate(45deg); transform-origin:left bottom; white-space:nowrap; }
-    .window-time { position:absolute; bottom:4px; z-index:8; color:#27364c; background:white; padding:1px 3px; font-size:9px; writing-mode:vertical-rl; }
-    .window-time.left { left:7px; transform:rotate(180deg); }.window-time.right { right:7px; }
-    .edge-note { position:absolute; top:239px; left:50%; transform:translateX(-50%); z-index:11; padding:3px 7px; border:1px solid #b7c3d5; background:rgb(255 255 255 / 94%); color:#52627a; font-size:9px; }
-    .explanation { position:absolute; left:288px; top:986px; width:1550px; display:flex; gap:24px; color:#42516a; font-size:11px; line-height:1.4; }
-    .explanation div { flex:1; border-left:3px solid #6366f1; background:#eef2ff; padding:9px 12px; }
-    .explanation strong { color:#27364c; }
-  </style>
-</head>
-<body>
-<div class="scale-shell" id="scale-shell">
-  <img class="template" src="real-temporal-timeline-template.png" alt="Real Temporal UI workflow page used as the proposal template">
-  <div class="proposal-tag"><span class="badge">PROPOSAL · nested workflow frames in the live time window</span></div>
-  <div class="controls"><span class="readout" id="readout">Following live edge</span><button id="toggle">Pause motion</button><button id="restart">Restart</button></div>
+      .proposal-window {
+        position: absolute;
+        left: 335px;
+        top: 666px;
+        width: 1504px;
+        height: 266px;
+        z-index: 15;
+        overflow: hidden;
+        background: #fff;
+        border-left: 4px solid #141414;
+        border-right: 4px solid #141414;
+        border-bottom: 4px solid #141414;
+      }
+      .proposal-window::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(
+          90deg,
+          transparent 0 49px,
+          #c8d0dc 49px 50px
+        );
+        z-index: 0;
+      }
+      .clip {
+        position: absolute;
+        inset: 0 0 26px;
+        overflow: hidden;
+        z-index: 2;
+      }
+      .root-frame {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 14px;
+        height: 216px;
+        border-top: 2px dashed #3b82f6;
+        border-bottom: 2px dashed #3b82f6;
+        background: rgb(59 130 246 / 2.5%);
+      }
+      .root-frame::before,
+      .root-frame::after {
+        content: '⋯';
+        position: absolute;
+        top: -10px;
+        background: white;
+        color: #3b82f6;
+        font-weight: 700;
+        font-size: 14px;
+        padding: 0 2px;
+        z-index: 8;
+      }
+      .root-frame::before {
+        left: 2px;
+      }
+      .root-frame::after {
+        right: 2px;
+      }
+      .frame-title {
+        position: absolute;
+        left: 10px;
+        top: -13px;
+        height: 25px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 360px;
+        padding: 2px 8px 2px 3px;
+        border: 1px solid #aebbd0;
+        border-radius: 13px;
+        background: #fff;
+        box-shadow: 0 1px 3px rgb(15 23 42 / 12%);
+        white-space: nowrap;
+        z-index: 10;
+      }
+      .frame-title.clamped {
+        left: 10px;
+      }
+      .workflow-icon {
+        width: 18px;
+        height: 18px;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        border: 2px solid color-mix(in srgb, var(--status) 72%, #141414);
+        border-radius: 5px;
+        background: color-mix(in srgb, var(--status) 66%, white);
+        font-size: 10px;
+      }
+      .frame-title strong {
+        font-size: 11px;
+        font-weight: 550;
+      }
+      .frame-title code {
+        color: #52627a;
+        font:
+          9px ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+      }
+      .frame-title small {
+        color: color-mix(in srgb, var(--status) 72%, #183044);
+        font-size: 9px;
+      }
+      .root-label {
+        --status: #3b82f6;
+        position: absolute;
+        left: 10px;
+        top: 2px;
+        z-index: 12;
+      }
+      .motion-world {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 2800px;
+        height: 100%;
+        will-change: transform;
+      }
+      .child-frame {
+        position: absolute;
+        left: var(--x);
+        top: var(--y);
+        width: var(--w);
+        height: var(--h);
+        border: 2px solid var(--status);
+        border-radius: 5px;
+        background: color-mix(in srgb, var(--status) 4%, white);
+        box-shadow: 0 0 0 3px white;
+      }
+      .child-frame.running {
+        border-style: dashed;
+      }
+      .child-frame .frame-title {
+        --status: inherit;
+      }
+      .frame-depth {
+        position: absolute;
+        right: 6px;
+        top: 5px;
+        color: #718096;
+        font-size: 9px;
+      }
+      .action {
+        position: absolute;
+        left: var(--x);
+        top: var(--y);
+        width: var(--w);
+        height: 26px;
+      }
+      .bar {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 11px;
+        height: 7px;
+        border-radius: 5px;
+        background: #a78bfa;
+        border: 1px solid #6d4fd0;
+      }
+      .bar.timer {
+        background: #fbbf24;
+        border-color: #c48109;
+      }
+      .dot {
+        position: absolute;
+        top: 6px;
+        width: 17px;
+        height: 17px;
+        border: 2px solid #141414;
+        border-radius: 5px;
+        background: #a78bfa;
+        z-index: 3;
+      }
+      .dot.start {
+        left: -8px;
+      }
+      .dot.end {
+        right: -8px;
+        background: #21dfa1;
+        border-color: #008b5d;
+      }
+      .dot::after {
+        content: '›';
+        position: absolute;
+        inset: -3px 0 0;
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        color: #111827;
+      }
+      .dot.timer {
+        background: #fbbf24;
+      }
+      .action-label {
+        position: absolute;
+        left: 5px;
+        top: 6px;
+        height: 17px;
+        padding: 1px 4px;
+        white-space: nowrap;
+        background: rgb(255 255 255 / 88%);
+        color: #28364a;
+        font-size: 11px;
+        z-index: 4;
+      }
+      .loose-action {
+        position: absolute;
+      }
+      .axis-labels {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        height: 26px;
+        width: 2800px;
+        color: #27364c;
+        font-size: 10px;
+      }
+      .axis-labels span {
+        position: absolute;
+        bottom: 3px;
+        transform: rotate(45deg);
+        transform-origin: left bottom;
+        white-space: nowrap;
+      }
+      .window-time {
+        position: absolute;
+        bottom: 4px;
+        z-index: 8;
+        color: #27364c;
+        background: white;
+        padding: 1px 3px;
+        font-size: 9px;
+        writing-mode: vertical-rl;
+      }
+      .window-time.left {
+        left: 7px;
+        transform: rotate(180deg);
+      }
+      .window-time.right {
+        right: 7px;
+      }
+      .edge-note {
+        position: absolute;
+        top: 239px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 11;
+        padding: 3px 7px;
+        border: 1px solid #b7c3d5;
+        background: rgb(255 255 255 / 94%);
+        color: #52627a;
+        font-size: 9px;
+      }
+      .explanation {
+        position: absolute;
+        left: 288px;
+        top: 986px;
+        width: 1550px;
+        display: flex;
+        gap: 24px;
+        color: #42516a;
+        font-size: 11px;
+        line-height: 1.4;
+      }
+      .explanation div {
+        flex: 1;
+        border-left: 3px solid #6366f1;
+        background: #eef2ff;
+        padding: 9px 12px;
+      }
+      .explanation strong {
+        color: #27364c;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="scale-shell" id="scale-shell">
+      <img
+        class="template"
+        src="real-temporal-timeline-template.png"
+        alt="Real Temporal UI workflow page used as the proposal template"
+      />
+      <div class="proposal-tag">
+        <span class="badge"
+          >PROPOSAL · nested workflow frames in the live time window</span
+        >
+      </div>
+      <div class="controls">
+        <span class="readout" id="readout">Following live edge</span
+        ><button id="toggle">Pause motion</button
+        ><button id="restart">Restart</button>
+      </div>
 
-  <div class="proposal-window">
-    <div class="clip">
-      <div class="root-frame"></div>
-      <div class="frame-title root-label"><i class="workflow-icon">◇</i><strong>BatchedContinueAsNewWorkflow</strong><code>3fd31431…</code><small>Running</small></div>
-      <div class="motion-world" id="motion-world">
-        <div class="child-frame" data-world-x="110" style="--x:110px;--y:48px;--w:570px;--h:140px;--status:#1ff1a5">
-          <div class="frame-title"><i class="workflow-icon">◇</i><strong>PaymentWorkflow</strong><code>payment-1842</code><small>Completed</small></div><span class="frame-depth">workflow</span>
-          <div class="action" style="--x:25px;--y:39px;--w:145px"><i class="bar"></i><i class="dot start"></i><i class="dot end"></i><span class="action-label">tokenizeCard</span></div>
-          <div class="action" style="--x:180px;--y:72px;--w:150px"><i class="bar"></i><i class="dot start"></i><i class="dot end"></i><span class="action-label">checkFraud</span></div>
-          <div class="child-frame" data-world-x="452" style="--x:342px;--y:55px;--w:205px;--h:67px;--status:#1ff1a5">
-            <div class="frame-title"><i class="workflow-icon">◇</i><strong>RiskReviewWorkflow</strong><small>Completed</small></div>
-            <div class="action" style="--x:22px;--y:28px;--w:150px"><i class="bar"></i><i class="dot start"></i><i class="dot end"></i><span class="action-label">recordDecision</span></div>
+      <div class="proposal-window">
+        <div class="clip">
+          <div class="root-frame"></div>
+          <div class="frame-title root-label">
+            <i class="workflow-icon">◇</i
+            ><strong>BatchedContinueAsNewWorkflow</strong><code>3fd31431…</code
+            ><small>Running</small>
+          </div>
+          <div class="motion-world" id="motion-world">
+            <div
+              class="child-frame"
+              data-world-x="110"
+              style="
+                --x: 110px;
+                --y: 48px;
+                --w: 570px;
+                --h: 140px;
+                --status: #1ff1a5;
+              "
+            >
+              <div class="frame-title">
+                <i class="workflow-icon">◇</i><strong>PaymentWorkflow</strong
+                ><code>payment-1842</code><small>Completed</small>
+              </div>
+              <span class="frame-depth">workflow</span>
+              <div class="action" style="--x: 25px; --y: 39px; --w: 145px">
+                <i class="bar"></i><i class="dot start"></i
+                ><i class="dot end"></i
+                ><span class="action-label">tokenizeCard</span>
+              </div>
+              <div class="action" style="--x: 180px; --y: 72px; --w: 150px">
+                <i class="bar"></i><i class="dot start"></i
+                ><i class="dot end"></i
+                ><span class="action-label">checkFraud</span>
+              </div>
+              <div
+                class="child-frame"
+                data-world-x="452"
+                style="
+                  --x: 342px;
+                  --y: 55px;
+                  --w: 205px;
+                  --h: 67px;
+                  --status: #1ff1a5;
+                "
+              >
+                <div class="frame-title">
+                  <i class="workflow-icon">◇</i
+                  ><strong>RiskReviewWorkflow</strong><small>Completed</small>
+                </div>
+                <div class="action" style="--x: 22px; --y: 28px; --w: 150px">
+                  <i class="bar"></i><i class="dot start"></i
+                  ><i class="dot end"></i
+                  ><span class="action-label">recordDecision</span>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="action loose-action"
+              style="--x: 735px; --y: 91px; --w: 300px"
+            >
+              <i class="bar timer"></i><i class="dot timer start"></i
+              ><i class="dot end"></i
+              ><span class="action-label">packing timeout</span>
+            </div>
+
+            <div
+              class="child-frame"
+              data-world-x="1010"
+              style="
+                --x: 1010px;
+                --y: 112px;
+                --w: 370px;
+                --h: 91px;
+                --status: #1ff1a5;
+              "
+            >
+              <div class="frame-title">
+                <i class="workflow-icon">◇</i><strong>InvoiceWorkflow</strong
+                ><code>invoice-1842</code><small>Completed</small>
+              </div>
+              <span class="frame-depth">workflow</span>
+              <div class="action" style="--x: 25px; --y: 42px; --w: 295px">
+                <i class="bar"></i><i class="dot start"></i
+                ><i class="dot end"></i
+                ><span class="action-label">generateInvoice</span>
+              </div>
+            </div>
+
+            <div
+              class="child-frame"
+              data-world-x="1545"
+              style="
+                --x: 1545px;
+                --y: 53px;
+                --w: 520px;
+                --h: 135px;
+                --status: #1ff1a5;
+              "
+            >
+              <div class="frame-title">
+                <i class="workflow-icon">◇</i><strong>ShippingWorkflow</strong
+                ><code>shipping-1842</code><small>Completed</small>
+              </div>
+              <span class="frame-depth">workflow</span>
+              <div class="action" style="--x: 28px; --y: 42px; --w: 178px">
+                <i class="bar"></i><i class="dot start"></i
+                ><i class="dot end"></i
+                ><span class="action-label">createLabel</span>
+              </div>
+              <div class="action" style="--x: 225px; --y: 82px; --w: 245px">
+                <i class="bar"></i><i class="dot start"></i
+                ><i class="dot end"></i
+                ><span class="action-label">requestPickup</span>
+              </div>
+            </div>
+
+            <div class="axis-labels">
+              <span style="left: 20px">2m 42s</span
+              ><span style="left: 220px">2m 50s</span
+              ><span style="left: 420px">2m 58s</span
+              ><span style="left: 620px">3m 6s</span
+              ><span style="left: 820px">3m 14s</span
+              ><span style="left: 1020px">3m 22s</span
+              ><span style="left: 1220px">3m 30s</span
+              ><span style="left: 1420px">3m 38s</span
+              ><span style="left: 1620px">3m 46s</span
+              ><span style="left: 1820px">3m 54s</span
+              ><span style="left: 2020px">4m 2s</span
+              ><span style="left: 2220px">4m 10s</span>
+            </div>
           </div>
         </div>
+        <span class="window-time left">window start</span
+        ><span class="window-time right">live edge</span>
+        <span class="edge-note"
+          >Completed child frames translate left and clip at the stationary
+          rails</span
+        >
+      </div>
 
-        <div class="action loose-action" style="--x:735px;--y:91px;--w:300px"><i class="bar timer"></i><i class="dot timer start"></i><i class="dot end"></i><span class="action-label">packing timeout</span></div>
-
-        <div class="child-frame" data-world-x="1010" style="--x:1010px;--y:112px;--w:370px;--h:91px;--status:#1ff1a5">
-          <div class="frame-title"><i class="workflow-icon">◇</i><strong>InvoiceWorkflow</strong><code>invoice-1842</code><small>Completed</small></div><span class="frame-depth">workflow</span>
-          <div class="action" style="--x:25px;--y:42px;--w:295px"><i class="bar"></i><i class="dot start"></i><i class="dot end"></i><span class="action-label">generateInvoice</span></div>
+      <div class="explanation">
+        <div>
+          <strong>Root workflow:</strong> because it began before the visible
+          window and is still running, its frame is clipped at both edges and
+          remains stationary. Its identity label clamps to the left rail,
+          matching the current workflow-run label.
         </div>
-
-        <div class="child-frame" data-world-x="1545" style="--x:1545px;--y:53px;--w:520px;--h:135px;--status:#1ff1a5">
-          <div class="frame-title"><i class="workflow-icon">◇</i><strong>ShippingWorkflow</strong><code>shipping-1842</code><small>Completed</small></div><span class="frame-depth">workflow</span>
-          <div class="action" style="--x:28px;--y:42px;--w:178px"><i class="bar"></i><i class="dot start"></i><i class="dot end"></i><span class="action-label">createLabel</span></div>
-          <div class="action" style="--x:225px;--y:82px;--w:245px"><i class="bar"></i><i class="dot start"></i><i class="dot end"></i><span class="action-label">requestPickup</span></div>
+        <div>
+          <strong>Completed children:</strong> the entire frame—boundary, label,
+          and owned actions—uses the existing motion layer, travels left as one
+          unit, clips at the rail, then leaves the visible group set.
         </div>
-
-        <div class="axis-labels">
-          <span style="left:20px">2m 42s</span><span style="left:220px">2m 50s</span><span style="left:420px">2m 58s</span><span style="left:620px">3m 6s</span><span style="left:820px">3m 14s</span><span style="left:1020px">3m 22s</span><span style="left:1220px">3m 30s</span><span style="left:1420px">3m 38s</span><span style="left:1620px">3m 46s</span><span style="left:1820px">3m 54s</span><span style="left:2020px">4m 2s</span><span style="left:2220px">4m 10s</span>
+        <div>
+          <strong>New children:</strong> enter from the right with the same
+          frame component. Parent/child meaning comes only from geometric
+          containment; status still determines color and dash treatment.
         </div>
       </div>
     </div>
-    <span class="window-time left">window start</span><span class="window-time right">live edge</span>
-    <span class="edge-note">Completed child frames translate left and clip at the stationary rails</span>
-  </div>
+    <script>
+      const shell = document.querySelector('#scale-shell');
+      const world = document.querySelector('#motion-world');
+      const toggle = document.querySelector('#toggle');
+      const restart = document.querySelector('#restart');
+      const readout = document.querySelector('#readout');
+      const childFrames = [
+        ...document.querySelectorAll('.child-frame[data-world-x]'),
+      ];
+      const duration = 26000;
+      const distance = 1180;
+      let started = performance.now();
+      let pausedAt = 0;
+      let playing = true;
 
-  <div class="explanation">
-    <div><strong>Root workflow:</strong> because it began before the visible window and is still running, its frame is clipped at both edges and remains stationary. Its identity label clamps to the left rail, matching the current workflow-run label.</div>
-    <div><strong>Completed children:</strong> the entire frame—boundary, label, and owned actions—uses the existing motion layer, travels left as one unit, clips at the rail, then leaves the visible group set.</div>
-    <div><strong>New children:</strong> enter from the right with the same frame component. Parent/child meaning comes only from geometric containment; status still determines color and dash treatment.</div>
-  </div>
-</div>
-<script>
-  const shell = document.querySelector('#scale-shell');
-  const world = document.querySelector('#motion-world');
-  const toggle = document.querySelector('#toggle');
-  const restart = document.querySelector('#restart');
-  const readout = document.querySelector('#readout');
-  const childFrames = [...document.querySelectorAll('.child-frame[data-world-x]')];
-  const duration = 26000;
-  const distance = 1180;
-  let started = performance.now();
-  let pausedAt = 0;
-  let playing = true;
+      const fit = () => {
+        const scale = Math.min(window.innerWidth / 1920, 1);
+        shell.style.transform = `scale(${scale})`;
+        document.body.style.width = `${1920 * scale}px`;
+        document.body.style.height = `${1080 * scale}px`;
+      };
+      window.addEventListener('resize', fit);
+      fit();
 
-  const fit = () => {
-    const scale = Math.min(window.innerWidth / 1920, 1);
-    shell.style.transform = `scale(${scale})`;
-    document.body.style.width = `${1920 * scale}px`;
-    document.body.style.height = `${1080 * scale}px`;
-  };
-  window.addEventListener('resize', fit);
-  fit();
-
-  const draw = (now) => {
-    const elapsed = playing ? now - started : pausedAt;
-    const progress = Math.min(elapsed / duration, 1);
-    const x = progress * distance;
-    world.style.transform = `translateX(${-x}px)`;
-    childFrames.forEach((frame) => {
-      const title = frame.querySelector(':scope > .frame-title');
-      const screenStart = Number(frame.dataset.worldX) - x;
-      const available = frame.clientWidth - title.offsetWidth - 20;
-      const clamp = Math.min(Math.max(0, 10 - screenStart), Math.max(0, available));
-      title.style.transform = `translateX(${clamp}px)`;
-    });
-    readout.textContent = playing ? `Following · +${Math.round(x)}px` : `Frozen · +${Math.round(x)}px`;
-    if (playing && progress === 1) {
-      playing = false;
-      pausedAt = duration;
-      toggle.textContent = 'Replay';
-      readout.textContent = 'Window advanced';
-    }
-    requestAnimationFrame(draw);
-  };
-  toggle.addEventListener('click', () => {
-    if (playing) {
-      pausedAt = performance.now() - started;
-      playing = false;
-      toggle.textContent = 'Resume motion';
-    } else if (pausedAt >= duration) {
-      pausedAt = 0;
-      started = performance.now();
-      playing = true;
-      toggle.textContent = 'Pause motion';
-    } else {
-      started = performance.now() - pausedAt;
-      playing = true;
-      toggle.textContent = 'Pause motion';
-    }
-  });
-  restart.addEventListener('click', () => {
-    pausedAt = 0;
-    started = performance.now();
-    playing = true;
-    toggle.textContent = 'Pause motion';
-  });
-  requestAnimationFrame(draw);
-</script>
-</body>
+      const draw = (now) => {
+        const elapsed = playing ? now - started : pausedAt;
+        const progress = Math.min(elapsed / duration, 1);
+        const x = progress * distance;
+        world.style.transform = `translateX(${-x}px)`;
+        childFrames.forEach((frame) => {
+          const title = frame.querySelector(':scope > .frame-title');
+          const screenStart = Number(frame.dataset.worldX) - x;
+          const available = frame.clientWidth - title.offsetWidth - 20;
+          const clamp = Math.min(
+            Math.max(0, 10 - screenStart),
+            Math.max(0, available),
+          );
+          title.style.transform = `translateX(${clamp}px)`;
+        });
+        readout.textContent = playing
+          ? `Following · +${Math.round(x)}px`
+          : `Frozen · +${Math.round(x)}px`;
+        if (playing && progress === 1) {
+          playing = false;
+          pausedAt = duration;
+          toggle.textContent = 'Replay';
+          readout.textContent = 'Window advanced';
+        }
+        requestAnimationFrame(draw);
+      };
+      toggle.addEventListener('click', () => {
+        if (playing) {
+          pausedAt = performance.now() - started;
+          playing = false;
+          toggle.textContent = 'Resume motion';
+        } else if (pausedAt >= duration) {
+          pausedAt = 0;
+          started = performance.now();
+          playing = true;
+          toggle.textContent = 'Pause motion';
+        } else {
+          started = performance.now() - pausedAt;
+          playing = true;
+          toggle.textContent = 'Pause motion';
+        }
+      });
+      restart.addEventListener('click', () => {
+        pausedAt = 0;
+        started = performance.now();
+        playing = true;
+        toggle.textContent = 'Pause motion';
+      });
+      requestAnimationFrame(draw);
+    </script>
+  </body>
 </html>

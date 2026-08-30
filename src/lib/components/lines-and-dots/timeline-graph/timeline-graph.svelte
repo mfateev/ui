@@ -29,6 +29,7 @@
   import {
     flattenWorkflowNodes,
     type TimelineChildEdge,
+    timelineRunKey,
   } from './recursive-timeline-model';
   import {
     getRecursiveTimelineContainmentLayout,
@@ -56,9 +57,8 @@
   import type { TimelineDisplayMode } from './types';
   import { syncTimelineViewport } from './viewport-lifecycle';
   import {
-    getWorkflowChainVerticalBounds,
+    getTimelineFrameVerticalLayout,
     getWorkflowFrameGeometry,
-    getWorkflowFrameVerticalBounds,
   } from './workflow-frame-geometry';
 
   import GroupDetailsRow from './group-details-row.svelte';
@@ -919,46 +919,22 @@
         }),
   );
 
-  function getFrameVerticalBounds(
-    span: { rowStart: number; rowEnd: number },
-    paddingPx = RADIUS,
-  ): {
-    topPx: number;
-    bottomPx: number;
-  } {
-    const bounds = getWorkflowFrameVerticalBounds({
-      ...span,
+  const frameVerticalLayout = $derived(
+    getTimelineFrameVerticalLayout({
+      runSpans: containmentLayout.runSpans,
+      workflowSpans: containmentLayout.workflowSpans,
       activeRowIndex,
       panelHeight,
-      paddingPx,
-    });
-    return {
-      topPx: bounds.topPx + TIMELINE_VERTICAL_PADDING,
-      bottomPx: bounds.bottomPx + TIMELINE_VERTICAL_PADDING,
-    };
-  }
+      verticalPaddingPx: TIMELINE_VERTICAL_PADDING,
+    }),
+  );
 
   const runFrameLayouts = $derived.by(() => {
-    const spansByRunKey = new Map(
-      containmentLayout.runSpans.map((span) => [span.key, span]),
-    );
-    const firstRunRowByWorkflow = new SvelteMap<string, number>();
-    for (const span of containmentLayout.runSpans) {
-      if (!span.workflowKey) continue;
-      const firstRow = firstRunRowByWorkflow.get(span.workflowKey);
-      if (firstRow === undefined || span.rowStart < firstRow) {
-        firstRunRowByWorkflow.set(span.workflowKey, span.rowStart);
-      }
-    }
     return participatingRunFrames.flatMap((candidate) => {
-      const span = spansByRunKey.get(
-        `${candidate.workflowKey}:run:${candidate.runId}`,
+      const vertical = frameVerticalLayout.runBoundsByKey.get(
+        timelineRunKey(candidate.workflowKey ?? '', candidate.runId),
       );
-      if (!span) return [];
-      const vertical = getFrameVerticalBounds(span, 0);
-      const hasPreviousRun =
-        span.workflowKey !== undefined &&
-        span.rowStart !== firstRunRowByWorkflow.get(span.workflowKey);
+      if (!vertical) return [];
       return [
         {
           candidate,
@@ -968,8 +944,8 @@
             viewportOffsetPx: viewport.offsetPx,
             viewportWidthPx: timelineWidth,
             gutterPx: GUTTER,
-            topPx: vertical.topPx + (hasPreviousRun ? RADIUS : 0),
-            bottomPx: vertical.bottomPx + RADIUS,
+            topPx: vertical.topPx,
+            bottomPx: vertical.bottomPx,
             startBoundaryKnown: candidate.startBoundaryKnown,
             endBoundaryKnown: candidate.endBoundaryKnown,
             labelInsetPx: 2 * RADIUS,
@@ -979,17 +955,11 @@
     });
   });
   const chainFrameLayouts = $derived.by(() => {
-    const spansByWorkflow = new Map(
-      containmentLayout.workflowSpans?.map((span) => [span.workflowKey, span]),
-    );
     return chainFrameCandidates.flatMap((candidate) => {
-      const span = spansByWorkflow.get(candidate.workflowKey ?? '');
-      if (!span) return [];
-      const vertical = getFrameVerticalBounds(span);
-      const chainVertical = getWorkflowChainVerticalBounds({
-        ...vertical,
-        depth: candidate.depth ?? 0,
-      });
+      const vertical = frameVerticalLayout.workflowBoundsByKey.get(
+        candidate.workflowKey ?? '',
+      );
+      if (!vertical) return [];
       return [
         {
           candidate,
@@ -999,8 +969,8 @@
             viewportOffsetPx: viewport.offsetPx,
             viewportWidthPx: timelineWidth,
             gutterPx: GUTTER,
-            topPx: chainVertical.topPx,
-            bottomPx: chainVertical.bottomPx,
+            topPx: vertical.topPx,
+            bottomPx: vertical.bottomPx,
             startBoundaryKnown: candidate.startBoundaryKnown,
             endBoundaryKnown: candidate.endBoundaryKnown,
             labelInsetPx: 2 * RADIUS,

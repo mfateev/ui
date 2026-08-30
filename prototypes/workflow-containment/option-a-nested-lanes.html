@@ -1,40 +1,293 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Option A — Nested workflow lanes</title><link rel="stylesheet" href="common.css"></head>
-<body>
-<div class="app">
-  <aside class="sidebar"><div class="brand"><i class="brand-mark"></i> Web UI</div><nav><a class="nav-item" href="#"><span class="nav-icon">◇</span>Namespaces</a><a class="nav-item active" href="#"><span class="nav-icon">◎</span>Workflows</a><a class="nav-item" href="#"><span class="nav-icon">◇</span>Standalone Activities</a><a class="nav-item" href="#"><span class="nav-icon">◷</span>Schedules</a><a class="nav-item" href="#"><span class="nav-icon">▱</span>Batch</a><a class="nav-item" href="#"><span class="nav-icon">⚙</span>Workers</a></nav><div class="sidebar-foot">STATIC DESIGN PROTOTYPE</div></aside>
-  <main class="main"><header class="topbar"><div class="namespace">◉ &nbsp; default</div><div class="top-actions">◷ local⌄ &nbsp; ◇ &nbsp; ◉⌄</div></header>
-    <div class="content"><a class="back" href="index.html">‹ All design options</a>
-      <div class="workflow-heading"><div class="title-wrap"><span class="status">Running</span><h1>order-2026-1842</h1></div><div><button class="header-button primary">Pause</button><button class="header-button">More Actions⌄</button></div></div>
-      <div class="metadata"><div><span>Start</span><strong>Aug 30, 2026, 9:41:06 UTC</strong><span>Duration</span><strong>19s</strong></div><div><span>Run ID</span><strong>6684a0b2…f932</strong><span>Type</span><strong>OrderFulfillmentWorkflow</strong></div><div><span>History Size</span><strong>8.4 KB</strong><span>Task Queue</span><strong>orders-v3</strong></div></div>
-      <div class="tabs"><span class="tab active">Timeline</span><span class="tab">Event History <b>34</b></span><span class="tab">Relationships <b>2</b></span><span class="tab">Workers</span><span class="tab">Pending Activities <b>1</b></span><span class="tab">Call Stack</span></div>
-      <div class="prototype-intro"><div><h2>Option A: Nested workflow lanes</h2><p>A workflow becomes an expandable structural row followed by the actions it owns. A child workflow uses exactly the same component, nested one level deeper. Collapse either workflow to reduce noise.</p></div><span class="concept-badge">Recommended starting point</span></div>
-      <nav class="prototype-nav"><a href="index.html">Overview</a><a class="current" href="option-a-nested-lanes.html">A · Nested lanes</a><a href="option-b-brackets.html">B · Brackets</a><a href="option-c-frames.html">C · Frames</a></nav>
-      <section class="timeline-card lanes">
-        <div class="timeline-toolbar"><h3>Timeline</h3><div class="toolbar-actions"><button>Descending⌄</button><button>Hide idle time</button><button>Filter</button><button>Auto Refresh On</button></div></div>
-        <div class="axis"><span>0s</span><span>3s</span><span>6s</span><span>9s</span><span>12s</span><span>15s</span><span>18s</span><span>21s</span><span>24s</span></div>
-        <div class="lane" data-collapsed="false">
-          <div class="lane-header"><div class="lane-header-label"><button class="chevron" data-toggle-lane aria-expanded="true">⌄</button><span class="dot workflow" style="position:relative;left:auto;top:auto;transform:none;flex:0 0 auto"></span><strong>OrderFulfillmentWorkflow</strong><span class="level-pill">root</span></div><div class="lane-span time-grid" style="--start:2%;--end:97%"><span class="run-label">run 6684a0b2…f932</span><i class="end-cap"></i></div></div>
-          <div class="event-row"><div class="name">↳ Validate order</div><div class="track time-grid"><i class="bar activity" style="left:5%;width:12%"></i><i class="dot activity" style="left:5%"></i><i class="dot completed" style="left:17%"></i><span class="event-label" style="left:6%;">validateOrder</span></div></div>
-          <div class="event-row"><div class="name">↳ Reserve inventory</div><div class="track time-grid"><i class="bar activity" style="left:18%;width:19%"></i><i class="dot activity" style="left:18%"></i><i class="dot completed" style="left:37%"></i><span class="event-label above" style="left:20%">reserveInventory</span></div></div>
-          <div class="lane child" data-collapsed="false">
-            <div class="lane-header"><div class="lane-header-label"><button class="chevron" data-toggle-lane aria-expanded="true">⌄</button><span class="dot workflow" style="position:relative;left:auto;top:auto;transform:none;flex:0 0 auto"></span><strong>PaymentWorkflow</strong><span class="level-pill">child</span></div><div class="lane-span time-grid" style="--start:27%;--end:78%"><span class="run-label">payment-order-1842</span><i class="end-cap"></i></div></div>
-            <div class="event-row"><div class="name">↳ Tokenize card</div><div class="track time-grid"><i class="bar activity" style="left:30%;width:10%"></i><i class="dot activity" style="left:30%"></i><i class="dot completed" style="left:40%"></i><span class="event-label" style="left:31%">tokenizeCard</span></div></div>
-            <div class="event-row"><div class="name">↳ Fraud check</div><div class="track time-grid"><i class="bar activity" style="left:42%;width:15%"></i><i class="dot activity" style="left:42%"></i><i class="dot completed" style="left:57%"></i><span class="event-label above" style="left:43%">checkFraud</span></div></div>
-            <div class="event-row"><div class="name">↳ Capture payment</div><div class="track time-grid"><i class="bar activity" style="left:59%;width:16%"></i><i class="dot activity" style="left:59%"></i><i class="dot completed" style="left:75%"></i><span class="event-label" style="left:60%">capturePayment</span></div></div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Option A — Nested workflow lanes</title>
+    <link rel="stylesheet" href="common.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand"><i class="brand-mark"></i> Web UI</div>
+        <nav>
+          <a class="nav-item" href="#"
+            ><span class="nav-icon">◇</span>Namespaces</a
+          ><a class="nav-item active" href="#"
+            ><span class="nav-icon">◎</span>Workflows</a
+          ><a class="nav-item" href="#"
+            ><span class="nav-icon">◇</span>Standalone Activities</a
+          ><a class="nav-item" href="#"
+            ><span class="nav-icon">◷</span>Schedules</a
+          ><a class="nav-item" href="#"><span class="nav-icon">▱</span>Batch</a
+          ><a class="nav-item" href="#"
+            ><span class="nav-icon">⚙</span>Workers</a
+          >
+        </nav>
+        <div class="sidebar-foot">STATIC DESIGN PROTOTYPE</div>
+      </aside>
+      <main class="main">
+        <header class="topbar">
+          <div class="namespace">◉ &nbsp; default</div>
+          <div class="top-actions">◷ local⌄ &nbsp; ◇ &nbsp; ◉⌄</div>
+        </header>
+        <div class="content">
+          <a class="back" href="index.html">‹ All design options</a>
+          <div class="workflow-heading">
+            <div class="title-wrap">
+              <span class="status">Running</span>
+              <h1>order-2026-1842</h1>
+            </div>
+            <div>
+              <button class="header-button primary">Pause</button
+              ><button class="header-button">More Actions⌄</button>
+            </div>
           </div>
-          <div class="event-row"><div class="name">↳ Wait for packing</div><div class="track time-grid"><i class="bar timer" style="left:39%;width:45%"></i><i class="dot timer" style="left:39%"></i><i class="dot completed" style="left:84%"></i><span class="event-label above" style="left:58%">packing timeout</span></div></div>
-          <div class="lane child" data-collapsed="false">
-            <div class="lane-header"><div class="lane-header-label"><button class="chevron" data-toggle-lane aria-expanded="true">⌄</button><span class="dot workflow" style="position:relative;left:auto;top:auto;transform:none;flex:0 0 auto"></span><strong>InvoiceWorkflow</strong><span class="level-pill">child</span></div><div class="lane-span time-grid" style="--start:73%;--end:94%"><span class="run-label">invoice-order-1842</span><i class="end-cap"></i></div></div>
-            <div class="event-row"><div class="name">↳ Generate PDF</div><div class="track time-grid"><i class="bar activity" style="left:76%;width:15%"></i><i class="dot activity" style="left:76%"></i><i class="dot completed" style="left:91%"></i><span class="event-label above" style="left:77%">generateInvoice</span></div></div>
+          <div class="metadata">
+            <div>
+              <span>Start</span><strong>Aug 30, 2026, 9:41:06 UTC</strong
+              ><span>Duration</span><strong>19s</strong>
+            </div>
+            <div>
+              <span>Run ID</span><strong>6684a0b2…f932</strong><span>Type</span
+              ><strong>OrderFulfillmentWorkflow</strong>
+            </div>
+            <div>
+              <span>History Size</span><strong>8.4 KB</strong
+              ><span>Task Queue</span><strong>orders-v3</strong>
+            </div>
           </div>
-          <div class="event-row"><div class="name">↳ Send confirmation</div><div class="track time-grid"><i class="bar activity" style="left:86%;width:9%"></i><i class="dot activity" style="left:86%"></i><i class="dot completed" style="left:95%"></i><span class="event-label" style="left:85%">notify</span></div></div>
+          <div class="tabs">
+            <span class="tab active">Timeline</span
+            ><span class="tab">Event History <b>34</b></span
+            ><span class="tab">Relationships <b>2</b></span
+            ><span class="tab">Workers</span
+            ><span class="tab">Pending Activities <b>1</b></span
+            ><span class="tab">Call Stack</span>
+          </div>
+          <div class="prototype-intro">
+            <div>
+              <h2>Option A: Nested workflow lanes</h2>
+              <p>
+                A workflow becomes an expandable structural row followed by the
+                actions it owns. A child workflow uses exactly the same
+                component, nested one level deeper. Collapse either workflow to
+                reduce noise.
+              </p>
+            </div>
+            <span class="concept-badge">Recommended starting point</span>
+          </div>
+          <nav class="prototype-nav">
+            <a href="index.html">Overview</a
+            ><a class="current" href="option-a-nested-lanes.html"
+              >A · Nested lanes</a
+            ><a href="option-b-brackets.html">B · Brackets</a
+            ><a href="option-c-frames.html">C · Frames</a>
+          </nav>
+          <section class="timeline-card lanes">
+            <div class="timeline-toolbar">
+              <h3>Timeline</h3>
+              <div class="toolbar-actions">
+                <button>Descending⌄</button><button>Hide idle time</button
+                ><button>Filter</button><button>Auto Refresh On</button>
+              </div>
+            </div>
+            <div class="axis">
+              <span>0s</span><span>3s</span><span>6s</span><span>9s</span
+              ><span>12s</span><span>15s</span><span>18s</span><span>21s</span
+              ><span>24s</span>
+            </div>
+            <div class="lane" data-collapsed="false">
+              <div class="lane-header">
+                <div class="lane-header-label">
+                  <button class="chevron" data-toggle-lane aria-expanded="true">
+                    ⌄</button
+                  ><span
+                    class="dot workflow"
+                    style="
+                      position: relative;
+                      left: auto;
+                      top: auto;
+                      transform: none;
+                      flex: 0 0 auto;
+                    "
+                  ></span
+                  ><strong>OrderFulfillmentWorkflow</strong
+                  ><span class="level-pill">root</span>
+                </div>
+                <div
+                  class="lane-span time-grid"
+                  style="--start: 2%; --end: 97%"
+                >
+                  <span class="run-label">run 6684a0b2…f932</span
+                  ><i class="end-cap"></i>
+                </div>
+              </div>
+              <div class="event-row">
+                <div class="name">↳ Validate order</div>
+                <div class="track time-grid">
+                  <i class="bar activity" style="left: 5%; width: 12%"></i
+                  ><i class="dot activity" style="left: 5%"></i
+                  ><i class="dot completed" style="left: 17%"></i
+                  ><span class="event-label" style="left: 6%"
+                    >validateOrder</span
+                  >
+                </div>
+              </div>
+              <div class="event-row">
+                <div class="name">↳ Reserve inventory</div>
+                <div class="track time-grid">
+                  <i class="bar activity" style="left: 18%; width: 19%"></i
+                  ><i class="dot activity" style="left: 18%"></i
+                  ><i class="dot completed" style="left: 37%"></i
+                  ><span class="event-label above" style="left: 20%"
+                    >reserveInventory</span
+                  >
+                </div>
+              </div>
+              <div class="lane child" data-collapsed="false">
+                <div class="lane-header">
+                  <div class="lane-header-label">
+                    <button
+                      class="chevron"
+                      data-toggle-lane
+                      aria-expanded="true"
+                    >
+                      ⌄</button
+                    ><span
+                      class="dot workflow"
+                      style="
+                        position: relative;
+                        left: auto;
+                        top: auto;
+                        transform: none;
+                        flex: 0 0 auto;
+                      "
+                    ></span
+                    ><strong>PaymentWorkflow</strong
+                    ><span class="level-pill">child</span>
+                  </div>
+                  <div
+                    class="lane-span time-grid"
+                    style="--start: 27%; --end: 78%"
+                  >
+                    <span class="run-label">payment-order-1842</span
+                    ><i class="end-cap"></i>
+                  </div>
+                </div>
+                <div class="event-row">
+                  <div class="name">↳ Tokenize card</div>
+                  <div class="track time-grid">
+                    <i class="bar activity" style="left: 30%; width: 10%"></i
+                    ><i class="dot activity" style="left: 30%"></i
+                    ><i class="dot completed" style="left: 40%"></i
+                    ><span class="event-label" style="left: 31%"
+                      >tokenizeCard</span
+                    >
+                  </div>
+                </div>
+                <div class="event-row">
+                  <div class="name">↳ Fraud check</div>
+                  <div class="track time-grid">
+                    <i class="bar activity" style="left: 42%; width: 15%"></i
+                    ><i class="dot activity" style="left: 42%"></i
+                    ><i class="dot completed" style="left: 57%"></i
+                    ><span class="event-label above" style="left: 43%"
+                      >checkFraud</span
+                    >
+                  </div>
+                </div>
+                <div class="event-row">
+                  <div class="name">↳ Capture payment</div>
+                  <div class="track time-grid">
+                    <i class="bar activity" style="left: 59%; width: 16%"></i
+                    ><i class="dot activity" style="left: 59%"></i
+                    ><i class="dot completed" style="left: 75%"></i
+                    ><span class="event-label" style="left: 60%"
+                      >capturePayment</span
+                    >
+                  </div>
+                </div>
+              </div>
+              <div class="event-row">
+                <div class="name">↳ Wait for packing</div>
+                <div class="track time-grid">
+                  <i class="bar timer" style="left: 39%; width: 45%"></i
+                  ><i class="dot timer" style="left: 39%"></i
+                  ><i class="dot completed" style="left: 84%"></i
+                  ><span class="event-label above" style="left: 58%"
+                    >packing timeout</span
+                  >
+                </div>
+              </div>
+              <div class="lane child" data-collapsed="false">
+                <div class="lane-header">
+                  <div class="lane-header-label">
+                    <button
+                      class="chevron"
+                      data-toggle-lane
+                      aria-expanded="true"
+                    >
+                      ⌄</button
+                    ><span
+                      class="dot workflow"
+                      style="
+                        position: relative;
+                        left: auto;
+                        top: auto;
+                        transform: none;
+                        flex: 0 0 auto;
+                      "
+                    ></span
+                    ><strong>InvoiceWorkflow</strong
+                    ><span class="level-pill">child</span>
+                  </div>
+                  <div
+                    class="lane-span time-grid"
+                    style="--start: 73%; --end: 94%"
+                  >
+                    <span class="run-label">invoice-order-1842</span
+                    ><i class="end-cap"></i>
+                  </div>
+                </div>
+                <div class="event-row">
+                  <div class="name">↳ Generate PDF</div>
+                  <div class="track time-grid">
+                    <i class="bar activity" style="left: 76%; width: 15%"></i
+                    ><i class="dot activity" style="left: 76%"></i
+                    ><i class="dot completed" style="left: 91%"></i
+                    ><span class="event-label above" style="left: 77%"
+                      >generateInvoice</span
+                    >
+                  </div>
+                </div>
+              </div>
+              <div class="event-row">
+                <div class="name">↳ Send confirmation</div>
+                <div class="track time-grid">
+                  <i class="bar activity" style="left: 86%; width: 9%"></i
+                  ><i class="dot activity" style="left: 86%"></i
+                  ><i class="dot completed" style="left: 95%"></i
+                  ><span class="event-label" style="left: 85%">notify</span>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <span style="--swatch: #d8f9ed">Workflow duration</span
+              ><span style="--swatch: #a78bfa">Activity</span
+              ><span style="--swatch: #fbbf24">Timer</span
+              ><span style="--swatch: #21dfa1">Completed</span>
+            </div>
+          </section>
+          <div class="callout">
+            <strong>Why it works:</strong> workflow is no longer a peer of
+            <em>validateOrder</em> or <em>packing timeout</em>. It owns a
+            section. Child workflows reuse that section recursively, making
+            “root” and “child” contextual labels rather than different entities.
+          </div>
         </div>
-        <div class="legend"><span style="--swatch:#d8f9ed">Workflow duration</span><span style="--swatch:#a78bfa">Activity</span><span style="--swatch:#fbbf24">Timer</span><span style="--swatch:#21dfa1">Completed</span></div>
-      </section>
-      <div class="callout"><strong>Why it works:</strong> workflow is no longer a peer of <em>validateOrder</em> or <em>packing timeout</em>. It owns a section. Child workflows reuse that section recursively, making “root” and “child” contextual labels rather than different entities.</div>
+      </main>
     </div>
-  </main>
-</div><script src="common.js"></script>
-</body></html>
+    <script src="common.js"></script>
+  </body>
+</html>

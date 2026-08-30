@@ -190,13 +190,8 @@ export class RecursiveWorkflowSession {
   evict(edgeKey: string): void {
     const found = this.findEdge(edgeKey);
     if (!found || found.edge.load.state !== 'loaded') return;
-    const data = countNodeData(found.edge.load.node);
-    this.retained.nodes = Math.max(0, this.retained.nodes - 1);
-    this.retained.runs = Math.max(0, this.retained.runs - data.runs);
-    this.retained.groups = Math.max(0, this.retained.groups - data.groups);
-    this.retained.events = Math.max(0, this.retained.events - data.events);
-    this.loadedByExecutionKey.delete(childExecutionKey(found.edge.reference));
     found.edge.load = { state: 'evicted' };
+    this.rebuildLoadedIndex();
     this.changed();
   }
 
@@ -492,19 +487,6 @@ export class RecursiveWorkflowSession {
   }
 
   private commitLoaded(task: QueueTask, result: LoadedChildWorkflow): void {
-    if (task.previousNode) {
-      const previous = countNodeData(task.previousNode);
-      this.retained.nodes = Math.max(0, this.retained.nodes - 1);
-      this.retained.runs = Math.max(0, this.retained.runs - previous.runs);
-      this.retained.groups = Math.max(
-        0,
-        this.retained.groups - previous.groups,
-      );
-      this.retained.events = Math.max(
-        0,
-        this.retained.events - previous.events,
-      );
-    }
     const mergedRuns = task.previousNode
       ? task.mergePreviousRuns
         ? [...task.previousNode.runs, result.run]
@@ -515,18 +497,22 @@ export class RecursiveWorkflowSession {
           : [...task.previousNode.runs, result.run]
       : [result.run];
     const runTruncated = mergedRuns.length > this.limits.maximumRunsPerNode;
-    const node = this.createNode({
-      namespace: task.reference.namespace,
-      workflow: result.workflow,
-      runs: mergedRuns.slice(-this.limits.maximumRunsPerNode),
-      depth: Math.min(...[...task.edges].map((edge) => edge.depth)),
-    });
-    this.loadedByExecutionKey.set(task.key, node);
-    for (const edge of task.edges) {
-      this.loadedByExecutionKey.set(childExecutionKey(edge.reference), node);
+    const runs = mergedRuns.slice(-this.limits.maximumRunsPerNode);
+    const depth = Math.min(...[...task.edges].map((edge) => edge.depth));
+    let node = task.previousNode;
+    if (node) {
+      node.workflow = result.workflow;
+      node.runs = runs;
+      node.depth = depth;
+      this.discoverEdges(node);
+    } else {
+      node = this.createNode({
+        namespace: task.reference.namespace,
+        workflow: result.workflow,
+        runs,
+        depth,
+      });
     }
-    const data = countNodeData(node);
-    this.add(this.retained, { nodes: 1, ...data });
     for (const edge of task.edges) {
       edge.load = {
         state: 'loaded',
@@ -534,6 +520,43 @@ export class RecursiveWorkflowSession {
         truncation: runTruncated ? { reason: 'run-limit' } : result.truncation,
       };
     }
+    this.rebuildLoadedIndex();
+  }
+
+  private rebuildLoadedIndex(): void {
+    const aliases = new SvelteMap<string, TimelineWorkflowNode>();
+    const visited = new SvelteSet<TimelineWorkflowNode>();
+    const retained = emptyReservation();
+    const visit = (node: TimelineWorkflowNode): void => {
+      if (visited.has(node)) return;
+      visited.add(node);
+      if (node !== this.rootNode) {
+        const data = countNodeData(node);
+        this.add(retained, { nodes: 1, ...data });
+        aliases.set(node.key, node);
+        for (const run of node.runs) {
+          aliases.set(
+            childExecutionKey({
+              namespace: node.namespace,
+              workflowId: node.workflowId,
+              runId: run.runId,
+            }),
+            node,
+          );
+        }
+      }
+      for (const edge of node.childrenByGroupKey.values()) {
+        if (edge.load.state !== 'loaded') continue;
+        aliases.set(childExecutionKey(edge.reference), edge.load.node);
+        visit(edge.load.node);
+      }
+    };
+    visit(this.rootNode);
+    this.loadedByExecutionKey.clear();
+    for (const [key, node] of aliases) {
+      this.loadedByExecutionKey.set(key, node);
+    }
+    this.retained = retained;
   }
 
   private enqueueKnownSuccessors(task: QueueTask): void {

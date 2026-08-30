@@ -1,36 +1,283 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Option B — Hierarchy brackets</title><link rel="stylesheet" href="common.css"></head>
-<body><div class="app">
-<aside class="sidebar"><div class="brand"><i class="brand-mark"></i> Web UI</div><nav><a class="nav-item" href="#"><span class="nav-icon">◇</span>Namespaces</a><a class="nav-item active" href="#"><span class="nav-icon">◎</span>Workflows</a><a class="nav-item" href="#"><span class="nav-icon">◇</span>Standalone Activities</a><a class="nav-item" href="#"><span class="nav-icon">◷</span>Schedules</a><a class="nav-item" href="#"><span class="nav-icon">▱</span>Batch</a><a class="nav-item" href="#"><span class="nav-icon">⚙</span>Workers</a></nav><div class="sidebar-foot">STATIC DESIGN PROTOTYPE</div></aside>
-<main class="main"><header class="topbar"><div class="namespace">◉ &nbsp; default</div><div class="top-actions">◷ local⌄ &nbsp; ◇ &nbsp; ◉⌄</div></header><div class="content">
-<a class="back" href="index.html">‹ All design options</a><div class="workflow-heading"><div class="title-wrap"><span class="status">Running</span><h1>order-2026-1842</h1></div><div><button class="header-button primary">Pause</button><button class="header-button">More Actions⌄</button></div></div>
-<div class="metadata"><div><span>Start</span><strong>Aug 30, 2026, 9:41:06 UTC</strong><span>Duration</span><strong>19s</strong></div><div><span>Run ID</span><strong>6684a0b2…f932</strong><span>Type</span><strong>OrderFulfillmentWorkflow</strong></div><div><span>History Size</span><strong>8.4 KB</strong><span>Task Queue</span><strong>orders-v3</strong></div></div>
-<div class="tabs"><span class="tab active">Timeline</span><span class="tab">Event History <b>34</b></span><span class="tab">Relationships <b>2</b></span><span class="tab">Workers</span><span class="tab">Pending Activities <b>1</b></span><span class="tab">Call Stack</span></div>
-<div class="prototype-intro"><div><h2>Option B: Hierarchy brackets</h2><p>Workflow identity moves to a hierarchy rail. Each bracket groups the action rows owned by that workflow while a subtle duration wash repeats the same scope on the time axis. This keeps event rows maximally dense.</p></div><span class="concept-badge">Most compact</span></div>
-<nav class="prototype-nav"><a href="index.html">Overview</a><a href="option-a-nested-lanes.html">A · Nested lanes</a><a class="current" href="option-b-brackets.html">B · Brackets</a><a href="option-c-frames.html">C · Frames</a></nav>
-<section class="timeline-card"><div class="timeline-toolbar"><h3>Timeline</h3><div class="toolbar-actions"><button>Descending⌄</button><button>Hide idle time</button><button>Filter</button><button>Auto Refresh On</button></div></div>
-<div class="axis" style="--label-width:300px"><span>0s</span><span>3s</span><span>6s</span><span>9s</span><span>12s</span><span>15s</span><span>18s</span><span>21s</span><span>24s</span></div>
-<div class="bracket-view">
-  <div class="outline">
-    <div class="scope-label" style="--indent:14px;--top:8px;--height:445px;--scope-color:#159b71"><div class="scope-copy"><strong>OrderFulfillmentWorkflow</strong><span>run 6684a0b2…f932 · Running</span></div></div>
-    <div class="scope-label" style="--indent:42px;--top:92px;--height:159px;--scope-color:#0e7490"><div class="scope-copy"><strong>PaymentWorkflow</strong><span>payment-order-1842 · Completed</span></div></div>
-    <div class="scope-label" style="--indent:42px;--top:301px;--height:75px;--scope-color:#0e7490"><div class="scope-copy"><strong>InvoiceWorkflow</strong><span>invoice-order-1842 · Completed</span></div></div>
-  </div>
-  <div class="bracket-tracks time-grid">
-    <div class="scope-wash" style="--start:2%;--end:97%;--top:8px;--height:445px;--scope-color:#159b71"></div>
-    <div class="scope-wash" style="--start:27%;--end:78%;--top:92px;--height:159px;--scope-color:#0e7490"></div>
-    <div class="scope-wash" style="--start:73%;--end:94%;--top:301px;--height:75px;--scope-color:#0e7490"></div>
-    <div class="bracket-event" style="top:8px"><span class="kind">Root · activity</span><i class="bar activity" style="left:5%;width:12%"></i><i class="dot activity" style="left:5%"></i><i class="dot completed" style="left:17%"></i><span class="event-label" style="left:6%;top:61%">validateOrder</span></div>
-    <div class="bracket-event" style="top:50px"><span class="kind">Root · activity</span><i class="bar activity" style="left:18%;width:19%"></i><i class="dot activity" style="left:18%"></i><i class="dot completed" style="left:37%"></i><span class="event-label" style="left:20%;top:61%">reserveInventory</span></div>
-    <div class="bracket-event" style="top:92px"><span class="kind">Payment · activity</span><i class="bar activity" style="left:30%;width:10%"></i><i class="dot activity" style="left:30%"></i><i class="dot completed" style="left:40%"></i><span class="event-label" style="left:31%;top:61%">tokenizeCard</span></div>
-    <div class="bracket-event" style="top:134px"><span class="kind">Payment · activity</span><i class="bar activity" style="left:42%;width:15%"></i><i class="dot activity" style="left:42%"></i><i class="dot completed" style="left:57%"></i><span class="event-label" style="left:43%;top:61%">checkFraud</span></div>
-    <div class="bracket-event" style="top:176px"><span class="kind">Payment · activity</span><i class="bar activity" style="left:59%;width:16%"></i><i class="dot activity" style="left:59%"></i><i class="dot completed" style="left:75%"></i><span class="event-label" style="left:60%;top:61%">capturePayment</span></div>
-    <div class="bracket-event" style="top:218px"><span class="kind">Root · timer</span><i class="bar timer" style="left:39%;width:45%"></i><i class="dot timer" style="left:39%"></i><i class="dot completed" style="left:84%"></i><span class="event-label" style="left:55%;top:61%">packing timeout</span></div>
-    <div class="bracket-event" style="top:260px"><span class="kind">Root · signal</span><i class="bar signal" style="left:65%;width:3%"></i><i class="dot signal" style="left:68%"></i><span class="event-label" style="left:69%;top:61%">packingReady</span></div>
-    <div class="bracket-event" style="top:302px"><span class="kind">Invoice · activity</span><i class="bar activity" style="left:76%;width:15%"></i><i class="dot activity" style="left:76%"></i><i class="dot completed" style="left:91%"></i><span class="event-label" style="left:77%;top:61%">generateInvoice</span></div>
-    <div class="bracket-event" style="top:344px"><span class="kind">Root · activity</span><i class="bar activity" style="left:86%;width:9%"></i><i class="dot activity" style="left:86%"></i><i class="dot completed" style="left:95%"></i><span class="event-label" style="left:84%;top:61%">notify</span></div>
-    <div class="bracket-event" style="top:386px"><span class="kind">Root · workflow task</span><i class="bar workflow" style="left:94%;width:3%"></i><i class="dot workflow" style="left:94%"></i><i class="dot completed" style="left:97%"></i><span class="event-label" style="left:84%;top:61%">complete order</span></div>
-  </div>
-</div><div class="legend"><span style="--swatch:#159b71">Workflow scope</span><span style="--swatch:#0e7490">Nested workflow scope</span><span style="--swatch:#a78bfa">Activity</span><span style="--swatch:#fbbf24">Timer</span></div></section>
-<div class="callout"><strong>Why it works:</strong> workflows are never plotted as event bars. They are persistent structural scopes spanning all owned rows. The tradeoff is that duration and ownership are split across two places: the bracket rail and the shaded time range.</div>
-</div></main></div></body></html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Option B — Hierarchy brackets</title>
+    <link rel="stylesheet" href="common.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand"><i class="brand-mark"></i> Web UI</div>
+        <nav>
+          <a class="nav-item" href="#"
+            ><span class="nav-icon">◇</span>Namespaces</a
+          ><a class="nav-item active" href="#"
+            ><span class="nav-icon">◎</span>Workflows</a
+          ><a class="nav-item" href="#"
+            ><span class="nav-icon">◇</span>Standalone Activities</a
+          ><a class="nav-item" href="#"
+            ><span class="nav-icon">◷</span>Schedules</a
+          ><a class="nav-item" href="#"><span class="nav-icon">▱</span>Batch</a
+          ><a class="nav-item" href="#"
+            ><span class="nav-icon">⚙</span>Workers</a
+          >
+        </nav>
+        <div class="sidebar-foot">STATIC DESIGN PROTOTYPE</div>
+      </aside>
+      <main class="main">
+        <header class="topbar">
+          <div class="namespace">◉ &nbsp; default</div>
+          <div class="top-actions">◷ local⌄ &nbsp; ◇ &nbsp; ◉⌄</div>
+        </header>
+        <div class="content">
+          <a class="back" href="index.html">‹ All design options</a>
+          <div class="workflow-heading">
+            <div class="title-wrap">
+              <span class="status">Running</span>
+              <h1>order-2026-1842</h1>
+            </div>
+            <div>
+              <button class="header-button primary">Pause</button
+              ><button class="header-button">More Actions⌄</button>
+            </div>
+          </div>
+          <div class="metadata">
+            <div>
+              <span>Start</span><strong>Aug 30, 2026, 9:41:06 UTC</strong
+              ><span>Duration</span><strong>19s</strong>
+            </div>
+            <div>
+              <span>Run ID</span><strong>6684a0b2…f932</strong><span>Type</span
+              ><strong>OrderFulfillmentWorkflow</strong>
+            </div>
+            <div>
+              <span>History Size</span><strong>8.4 KB</strong
+              ><span>Task Queue</span><strong>orders-v3</strong>
+            </div>
+          </div>
+          <div class="tabs">
+            <span class="tab active">Timeline</span
+            ><span class="tab">Event History <b>34</b></span
+            ><span class="tab">Relationships <b>2</b></span
+            ><span class="tab">Workers</span
+            ><span class="tab">Pending Activities <b>1</b></span
+            ><span class="tab">Call Stack</span>
+          </div>
+          <div class="prototype-intro">
+            <div>
+              <h2>Option B: Hierarchy brackets</h2>
+              <p>
+                Workflow identity moves to a hierarchy rail. Each bracket groups
+                the action rows owned by that workflow while a subtle duration
+                wash repeats the same scope on the time axis. This keeps event
+                rows maximally dense.
+              </p>
+            </div>
+            <span class="concept-badge">Most compact</span>
+          </div>
+          <nav class="prototype-nav">
+            <a href="index.html">Overview</a
+            ><a href="option-a-nested-lanes.html">A · Nested lanes</a
+            ><a class="current" href="option-b-brackets.html">B · Brackets</a
+            ><a href="option-c-frames.html">C · Frames</a>
+          </nav>
+          <section class="timeline-card">
+            <div class="timeline-toolbar">
+              <h3>Timeline</h3>
+              <div class="toolbar-actions">
+                <button>Descending⌄</button><button>Hide idle time</button
+                ><button>Filter</button><button>Auto Refresh On</button>
+              </div>
+            </div>
+            <div class="axis" style="--label-width: 300px">
+              <span>0s</span><span>3s</span><span>6s</span><span>9s</span
+              ><span>12s</span><span>15s</span><span>18s</span><span>21s</span
+              ><span>24s</span>
+            </div>
+            <div class="bracket-view">
+              <div class="outline">
+                <div
+                  class="scope-label"
+                  style="
+                    --indent: 14px;
+                    --top: 8px;
+                    --height: 445px;
+                    --scope-color: #159b71;
+                  "
+                >
+                  <div class="scope-copy">
+                    <strong>OrderFulfillmentWorkflow</strong
+                    ><span>run 6684a0b2…f932 · Running</span>
+                  </div>
+                </div>
+                <div
+                  class="scope-label"
+                  style="
+                    --indent: 42px;
+                    --top: 92px;
+                    --height: 159px;
+                    --scope-color: #0e7490;
+                  "
+                >
+                  <div class="scope-copy">
+                    <strong>PaymentWorkflow</strong
+                    ><span>payment-order-1842 · Completed</span>
+                  </div>
+                </div>
+                <div
+                  class="scope-label"
+                  style="
+                    --indent: 42px;
+                    --top: 301px;
+                    --height: 75px;
+                    --scope-color: #0e7490;
+                  "
+                >
+                  <div class="scope-copy">
+                    <strong>InvoiceWorkflow</strong
+                    ><span>invoice-order-1842 · Completed</span>
+                  </div>
+                </div>
+              </div>
+              <div class="bracket-tracks time-grid">
+                <div
+                  class="scope-wash"
+                  style="
+                    --start: 2%;
+                    --end: 97%;
+                    --top: 8px;
+                    --height: 445px;
+                    --scope-color: #159b71;
+                  "
+                ></div>
+                <div
+                  class="scope-wash"
+                  style="
+                    --start: 27%;
+                    --end: 78%;
+                    --top: 92px;
+                    --height: 159px;
+                    --scope-color: #0e7490;
+                  "
+                ></div>
+                <div
+                  class="scope-wash"
+                  style="
+                    --start: 73%;
+                    --end: 94%;
+                    --top: 301px;
+                    --height: 75px;
+                    --scope-color: #0e7490;
+                  "
+                ></div>
+                <div class="bracket-event" style="top: 8px">
+                  <span class="kind">Root · activity</span
+                  ><i class="bar activity" style="left: 5%; width: 12%"></i
+                  ><i class="dot activity" style="left: 5%"></i
+                  ><i class="dot completed" style="left: 17%"></i
+                  ><span class="event-label" style="left: 6%; top: 61%"
+                    >validateOrder</span
+                  >
+                </div>
+                <div class="bracket-event" style="top: 50px">
+                  <span class="kind">Root · activity</span
+                  ><i class="bar activity" style="left: 18%; width: 19%"></i
+                  ><i class="dot activity" style="left: 18%"></i
+                  ><i class="dot completed" style="left: 37%"></i
+                  ><span class="event-label" style="left: 20%; top: 61%"
+                    >reserveInventory</span
+                  >
+                </div>
+                <div class="bracket-event" style="top: 92px">
+                  <span class="kind">Payment · activity</span
+                  ><i class="bar activity" style="left: 30%; width: 10%"></i
+                  ><i class="dot activity" style="left: 30%"></i
+                  ><i class="dot completed" style="left: 40%"></i
+                  ><span class="event-label" style="left: 31%; top: 61%"
+                    >tokenizeCard</span
+                  >
+                </div>
+                <div class="bracket-event" style="top: 134px">
+                  <span class="kind">Payment · activity</span
+                  ><i class="bar activity" style="left: 42%; width: 15%"></i
+                  ><i class="dot activity" style="left: 42%"></i
+                  ><i class="dot completed" style="left: 57%"></i
+                  ><span class="event-label" style="left: 43%; top: 61%"
+                    >checkFraud</span
+                  >
+                </div>
+                <div class="bracket-event" style="top: 176px">
+                  <span class="kind">Payment · activity</span
+                  ><i class="bar activity" style="left: 59%; width: 16%"></i
+                  ><i class="dot activity" style="left: 59%"></i
+                  ><i class="dot completed" style="left: 75%"></i
+                  ><span class="event-label" style="left: 60%; top: 61%"
+                    >capturePayment</span
+                  >
+                </div>
+                <div class="bracket-event" style="top: 218px">
+                  <span class="kind">Root · timer</span
+                  ><i class="bar timer" style="left: 39%; width: 45%"></i
+                  ><i class="dot timer" style="left: 39%"></i
+                  ><i class="dot completed" style="left: 84%"></i
+                  ><span class="event-label" style="left: 55%; top: 61%"
+                    >packing timeout</span
+                  >
+                </div>
+                <div class="bracket-event" style="top: 260px">
+                  <span class="kind">Root · signal</span
+                  ><i class="bar signal" style="left: 65%; width: 3%"></i
+                  ><i class="dot signal" style="left: 68%"></i
+                  ><span class="event-label" style="left: 69%; top: 61%"
+                    >packingReady</span
+                  >
+                </div>
+                <div class="bracket-event" style="top: 302px">
+                  <span class="kind">Invoice · activity</span
+                  ><i class="bar activity" style="left: 76%; width: 15%"></i
+                  ><i class="dot activity" style="left: 76%"></i
+                  ><i class="dot completed" style="left: 91%"></i
+                  ><span class="event-label" style="left: 77%; top: 61%"
+                    >generateInvoice</span
+                  >
+                </div>
+                <div class="bracket-event" style="top: 344px">
+                  <span class="kind">Root · activity</span
+                  ><i class="bar activity" style="left: 86%; width: 9%"></i
+                  ><i class="dot activity" style="left: 86%"></i
+                  ><i class="dot completed" style="left: 95%"></i
+                  ><span class="event-label" style="left: 84%; top: 61%"
+                    >notify</span
+                  >
+                </div>
+                <div class="bracket-event" style="top: 386px">
+                  <span class="kind">Root · workflow task</span
+                  ><i class="bar workflow" style="left: 94%; width: 3%"></i
+                  ><i class="dot workflow" style="left: 94%"></i
+                  ><i class="dot completed" style="left: 97%"></i
+                  ><span class="event-label" style="left: 84%; top: 61%"
+                    >complete order</span
+                  >
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <span style="--swatch: #159b71">Workflow scope</span
+              ><span style="--swatch: #0e7490">Nested workflow scope</span
+              ><span style="--swatch: #a78bfa">Activity</span
+              ><span style="--swatch: #fbbf24">Timer</span>
+            </div>
+          </section>
+          <div class="callout">
+            <strong>Why it works:</strong> workflows are never plotted as event
+            bars. They are persistent structural scopes spanning all owned rows.
+            The tradeoff is that duration and ownership are split across two
+            places: the bracket rail and the shaded time range.
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

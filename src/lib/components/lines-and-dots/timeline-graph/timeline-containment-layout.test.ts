@@ -4,15 +4,12 @@ import type { EventGroup } from '$lib/models/event-groups/event-groups';
 import type { TimelineRun } from '$lib/services/chain-workflow-session';
 import type { WorkflowExecution } from '$lib/types/workflows';
 
-import type {
-  TimelineChildEdge,
-  TimelineWorkflowNode,
-} from './recursive-timeline-model';
 import {
-  getRecursiveTimelineContainmentLayout,
-  getTimelineContainmentLayout,
+  type TimelineChildEdge,
   timelineRunKey,
-} from './timeline-containment-layout';
+  type TimelineWorkflowNode,
+} from './recursive-timeline-model';
+import { getRecursiveTimelineContainmentLayout } from './timeline-containment-layout';
 import type { TimelineGroupEntry } from './timeline-run-entries';
 
 const entry = (runId: string, id: number): TimelineGroupEntry => ({
@@ -37,121 +34,6 @@ const run = (
   status: active ? 'Running' : 'Completed',
   active,
   groups: [],
-});
-
-describe('getTimelineContainmentLayout', () => {
-  it('orders run blocks and their groups without changing ownership', () => {
-    const layout = getTimelineContainmentLayout({
-      runs: [run('old', 0), run('active', 20, true)],
-      visibleEntries: [entry('active', 3), entry('old', 2), entry('old', 1)],
-      participatingRunIds: new Set(['old', 'active']),
-      reverseSort: false,
-      pendingGroupCount: 0,
-      descMinId: 0,
-    });
-
-    expect(layout.rows.map((row) => row.key)).toEqual([
-      'old:1',
-      'old:2',
-      'run-gap:old:active',
-      'active:3',
-    ]);
-    expect(layout.runSpans).toEqual([
-      {
-        runId: 'old',
-        rowStart: 0,
-        rowEnd: 2,
-      },
-      {
-        runId: 'active',
-        rowStart: 3,
-        rowEnd: 4,
-      },
-    ]);
-  });
-
-  it('reverses run blocks and local rows while retaining stable keys', () => {
-    const layout = getTimelineContainmentLayout({
-      runs: [run('old', 0), run('active', 20, true)],
-      visibleEntries: [entry('old', 1), entry('old', 2), entry('active', 1)],
-      participatingRunIds: new Set(['old', 'active']),
-      reverseSort: true,
-      pendingGroupCount: 0,
-      descMinId: 0,
-    });
-
-    expect(layout.rows.map((row) => row.key)).toEqual([
-      'active:1',
-      'run-gap:active:old',
-      'old:2',
-      'old:1',
-    ]);
-  });
-
-  it('gives a filtered-empty participating run one row', () => {
-    const layout = getTimelineContainmentLayout({
-      runs: [run('old', 0), run('offscreen', 10)],
-      visibleEntries: [],
-      participatingRunIds: new Set(['old']),
-      reverseSort: false,
-      pendingGroupCount: 0,
-      descMinId: 0,
-    });
-
-    expect(layout.rows).toEqual([
-      {
-        kind: 'empty-run',
-        key: 'empty-run:old',
-        runId: 'old',
-        rowIndex: 0,
-      },
-    ]);
-    expect(layout.totalRowCount).toBe(1);
-  });
-
-  it('assigns the cursor gap only to the active run', () => {
-    const layout = getTimelineContainmentLayout({
-      runs: [run('old', 0), run('active', 20, true)],
-      visibleEntries: [
-        entry('old', 1),
-        entry('active', 2),
-        entry('active', 90),
-      ],
-      participatingRunIds: new Set(['old', 'active']),
-      reverseSort: false,
-      pendingGroupCount: 4,
-      descMinId: 80,
-    });
-
-    expect(layout.rows.map((row) => [row.key, row.rowIndex])).toEqual([
-      ['old:1', 0],
-      ['run-gap:old:active', 1],
-      ['active:2', 2],
-      ['active:90', 7],
-    ]);
-    expect(layout.runSpans[0].rowEnd).toBe(1);
-    expect(layout.runSpans[1]).toMatchObject({
-      rowStart: 2,
-      rowEnd: 8,
-    });
-  });
-
-  it('keeps duplicate group IDs unique by run ID', () => {
-    const layout = getTimelineContainmentLayout({
-      runs: [run('old', 0), run('active', 20, true)],
-      visibleEntries: [entry('old', 7), entry('active', 7)],
-      participatingRunIds: new Set(['old', 'active']),
-      reverseSort: false,
-      pendingGroupCount: 0,
-      descMinId: 0,
-    });
-
-    expect(layout.rows.map((row) => row.key)).toEqual([
-      'old:7',
-      'run-gap:old:active',
-      'active:7',
-    ]);
-  });
 });
 
 describe('getRecursiveTimelineContainmentLayout', () => {
@@ -184,7 +66,6 @@ describe('getRecursiveTimelineContainmentLayout', () => {
       descMinId: 0,
     });
 
-    expect(layout.rows.some((row) => row.kind === 'run-gap')).toBe(false);
     expect(layout.runSpans[0].rowEnd).toBe(layout.runSpans[1].rowStart);
   });
 
@@ -273,7 +154,7 @@ describe('getRecursiveTimelineContainmentLayout', () => {
         }),
       ]),
     );
-    const childSpan = layout.workflowSpans?.find(
+    const childSpan = layout.workflowSpans.find(
       (span) => span.workflowKey === 'child',
     );
     const leadingSpacing = layout.rows.find((row) =>

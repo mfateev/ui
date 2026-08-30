@@ -1,5 +1,17 @@
 # Recursive Child Workflow Timeline Review
 
+## Resolution
+
+Addressed in the follow-up cleanup commit:
+
+- Live refreshes mutate existing child nodes and preserve nested edge state.
+- Cache aliases and retained-data accounting are rebuilt from attached nodes.
+- The obsolete shallow containment layout and `run-gap` type were removed.
+- Frame spacing moved to a pure, tested vertical-layout helper.
+- Timeline run-key construction now uses one shared helper.
+- Dead fixture code was removed and the overlapping design documents were
+  consolidated into `recursive-child-workflow-timeline-design.md`.
+
 ## Findings
 
 ### 1. High: Live refresh replaces child nodes and resets nested UI state

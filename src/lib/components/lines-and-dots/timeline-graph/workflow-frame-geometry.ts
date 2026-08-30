@@ -1,4 +1,8 @@
 import { RADIUS, ROW_HEIGHT } from './constants';
+import type {
+  TimelineRunSpan,
+  TimelineWorkflowSpan,
+} from './timeline-containment-layout';
 import { clipConnectorToViewport } from './viewport-geometry';
 
 export type WorkflowFrameGeometry = {
@@ -12,6 +16,69 @@ export type WorkflowFrameGeometry = {
   labelStartPx: number;
   labelMaxWidthPx: number;
 };
+
+export type TimelineFrameVerticalLayout = {
+  runBoundsByKey: Map<string, { topPx: number; bottomPx: number }>;
+  workflowBoundsByKey: Map<string, { topPx: number; bottomPx: number }>;
+};
+
+export function getTimelineFrameVerticalLayout({
+  runSpans,
+  workflowSpans,
+  activeRowIndex,
+  panelHeight,
+  verticalPaddingPx,
+}: {
+  runSpans: TimelineRunSpan[];
+  workflowSpans: TimelineWorkflowSpan[];
+  activeRowIndex: number;
+  panelHeight: number;
+  verticalPaddingPx: number;
+}): TimelineFrameVerticalLayout {
+  const firstRunRowByWorkflow = new Map<string, number>();
+  for (const span of runSpans) {
+    const firstRow = firstRunRowByWorkflow.get(span.workflowKey);
+    if (firstRow === undefined || span.rowStart < firstRow) {
+      firstRunRowByWorkflow.set(span.workflowKey, span.rowStart);
+    }
+  }
+  const runBoundsByKey = new Map<string, { topPx: number; bottomPx: number }>();
+  for (const span of runSpans) {
+    const bounds = getWorkflowFrameVerticalBounds({
+      ...span,
+      activeRowIndex,
+      panelHeight,
+      paddingPx: 0,
+    });
+    const hasPreviousRun =
+      span.rowStart !== firstRunRowByWorkflow.get(span.workflowKey);
+    runBoundsByKey.set(span.key, {
+      topPx: bounds.topPx + verticalPaddingPx + (hasPreviousRun ? RADIUS : 0),
+      bottomPx: bounds.bottomPx + verticalPaddingPx + RADIUS,
+    });
+  }
+  const workflowBoundsByKey = new Map<
+    string,
+    { topPx: number; bottomPx: number }
+  >();
+  for (const span of workflowSpans) {
+    const bounds = getWorkflowFrameVerticalBounds({
+      ...span,
+      activeRowIndex,
+      panelHeight,
+      paddingPx: RADIUS,
+    });
+    workflowBoundsByKey.set(
+      span.workflowKey,
+      getWorkflowChainVerticalBounds({
+        topPx: bounds.topPx + verticalPaddingPx,
+        bottomPx: bounds.bottomPx + verticalPaddingPx,
+        depth: span.depth,
+      }),
+    );
+  }
+  return { runBoundsByKey, workflowBoundsByKey };
+}
 
 export function getWorkflowChainVerticalBounds({
   topPx,

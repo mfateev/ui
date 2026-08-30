@@ -13,6 +13,32 @@ export type WorkflowFrameGeometry = {
   labelMaxWidthPx: number;
 };
 
+export function getWorkflowFrameVerticalBounds({
+  rowStart,
+  rowEnd,
+  activeRowIndex,
+  panelHeight,
+  paddingPx,
+}: {
+  rowStart: number;
+  rowEnd: number;
+  activeRowIndex: number;
+  panelHeight: number;
+  paddingPx: number;
+}): { topPx: number; bottomPx: number } {
+  let topPx = (rowStart + 1.5) * ROW_HEIGHT;
+  let bottomPx = (rowEnd + 1.5) * ROW_HEIGHT;
+  if (activeRowIndex >= 0 && panelHeight > 0) {
+    if (rowStart > activeRowIndex) {
+      topPx += panelHeight;
+      bottomPx += panelHeight;
+    } else if (rowEnd > activeRowIndex) {
+      bottomPx += panelHeight;
+    }
+  }
+  return { topPx: topPx - paddingPx, bottomPx: bottomPx + paddingPx };
+}
+
 export function getWorkflowFrameGeometry({
   startWorldPx,
   endWorldPx,

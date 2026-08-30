@@ -50,7 +50,10 @@
   } from './timeline-run-entries';
   import type { TimelineDisplayMode } from './types';
   import { syncTimelineViewport } from './viewport-lifecycle';
-  import { getWorkflowFrameGeometry } from './workflow-frame-geometry';
+  import {
+    getWorkflowFrameGeometry,
+    getWorkflowFrameVerticalBounds,
+  } from './workflow-frame-geometry';
 
   import GroupDetailsRow from './group-details-row.svelte';
   import TimelineAxis from './timeline-axis.svelte';
@@ -839,17 +842,12 @@
     topPx: number;
     bottomPx: number;
   } {
-    let topPx = (span.rowStart + 1.5) * ROW_HEIGHT;
-    let bottomPx = (span.rowEnd + 1.5) * ROW_HEIGHT;
-    if (activeRowIndex >= 0 && panelHeight > 0) {
-      if (span.rowStart > activeRowIndex) {
-        topPx += panelHeight;
-        bottomPx += panelHeight;
-      } else if (span.rowEnd > activeRowIndex) {
-        bottomPx += panelHeight;
-      }
-    }
-    return { topPx, bottomPx };
+    return getWorkflowFrameVerticalBounds({
+      ...span,
+      activeRowIndex,
+      panelHeight,
+      paddingPx: RADIUS,
+    });
   }
 
   const runFrameLayouts = $derived(

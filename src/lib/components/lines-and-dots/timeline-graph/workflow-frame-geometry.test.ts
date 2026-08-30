@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { getWorkflowFrameGeometry } from './workflow-frame-geometry';
+import {
+  getWorkflowFrameGeometry,
+  getWorkflowFrameVerticalBounds,
+} from './workflow-frame-geometry';
 
 const geometry = (
   overrides: Partial<Parameters<typeof getWorkflowFrameGeometry>[0]> = {},
@@ -77,5 +80,31 @@ describe('getWorkflowFrameGeometry', () => {
       drawEndSide: false,
       labelMaxWidthPx: 0,
     });
+  });
+});
+
+describe('getWorkflowFrameVerticalBounds', () => {
+  it('pads the frame away from its first and last content rows', () => {
+    expect(
+      getWorkflowFrameVerticalBounds({
+        rowStart: 0,
+        rowEnd: 1,
+        activeRowIndex: -1,
+        panelHeight: 0,
+        paddingPx: 9,
+      }),
+    ).toEqual({ topPx: 27, bottomPx: 69 });
+  });
+
+  it('keeps padding outside an expanded details panel', () => {
+    expect(
+      getWorkflowFrameVerticalBounds({
+        rowStart: 0,
+        rowEnd: 2,
+        activeRowIndex: 0,
+        panelHeight: 100,
+        paddingPx: 9,
+      }),
+    ).toEqual({ topPx: 27, bottomPx: 193 });
   });
 });

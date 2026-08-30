@@ -186,13 +186,15 @@
 
 <style lang="postcss">
   .frame-edge {
-    height: 1px;
+    height: 2px;
     background: var(--frame-color);
+    transform: translateY(-1px);
   }
 
   .frame-side {
-    width: 1px;
+    width: 2px;
     background: var(--frame-color);
+    transform: translateX(-1px);
   }
 
   .frame-dashed {

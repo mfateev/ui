@@ -498,6 +498,7 @@
   // Rows mounted beyond the viewport, so edge rows survive small scrolls and
   // direction reversals and are ready ahead of a fast fling.
   const OVERSCAN = 12;
+  const TIMELINE_VERTICAL_PADDING = ROW_HEIGHT;
 
   // Closed-form inverse of getRowY (both cursor segments are linear) → the
   // [start, end) row-index range to mount for a given visible band.
@@ -666,7 +667,9 @@
     Math.max(
       ROW_HEIGHT * (heightRowCount + (chainFrameCandidate ? 3 : 2)),
       120,
-    ) + panelHeight,
+    ) +
+      panelHeight +
+      2 * TIMELINE_VERTICAL_PADDING,
   );
   const AXIS_LABEL_ZONE = 150;
   const svgHeight = $derived(timelineHeight + AXIS_LABEL_ZONE);
@@ -762,7 +765,7 @@
     const bandTop = band ? band[0] : 0;
     const bandHeight = band ? band[1] - band[0] : Math.min(svgHeight, 1000);
     return getWindowBounds({
-      bandTop,
+      bandTop: bandTop - TIMELINE_VERTICAL_PADDING,
       bandHeight,
       total: layoutRows.length,
       overscan: windowOverscan,
@@ -833,6 +836,7 @@
   const getY = $derived.by(
     () =>
       (i: number): number =>
+        TIMELINE_VERTICAL_PADDING +
         getRowY(i, {
           descStart,
           pendingGroupCount: layoutPendingCount,
@@ -845,12 +849,16 @@
     topPx: number;
     bottomPx: number;
   } {
-    return getWorkflowFrameVerticalBounds({
+    const bounds = getWorkflowFrameVerticalBounds({
       ...span,
       activeRowIndex,
       panelHeight,
       paddingPx: RADIUS,
     });
+    return {
+      topPx: bounds.topPx + TIMELINE_VERTICAL_PADDING,
+      bottomPx: bounds.bottomPx + TIMELINE_VERTICAL_PADDING,
+    };
   }
 
   const runFrameLayouts = $derived(
@@ -879,6 +887,9 @@
     }),
   );
   const CHAIN_FRAME_GAP_PX = ROW_HEIGHT;
+  const retainedChainHeightPx = $derived(
+    Math.max(0, heightRowCount - containmentLayout.totalRowCount) * ROW_HEIGHT,
+  );
   const chainFrameLayout = $derived.by(() => {
     if (!chainFrameCandidate || !containmentLayout.chainSpan) return null;
     const vertical = getFrameVerticalBounds(containmentLayout.chainSpan);
@@ -891,7 +902,8 @@
         viewportWidthPx: timelineWidth,
         gutterPx: GUTTER,
         topPx: vertical.topPx - CHAIN_FRAME_GAP_PX,
-        bottomPx: vertical.bottomPx + CHAIN_FRAME_GAP_PX,
+        bottomPx:
+          vertical.bottomPx + CHAIN_FRAME_GAP_PX + retainedChainHeightPx,
         startBoundaryKnown: chainFrameCandidate.startBoundaryKnown,
         endBoundaryKnown: chainFrameCandidate.endBoundaryKnown,
         labelInsetPx: 2 * RADIUS,
@@ -1135,6 +1147,7 @@
 
         {#if timelineLoading && containmentLayout.pendingGap}
           {@const rectY =
+            TIMELINE_VERTICAL_PADDING +
             (containmentLayout.pendingGap.rowStart + 1.5) * ROW_HEIGHT +
             shiftFor(containmentLayout.pendingGap.insertionIndex)}
           {@const rectH =

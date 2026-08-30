@@ -162,9 +162,7 @@
           class:workflow-run-label={kind === 'run'}
           class="pointer-events-none absolute z-10 inline-flex min-h-[var(--dot)] items-center truncate whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none text-current"
           style:left={labelLeft}
-          style:top="{kind === 'chain'
-            ? geometry.topPx + 2
-            : geometry.topPx - RADIUS}px"
+          style:top="{geometry.topPx - RADIUS}px"
           style:max-width="{geometry.labelMaxWidthPx}px"
           style:--workflow-label-attached-left="{geometry.labelStartPx}px"
           style:--workflow-label-safe-inset="{labelSafeInset}px"

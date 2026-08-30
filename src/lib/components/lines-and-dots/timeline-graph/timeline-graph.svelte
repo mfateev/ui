@@ -878,7 +878,7 @@
       ];
     }),
   );
-  const CHAIN_FRAME_GAP_PX = ROW_HEIGHT / 2;
+  const CHAIN_FRAME_GAP_PX = ROW_HEIGHT;
   const chainFrameLayout = $derived.by(() => {
     if (!chainFrameCandidate || !containmentLayout.chainSpan) return null;
     const vertical = getFrameVerticalBounds(containmentLayout.chainSpan);

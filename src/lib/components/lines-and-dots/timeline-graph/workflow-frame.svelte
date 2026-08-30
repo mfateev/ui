@@ -56,8 +56,16 @@
   );
   let labelWidth = $state(0);
   const labelSafeInset = GUTTER + 1.5 * RADIUS;
-  const labelLeft =
-    'clamp(var(--workflow-label-attached-left), calc(var(--workflow-label-safe-inset) + var(--timeline-frame-offset, 0px)), var(--workflow-label-end-attached-left))';
+  const labelLeft = $derived(
+    geometry.drawStartSide
+      ? 'clamp(var(--workflow-label-attached-left), calc(var(--workflow-label-safe-inset) + var(--timeline-frame-offset, 0px)), var(--workflow-label-end-attached-left))'
+      : 'calc(var(--workflow-label-safe-inset) + var(--timeline-frame-offset, 0px))',
+  );
+  const labelMaxWidth = $derived(
+    geometry.drawStartSide
+      ? `${geometry.labelMaxWidthPx}px`
+      : `max(0px, calc(${geometry.labelMaxWidthPx}px - var(--timeline-frame-offset, 0px)))`,
+  );
   const labelEndAttachedLeft = $derived(
     geometry.horizontal
       ? geometry.horizontal.endPx - labelWidth - 2 * RADIUS
@@ -163,7 +171,7 @@
           class="pointer-events-none absolute z-10 inline-flex min-h-[var(--dot)] items-center truncate whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none text-current"
           style:left={labelLeft}
           style:top="{geometry.topPx - RADIUS}px"
-          style:max-width="{geometry.labelMaxWidthPx}px"
+          style:max-width={labelMaxWidth}
           style:--workflow-label-attached-left="{geometry.labelStartPx}px"
           style:--workflow-label-safe-inset="{labelSafeInset}px"
           style:--workflow-label-end-attached-left="{labelEndAttachedLeft}px"

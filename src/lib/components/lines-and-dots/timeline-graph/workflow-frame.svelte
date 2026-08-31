@@ -16,6 +16,7 @@
     colors: DotColors;
     live: boolean;
     kind: 'chain' | 'run';
+    depth?: number;
     paint: 'background' | 'foreground';
     bandTop: number;
     bandHeight: number;
@@ -36,6 +37,7 @@
     colors,
     live,
     kind,
+    depth = 0,
     paint,
     bandTop,
     bandHeight,
@@ -112,6 +114,13 @@
   const displayLabel = $derived(
     `${translate(kind === 'chain' ? 'common.workflow-id' : 'common.run-id')}: ${label}${kind === 'chain' && workflowType ? ` · ${workflowType}` : ''}`,
   );
+  const frameBackground = $derived(
+    kind === 'run'
+      ? 'transparent'
+      : depth % 2 === 1
+        ? 'rgb(var(--color-surface-primary))'
+        : `color-mix(in srgb, ${color} 3%, transparent)`,
+  );
 </script>
 
 <div
@@ -138,6 +147,7 @@
       aria-hidden={onToggle ? undefined : 'true'}
       data-frame-kind={kind}
       data-frame-paint={paint}
+      data-frame-depth={kind === 'chain' ? depth : undefined}
       class="pointer-events-none absolute inset-0"
     >
       {#if paint === 'background'}
@@ -149,7 +159,7 @@
           style:right={live ? '0' : undefined}
           style:width={live ? undefined : `${horizontalWidth}px`}
           style:height="{paintHeight}px"
-          style:background={`color-mix(in srgb, ${color} 3%, transparent)`}
+          style:background={frameBackground}
           style:--frame-committed-width="{horizontalWidth}px"
         ></div>
       {:else}

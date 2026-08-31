@@ -1267,6 +1267,7 @@
                 colors={inheritedWorkflowDotColors}
                 live={frame.candidate.live}
                 kind="chain"
+                depth={frame.span.depth}
                 paint="background"
                 bandTop={layerBandTop}
                 bandHeight={layerBandHeight}
@@ -1300,6 +1301,7 @@
                 colors={dotColors(frame.candidate.status)}
                 live={frame.candidate.live}
                 kind="run"
+                depth={frame.span.depth}
                 paint="background"
                 bandTop={layerBandTop}
                 bandHeight={layerBandHeight}
@@ -1367,6 +1369,7 @@
                 colors={inheritedWorkflowDotColors}
                 live={frame.candidate.live}
                 kind="chain"
+                depth={frame.span.depth}
                 paint="foreground"
                 bandTop={layerBandTop}
                 bandHeight={layerBandHeight}
@@ -1410,6 +1413,7 @@
                 colors={dotColors(frame.candidate.status)}
                 live={frame.candidate.live}
                 kind="run"
+                depth={frame.span.depth}
                 paint="foreground"
                 bandTop={layerBandTop}
                 bandHeight={layerBandHeight}

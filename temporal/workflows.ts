@@ -216,6 +216,82 @@ export async function BatchedContinueAsNewWorkflow(
   );
 }
 
+const runThreeDemoActivities = async (label: string): Promise<number> => {
+  let result = 2;
+  for (let activity = 1; activity <= 3; activity++) {
+    result = await delayedDouble.executeWithOptions(
+      { summary: `${label}: activity ${activity} of 3` },
+      [result, 5_000],
+    );
+  }
+  return result;
+};
+
+export async function TimelineDemoThreeActivitiesWorkflow(): Promise<void> {
+  await runThreeDemoActivities('Top-level workflow');
+  return await workflow.continueAsNew<
+    typeof TimelineDemoThreeActivitiesWorkflow
+  >();
+}
+
+export async function TimelineDemoThreeActivitiesChildWorkflow(
+  label: string,
+  remainingContinueAsNewRuns = 1,
+): Promise<number> {
+  const result = await runThreeDemoActivities(label);
+  if (remainingContinueAsNewRuns > 0) {
+    return await workflow.continueAsNew<
+      typeof TimelineDemoThreeActivitiesChildWorkflow
+    >(label, remainingContinueAsNewRuns - 1);
+  }
+  return result;
+}
+
+export async function TimelineDemoThreeChildrenWorkflow(): Promise<void> {
+  const info = workflow.workflowInfo();
+  for (let child = 1; child <= 3; child++) {
+    await workflow.executeChild(TimelineDemoThreeActivitiesChildWorkflow, {
+      args: [`Child ${child} of 3`, 1],
+      workflowId: `${info.workflowId}-${info.runId}-child-${child}`,
+    });
+  }
+  return await workflow.continueAsNew<
+    typeof TimelineDemoThreeChildrenWorkflow
+  >();
+}
+
+export async function TimelineDemoNestedChildWorkflow(
+  label: string,
+  remainingContinueAsNewRuns = 1,
+): Promise<void> {
+  const info = workflow.workflowInfo();
+  for (let child = 1; child <= 3; child++) {
+    await workflow.executeChild(TimelineDemoThreeActivitiesChildWorkflow, {
+      args: [`${label}, child ${child} of 3`, 1],
+      workflowId: `${info.workflowId}-${info.runId}-child-${child}`,
+    });
+  }
+  if (remainingContinueAsNewRuns > 0) {
+    return await workflow.continueAsNew<typeof TimelineDemoNestedChildWorkflow>(
+      label,
+      remainingContinueAsNewRuns - 1,
+    );
+  }
+}
+
+export async function TimelineDemoNestedChildrenWorkflow(): Promise<void> {
+  const info = workflow.workflowInfo();
+  for (let child = 1; child <= 3; child++) {
+    await workflow.executeChild(TimelineDemoNestedChildWorkflow, {
+      args: [`Child ${child} of 3`, 1],
+      workflowId: `${info.workflowId}-${info.runId}-child-${child}`,
+    });
+  }
+  return await workflow.continueAsNew<
+    typeof TimelineDemoNestedChildrenWorkflow
+  >();
+}
+
 export async function RunningWorkflow(): Promise<void> {
   return await workflow.sleep('10 days');
 }

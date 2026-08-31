@@ -72,6 +72,7 @@
     "run-workflows": "esno scripts/run-workflows.ts",
     "run-workflows:long-running": "esno scripts/start-long-running.ts",
     "run-workflows:batched-continue-as-new": "esno scripts/start-batched-continue-as-new.ts",
+    "run-workflows:timeline-demos": "esno scripts/start-timeline-demo-workflows.ts",
     "run-workflows:recursive-timeline": "esno scripts/start-recursive-timeline.ts",
     "audit:tailwind": "esno scripts/audit-tailwind-colors",
     "validate:versions": "./scripts/validate-versions.sh",

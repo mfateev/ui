@@ -57,7 +57,9 @@
   const drawBottom = $derived(
     geometry.bottomPx >= bandTop && geometry.bottomPx <= bandBottom,
   );
-  const showLabel = $derived(geometry.labelMaxWidthPx >= 48);
+  const showLabel = $derived(
+    geometry.horizontal !== null && (live || geometry.labelMaxWidthPx >= 48),
+  );
   const horizontalWidth = $derived(
     geometry.horizontal
       ? Math.max(0, geometry.horizontal.endPx - geometry.horizontal.startPx)
@@ -80,22 +82,24 @@
       } => dot !== null,
     ),
   );
-  let labelWidth = $state(0);
   const labelSafeInset = GUTTER + 1.5 * RADIUS;
+  const labelIconGap = $derived(kind === 'chain' ? 12 : 0);
+  const labelRight = $derived(
+    geometry.horizontal
+      ? geometry.horizontal.endPx - 2 * RADIUS
+      : labelSafeInset,
+  );
   const labelLeft = $derived(
-    geometry.drawStartSide
-      ? 'clamp(var(--workflow-label-attached-left), calc(var(--workflow-label-safe-inset) + var(--timeline-frame-offset, 0px)), var(--workflow-label-end-attached-left))'
-      : 'calc(var(--workflow-label-safe-inset) + var(--timeline-frame-offset, 0px))',
+    live && geometry.drawStartSide
+      ? 'var(--workflow-label-attached-left)'
+      : geometry.drawStartSide
+        ? 'clamp(var(--workflow-label-attached-left), calc(var(--workflow-label-safe-inset) + var(--timeline-frame-offset, 0px)), var(--workflow-label-right))'
+        : 'calc(var(--workflow-label-safe-inset) + var(--timeline-frame-offset, 0px))',
   );
   const labelMaxWidth = $derived(
-    geometry.drawStartSide
-      ? `${geometry.labelMaxWidthPx}px`
-      : `max(0px, calc(${geometry.labelMaxWidthPx}px - var(--timeline-frame-offset, 0px)))`,
-  );
-  const labelEndAttachedLeft = $derived(
-    geometry.horizontal
-      ? geometry.horizontal.endPx - labelWidth - 2 * RADIUS
-      : 0,
+    live
+      ? 'none'
+      : `max(0px, calc(var(--workflow-label-right) - (${labelLeft})))`,
   );
   const compactLabel = $derived(
     kind === 'run' && label.length > 18
@@ -222,12 +226,12 @@
             style:left={labelLeft}
             style:top="{geometry.topPx - RADIUS}px"
             style:max-width={labelMaxWidth}
-            style:--workflow-label-attached-left="{geometry.labelStartPx}px"
+            style:--workflow-label-attached-left="{geometry.labelStartPx +
+              labelIconGap}px"
             style:--workflow-label-safe-inset="{labelSafeInset}px"
-            style:--workflow-label-end-attached-left="{labelEndAttachedLeft}px"
+            style:--workflow-label-right="{labelRight}px"
             style:--frame-color={color}
             title={displayLabel}
-            bind:clientWidth={labelWidth}
           >
             {#if onToggle}
               <Button

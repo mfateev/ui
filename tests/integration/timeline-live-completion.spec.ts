@@ -339,7 +339,7 @@ test.describe('Timeline live completion', () => {
     await expect(timeline.locator('.timeline-clamped-label')).toBeVisible();
   });
 
-  test('keeps a live label width rigid while the timeline moves', async ({
+  test('pins a live label before sliding it out at full width', async ({
     page,
   }) => {
     await mockWorkflowApis(page, runningWorkflow);
@@ -371,6 +371,15 @@ test.describe('Timeline live completion', () => {
         throw new Error('Expected a live workflow label');
       }
 
+      workflowLabel.style.setProperty(
+        '--workflow-label-attached-left',
+        '100px',
+      );
+      workflowLabel.style.setProperty('--workflow-label-safe-inset', '150px');
+      workflowLabel.style.setProperty(
+        '--workflow-label-end-attached-left',
+        '300px',
+      );
       const atFrameOffset = async (frameOffset: number) => {
         element.style.setProperty(
           '--timeline-frame-offset',
@@ -379,19 +388,31 @@ test.describe('Timeline live completion', () => {
         await new Promise<void>((resolve) =>
           requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
         );
-        return workflowLabel.getBoundingClientRect().width;
+        return {
+          left: workflowLabel.offsetLeft,
+          width: workflowLabel.getBoundingClientRect().width,
+        };
       };
 
       const positions = [
-        await atFrameOffset(0),
+        await atFrameOffset(-100),
         await atFrameOffset(50),
-        await atFrameOffset(100),
+        await atFrameOffset(200),
       ];
+      workflowLabel.style.setProperty(
+        '--workflow-label-end-attached-left',
+        '80px',
+      );
+      positions.push(await atFrameOffset(200));
       element.style.setProperty('--timeline-frame-offset', '0px');
       return positions;
     });
 
-    expect(Math.max(...positions)).toBeCloseTo(Math.min(...positions), 1);
+    expect(positions.map(({ left }) => left)).toEqual([100, 200, 300, 80]);
+    expect(Math.max(...positions.map(({ width }) => width))).toBeCloseTo(
+      Math.min(...positions.map(({ width }) => width)),
+      1,
+    );
   });
 
   test('freezes the viewport while paused and follows the latest edge after resume', async ({

@@ -38,6 +38,8 @@ describe('getWorkflowFrameGeometry', () => {
       drawEndSide: true,
       startDotPx: null,
       endDotPx: 120,
+      labelStartPx: -122,
+      labelMaxWidthPx: 234,
     });
   });
 
@@ -59,7 +61,7 @@ describe('getWorkflowFrameGeometry', () => {
     });
   });
 
-  it('returns the usable label width of the clipped fragment', () => {
+  it('returns the usable label width of the complete frame', () => {
     expect(geometry()).toMatchObject({
       labelStartPx: 28,
       labelMaxWidthPx: 59,
@@ -181,7 +183,14 @@ describe('getTimelineFrameVerticalLayout', () => {
     expect(workflow.bottomPx).toBeGreaterThan(run.bottomPx);
   });
 
-  it('reduces nested workflow padding without crossing its activity border', () => {
+  it('keeps the workflow-to-run header gap constant at every depth', () => {
+    const rootLayout = getTimelineFrameVerticalLayout({
+      runSpans: [runSpan('root-run', 'root', 1, 5)],
+      workflowSpans: [workflowSpan('root', 0, 6, 0)],
+      activeRowIndex: -1,
+      panelHeight: 0,
+      verticalPaddingPx: 12,
+    });
     const layout = getTimelineFrameVerticalLayout({
       runSpans: [runSpan('child-run', 'child', 2, 4, 2)],
       workflowSpans: [workflowSpan('child', 1, 5, 2)],
@@ -189,10 +198,13 @@ describe('getTimelineFrameVerticalLayout', () => {
       panelHeight: 0,
       verticalPaddingPx: 12,
     });
+    const rootRun = rootLayout.runBoundsByKey.get('root-run')!;
+    const rootWorkflow = rootLayout.workflowBoundsByKey.get('root')!;
     const run = layout.runBoundsByKey.get('child-run')!;
     const workflow = layout.workflowBoundsByKey.get('child')!;
 
-    expect(workflow).toEqual({ topPx: 75, bottomPx: 198 });
+    expect(workflow).toEqual({ topPx: 63, bottomPx: 198 });
+    expect(run.topPx - workflow.topPx).toBe(rootRun.topPx - rootWorkflow.topPx);
     expect(workflow.topPx).toBeLessThan(run.topPx);
     expect(workflow.bottomPx).toBeGreaterThan(run.bottomPx);
   });
@@ -204,7 +216,7 @@ describe('getWorkflowChainVerticalBounds', () => {
     { depth: 1, expectedPaddingPx: 27 },
     { depth: 4, expectedPaddingPx: 9 },
   ])(
-    'uses equal top and bottom internal padding at depth $depth',
+    'keeps its header fixed while reducing bottom padding at depth $depth',
     ({ depth, expectedPaddingPx }) => {
       const workflow = getWorkflowChainVerticalBounds({
         topPx: 100,
@@ -212,7 +224,7 @@ describe('getWorkflowChainVerticalBounds', () => {
         depth,
       });
 
-      expect(133 - workflow.topPx).toBe(expectedPaddingPx);
+      expect(workflow.topPx).toBe(100);
       expect(workflow.bottomPx - 500).toBe(expectedPaddingPx);
     },
   );

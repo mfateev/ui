@@ -3,7 +3,7 @@
   import { translate } from '$lib/i18n/translate';
 
   import type { DotColors } from '../colors';
-  import { GUTTER, RADIUS } from './constants';
+  import { DOT_STROKE, GUTTER, RADIUS } from './constants';
   import { alignedDotBox } from './primitives';
   import type { WorkflowFrameGeometry } from './workflow-frame-geometry';
 
@@ -82,34 +82,35 @@
       } => dot !== null,
     ),
   );
+  let labelWidth = $state(0);
   const labelSafeInset = GUTTER + 1.5 * RADIUS;
   const labelIconGap = $derived(kind === 'chain' ? 12 : 0);
-  const labelRight = $derived(
+  const labelAttachedLeft = $derived(geometry.labelStartPx + labelIconGap);
+  const labelEndAttachedLeft = $derived(
     geometry.horizontal
-      ? geometry.horizontal.endPx - 2 * RADIUS
-      : labelSafeInset,
+      ? geometry.horizontal.endPx -
+          labelWidth -
+          2 * (RADIUS + DOT_STROKE / 2) -
+          labelIconGap
+      : labelAttachedLeft,
   );
+  const labelPinnedLeft =
+    'max(var(--workflow-label-attached-left), calc(var(--workflow-label-safe-inset) + var(--timeline-frame-offset, 0px)))';
   const labelLeft = $derived(
-    live && geometry.drawStartSide
-      ? 'var(--workflow-label-attached-left)'
-      : geometry.drawStartSide
-        ? 'clamp(var(--workflow-label-attached-left), calc(var(--workflow-label-safe-inset) + var(--timeline-frame-offset, 0px)), var(--workflow-label-right))'
-        : 'calc(var(--workflow-label-safe-inset) + var(--timeline-frame-offset, 0px))',
+    geometry.drawStartSide
+      ? labelPinnedLeft
+      : `min(${labelPinnedLeft}, var(--workflow-label-end-attached-left))`,
+  );
+  const labelWidthAdjustment = $derived(
+    kind === 'chain' ? 2 * labelIconGap + DOT_STROKE : 0,
   );
   const labelMaxWidth = $derived(
     live
       ? 'none'
-      : `max(0px, calc(var(--workflow-label-right) - (${labelLeft})))`,
-  );
-  const compactLabel = $derived(
-    kind === 'run' && label.length > 18
-      ? `${label.slice(0, 8)}…${label.slice(-6)}`
-      : kind === 'chain' && label.length > 30
-        ? `${label.slice(0, 18)}…${label.slice(-8)}`
-        : label,
+      : `${Math.max(0, geometry.labelMaxWidthPx - labelWidthAdjustment)}px`,
   );
   const displayLabel = $derived(
-    `${translate(kind === 'chain' ? 'common.workflow-id' : 'common.run-id')}: ${compactLabel}${kind === 'chain' && workflowType ? ` · ${workflowType}` : ''}`,
+    `${translate(kind === 'chain' ? 'common.workflow-id' : 'common.run-id')}: ${label}${kind === 'chain' && workflowType ? ` · ${workflowType}` : ''}`,
   );
 </script>
 
@@ -226,12 +227,13 @@
             style:left={labelLeft}
             style:top="{geometry.topPx - RADIUS}px"
             style:max-width={labelMaxWidth}
-            style:--workflow-label-attached-left="{geometry.labelStartPx +
-              labelIconGap}px"
+            style:visibility={labelWidth > 0 ? 'visible' : 'hidden'}
+            style:--workflow-label-attached-left="{labelAttachedLeft}px"
             style:--workflow-label-safe-inset="{labelSafeInset}px"
-            style:--workflow-label-right="{labelRight}px"
+            style:--workflow-label-end-attached-left="{labelEndAttachedLeft}px"
             style:--frame-color={color}
             title={displayLabel}
+            bind:clientWidth={labelWidth}
           >
             {#if onToggle}
               <Button

@@ -92,7 +92,7 @@ export function getWorkflowChainVerticalBounds({
   const inset = Math.min(depth, 4) * 6;
   const internalPaddingPx = ROW_HEIGHT + RADIUS - inset;
   return {
-    topPx: topPx + inset,
+    topPx,
     bottomPx: bottomPx + internalPaddingPx,
   };
 }
@@ -194,7 +194,7 @@ export function getWorkflowFrameGeometry({
       drawEndSide && endWorldPx !== startWorldPx
         ? endWorldPx - viewportOffsetPx + gutterPx
         : null,
-    labelStartPx: startPx + labelInsetPx,
-    labelMaxWidthPx: Math.max(0, endPx - startPx - 2 * labelInsetPx),
+    labelStartPx: startWorldPx - viewportOffsetPx + gutterPx + labelInsetPx,
+    labelMaxWidthPx: Math.max(0, endWorldPx - startWorldPx - 2 * labelInsetPx),
   };
 }

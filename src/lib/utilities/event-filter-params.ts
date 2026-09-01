@@ -1,5 +1,6 @@
 import { goto as navigateTo } from '$app/navigation';
 
+import type { TimelineViewMode } from '$lib/components/lines-and-dots/timeline-graph/types';
 import type { EventSortOrder } from '$lib/stores/event-view';
 import type { EventTypeCategory } from '$lib/types/events';
 
@@ -11,6 +12,7 @@ export const SHARED_FILTER_PARAMS = [
   'status',
   'refresh_off',
   'follow_continues',
+  'timeline_mode',
 ] as const;
 
 export function getSharedFilterParams(url: URL): Record<string, string> {
@@ -30,6 +32,12 @@ export function sharedFilterParamsToString(
 
 export function parseEventFilterParams(url: URL) {
   const categoryParam = url.searchParams.get('category');
+  const timelineModeParam = url.searchParams.get('timeline_mode');
+  const timelineDisplayMode: TimelineViewMode =
+    timelineModeParam === 'full-duration' || timelineModeParam === 'classic'
+      ? timelineModeParam
+      : 'fixed-window';
+
   return {
     sort: (url.searchParams.get('sort') as EventSortOrder) || 'descending',
     categories: categoryParam
@@ -37,6 +45,7 @@ export function parseEventFilterParams(url: URL) {
       : null,
     statusFilter: url.searchParams.get('status') === 'pending',
     refresh_off: url.searchParams.get('refresh_off') === 'true',
+    timelineDisplayMode,
   };
 }
 
@@ -45,6 +54,7 @@ type FilterUpdate = {
   categories?: EventTypeCategory[] | null;
   statusFilter?: boolean;
   refresh_off?: boolean;
+  timelineDisplayMode?: TimelineViewMode;
 };
 
 export function updateEventFilterParams(
@@ -82,6 +92,16 @@ export function updateEventFilterParams(
     parameters.push({
       parameter: 'refresh_off',
       value: filters.refresh_off ? 'true' : undefined,
+    });
+  }
+
+  if (filters.timelineDisplayMode !== undefined) {
+    parameters.push({
+      parameter: 'timeline_mode',
+      value:
+        filters.timelineDisplayMode === 'fixed-window'
+          ? undefined
+          : filters.timelineDisplayMode,
     });
   }
 

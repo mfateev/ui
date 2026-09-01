@@ -9,12 +9,13 @@ import {
 describe('parseEventFilterParams', () => {
   it('preserves following mode with shared workflow filters', () => {
     const url = new URL(
-      'http://localhost/?follow_continues=on&sort=ascending&unrelated=value',
+      'http://localhost/?follow_continues=on&sort=ascending&timeline_mode=full-duration&unrelated=value',
     );
 
     expect(getSharedFilterParams(url)).toEqual({
       sort: 'ascending',
       follow_continues: 'on',
+      timeline_mode: 'full-duration',
     });
   });
 
@@ -40,6 +41,28 @@ describe('parseEventFilterParams', () => {
     const url = new URL('http://localhost/');
     const params = parseEventFilterParams(url);
     expect(params.sort).toBe('descending');
+  });
+
+  it('defaults the timeline to a fixed window', () => {
+    const url = new URL('http://localhost/');
+
+    expect(parseEventFilterParams(url).timelineDisplayMode).toBe(
+      'fixed-window',
+    );
+  });
+
+  it('parses the full-duration timeline mode', () => {
+    const url = new URL('http://localhost/?timeline_mode=full-duration');
+
+    expect(parseEventFilterParams(url).timelineDisplayMode).toBe(
+      'full-duration',
+    );
+  });
+
+  it('parses the classic timeline mode', () => {
+    const url = new URL('http://localhost/?timeline_mode=classic');
+
+    expect(parseEventFilterParams(url).timelineDisplayMode).toBe('classic');
   });
 });
 
@@ -91,5 +114,51 @@ describe('updateEventFilterParams', () => {
     const calledUrl = mockGoto.mock.calls[0][0] as string;
     expect(calledUrl).toContain('sort=ascending');
     expect(calledUrl).toContain('refresh_off=true');
+  });
+
+  it('adds full-duration timeline mode to the URL', async () => {
+    const url = new URL('http://localhost/?follow_continues=on');
+    const mockGoto = vi.fn(() => Promise.resolve());
+
+    await updateEventFilterParams(
+      url,
+      { timelineDisplayMode: 'full-duration' },
+      mockGoto as never,
+    );
+
+    const calledUrl = mockGoto.mock.calls[0][0] as string;
+    expect(calledUrl).toContain('timeline_mode=full-duration');
+    expect(calledUrl).toContain('follow_continues=on');
+  });
+
+  it('removes timeline mode from the URL for the default fixed window', async () => {
+    const url = new URL(
+      'http://localhost/?timeline_mode=full-duration&sort=ascending',
+    );
+    const mockGoto = vi.fn(() => Promise.resolve());
+
+    await updateEventFilterParams(
+      url,
+      { timelineDisplayMode: 'fixed-window' },
+      mockGoto as never,
+    );
+
+    const calledUrl = mockGoto.mock.calls[0][0] as string;
+    expect(calledUrl).not.toContain('timeline_mode');
+    expect(calledUrl).toContain('sort=ascending');
+  });
+
+  it('adds classic timeline mode to the URL', async () => {
+    const url = new URL('http://localhost/');
+    const mockGoto = vi.fn(() => Promise.resolve());
+
+    await updateEventFilterParams(
+      url,
+      { timelineDisplayMode: 'classic' },
+      mockGoto as never,
+    );
+
+    const calledUrl = mockGoto.mock.calls[0][0] as string;
+    expect(calledUrl).toContain('timeline_mode=classic');
   });
 });

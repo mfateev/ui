@@ -143,6 +143,10 @@ export const Strings = {
   'pause-success': 'Workflow paused',
   'unpause-success': 'Workflow unpaused',
   'timeline-tab': 'Timeline',
+  'timeline-view': 'Timeline view',
+  'timeline-sliding-window': 'Sliding window',
+  'timeline-full-duration': 'Full duration',
+  'timeline-classic': 'Classic',
   'child-timeline-loading': 'Loading child workflow…',
   'child-timeline-unavailable': 'Child workflow is unavailable.',
   'child-timeline-unauthorized':

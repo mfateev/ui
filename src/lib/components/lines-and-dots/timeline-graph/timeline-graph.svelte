@@ -1183,6 +1183,7 @@
   id="event-history-timeline-graph"
   role="region"
   aria-label={translate('workflows.timeline-tab')}
+  data-display-mode={displayMode}
   data-viewport-offset={viewport.offsetPx}
   data-viewport-following={viewport.isFollowing}
   data-live-paused={$pauseLiveUpdates}

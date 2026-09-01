@@ -6,8 +6,12 @@
 
   import EventHistoryLegend from '$lib/components/lines-and-dots/event-history-legend.svelte';
   import EventTypeFilter from '$lib/components/lines-and-dots/event-type-filter.svelte';
+  import { getTimelineGroups } from '$lib/components/lines-and-dots/timeline-graph/classic/sort-timeline-groups';
+  import ClassicTimelineGraph from '$lib/components/lines-and-dots/timeline-graph/classic/timeline-graph.svelte';
+  import { Timeline as ClassicTimeline } from '$lib/components/lines-and-dots/timeline-graph/classic/timeline.svelte';
   import TimelineGraph from '$lib/components/lines-and-dots/timeline-graph/timeline-graph.svelte';
   import type { Timeline } from '$lib/components/lines-and-dots/timeline-graph/timeline.svelte';
+  import type { TimelineViewMode } from '$lib/components/lines-and-dots/timeline-graph/types';
   import WorkflowError from '$lib/components/lines-and-dots/workflow-error.svelte';
   import DownloadEventHistoryModal from '$lib/components/workflow/download-event-history-modal.svelte';
   import InputAndResults from '$lib/components/workflow/input-and-results.svelte';
@@ -38,6 +42,7 @@
   import { clearActives } from '$lib/stores/active-events';
   import { collapseIdleTime, eventFilterSort } from '$lib/stores/event-view';
   import { pauseLiveUpdates } from '$lib/stores/events';
+  import { eventTypeFilter } from '$lib/stores/filters';
   import { workflowRun } from '$lib/stores/workflow-run';
   import type {
     WorkflowTaskFailedEvent,
@@ -69,6 +74,7 @@
   };
 
   const reverseSort = $derived($eventFilterSort === 'descending');
+  const displayMode = $derived(urlParams.timelineDisplayMode);
 
   const bufferGroups = $derived.by(() => {
     // The buffer owns its run identity. Never infer that identity from the
@@ -99,6 +105,15 @@
     });
   });
 
+  const classicGroups = $derived(
+    getTimelineGroups(
+      bufferGroups.filter((group) => $eventTypeFilter.includes(group.category)),
+      reverseSort,
+      historyCtx.fetchComplete,
+      historyCtx.descMinId,
+    ),
+  );
+
   const workflowTaskFailedError = $derived.by(() => {
     if (!historyCtx.fetchComplete) return undefined;
     return eventBuffer.workflowTaskFailedEvent as
@@ -122,6 +137,10 @@
     updateEventFilterParams(page.url, { sort: newSort }, goto);
   };
 
+  const onDisplayMode = (timelineDisplayMode: TimelineViewMode) => {
+    updateEventFilterParams(page.url, { timelineDisplayMode }, goto);
+  };
+
   // The timeline renders in normal page flow: the page (#content-wrapper)
   // scrolls it and the controls bar sticks to the top-nav. TimelineGraph
   // virtualizes internally from the visible page band, so there's no bounded
@@ -136,9 +155,9 @@
     historyCtx.resume();
   });
 
-  let timeline = $state<Timeline>();
+  let timeline = $state<Timeline | ClassicTimeline>();
 
-  const handleTimelineInit = (t: Timeline) => {
+  const handleTimelineInit = (t: Timeline | ClassicTimeline) => {
     timeline = t;
   };
 
@@ -180,7 +199,36 @@
       <h2>{translate('workflows.timeline-tab')}</h2>
       <EventHistoryLegend />
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex w-full flex-wrap items-center justify-end gap-2 xl:w-auto">
+      <ToggleButtons
+        role="group"
+        aria-label={translate('workflows.timeline-view')}
+      >
+        <ToggleButton
+          active={displayMode === 'fixed-window'}
+          data-testid="timeline-fixed-window"
+          onclick={() => onDisplayMode('fixed-window')}
+          size="sm"
+        >
+          {translate('workflows.timeline-sliding-window')}
+        </ToggleButton>
+        <ToggleButton
+          active={displayMode === 'full-duration'}
+          data-testid="timeline-full-duration"
+          onclick={() => onDisplayMode('full-duration')}
+          size="sm"
+        >
+          {translate('workflows.timeline-full-duration')}
+        </ToggleButton>
+        <ToggleButton
+          active={displayMode === 'classic'}
+          data-testid="timeline-classic"
+          onclick={() => onDisplayMode('classic')}
+          size="sm"
+        >
+          {translate('workflows.timeline-classic')}
+        </ToggleButton>
+      </ToggleButtons>
       <ToggleButtons>
         <ToggleButton
           LeadingIcon={reverseSort ? IconArrowDescending : IconArrowAscending}
@@ -202,10 +250,11 @@
             : translate('workflows.hide-idle-time')}
         </ToggleButton>
         <EventTypeFilter compact={false} />
+      </ToggleButtons>
+      <ToggleButtons>
         <ToggleButton
           disabled={isNotPending}
           data-testid="pause"
-          class="border-l-0"
           size="sm"
           onclick={onAutoRefreshToggle}
         >
@@ -236,24 +285,37 @@
   no scroll-offset bridge).
 -->
   {#if workflow}
-    <TimelineGraph
-      {namespace}
-      displayMode="fixed-window"
-      {workflow}
-      groups={bufferGroups}
-      {reverseSort}
-      loading={!historyCtx.fetchComplete}
-      totalExpectedEvents={estimatedTotalGroups}
-      descMinId={historyCtx.descMinId}
-      error={Boolean(workflowTaskFailedError)}
-      onTimelineInit={handleTimelineInit}
-      onRetentionWindow={workflowRunCtx.pruneRetainedRuns}
-      rowHeightRetentionScopeId={workflowRunCtx.following
-        ? workflowRunCtx.chainRunId
-        : workflow.runId}
-      knownChainStartRunId={workflowRunCtx.chainRunId}
-      {timelineRuns}
-    />
+    {#if displayMode === 'classic'}
+      <ClassicTimelineGraph
+        {workflow}
+        groups={classicGroups}
+        {reverseSort}
+        loading={!historyCtx.fetchComplete}
+        totalExpectedEvents={estimatedTotalGroups}
+        descMinId={historyCtx.descMinId}
+        error={Boolean(workflowTaskFailedError)}
+        onTimelineInit={handleTimelineInit}
+      />
+    {:else}
+      <TimelineGraph
+        {namespace}
+        {displayMode}
+        {workflow}
+        groups={bufferGroups}
+        {reverseSort}
+        loading={!historyCtx.fetchComplete}
+        totalExpectedEvents={estimatedTotalGroups}
+        descMinId={historyCtx.descMinId}
+        error={Boolean(workflowTaskFailedError)}
+        onTimelineInit={handleTimelineInit}
+        onRetentionWindow={workflowRunCtx.pruneRetainedRuns}
+        rowHeightRetentionScopeId={workflowRunCtx.following
+          ? workflowRunCtx.chainRunId
+          : workflow.runId}
+        knownChainStartRunId={workflowRunCtx.chainRunId}
+        {timelineRuns}
+      />
+    {/if}
     {#if workflowRunCtx.truncation?.affectsVisibleInterval}
       <p class="text-muted mt-2 text-sm" role="status">
         {translate('workflows.chained-timeline-truncated')}

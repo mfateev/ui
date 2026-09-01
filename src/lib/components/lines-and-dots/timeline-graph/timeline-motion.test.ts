@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { TimelineMotion } from './timeline-motion';
+import { isTimelineCoordinateRebase, TimelineMotion } from './timeline-motion';
 
 const frame = (
   motion: TimelineMotion,
@@ -95,5 +95,31 @@ describe('TimelineMotion', () => {
 
     expect(frame(motion, { nowMs: 10_000, committedOffsetPx: 105 })).toBe(0);
     expect(frame(motion, { nowMs: 10_250, committedOffsetPx: 105 })).toBe(2.5);
+  });
+});
+
+describe('isTimelineCoordinateRebase', () => {
+  it('allows ordinary live-clock movement to remain continuous', () => {
+    expect(
+      isTimelineCoordinateRebase({
+        previousOffsetPx: 100,
+        nextOffsetPx: 120,
+        previousWorldWidthPx: 1_000,
+        nextWorldWidthPx: 1_020,
+        expandedPxPerMs: 0.02,
+      }),
+    ).toBe(false);
+  });
+
+  it('detects a viewport rebase after asynchronously loaded history changes the scale', () => {
+    expect(
+      isTimelineCoordinateRebase({
+        previousOffsetPx: 100,
+        nextOffsetPx: 650,
+        previousWorldWidthPx: 1_000,
+        nextWorldWidthPx: 2_800,
+        expandedPxPerMs: 0.02,
+      }),
+    ).toBe(true);
   });
 });

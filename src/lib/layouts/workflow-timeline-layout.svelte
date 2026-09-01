@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte';
+  import { getContext, onDestroy, onMount } from 'svelte';
 
   import { beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -44,11 +44,14 @@
     type TimelineRun,
     toTimelineGroups,
   } from '$lib/services/chain-workflow-session';
+  import { fetchPartialRawEvents } from '$lib/services/events-service';
+  import { createGroupedEventBuffer } from '$lib/services/grouped-event-buffer';
   import { eventBuffer } from '$lib/services/grouped-event-buffer.svelte';
   import {
     loadWorkflowChainOverview,
     type WorkflowChainOverviewRun,
   } from '$lib/services/workflow-chain-overview';
+  import { fetchWorkflow } from '$lib/services/workflow-service';
   import { clearActives } from '$lib/stores/active-events';
   import { collapseIdleTime, eventFilterSort } from '$lib/stores/event-view';
   import { pauseLiveUpdates } from '$lib/stores/events';
@@ -89,6 +92,7 @@
 
   const reverseSort = $derived($eventFilterSort === 'descending');
   const displayMode = $derived(urlParams.timelineDisplayMode);
+  let intervalTimelineRuns = $state<TimelineRun[]>([]);
 
   const bufferGroups = $derived.by(() => {
     // The buffer owns its run identity. Never infer that identity from the
@@ -103,7 +107,7 @@
       ...run,
       active: false,
     }));
-    if (!workflow) return retained;
+    if (!workflow) return [...intervalTimelineRuns, ...retained];
     const active: TimelineRun = {
       runId: workflow.runId,
       status: workflow.status,
@@ -112,11 +116,17 @@
       groups: toTimelineGroups(workflow.runId, bufferGroups),
       active: true,
     };
-    return getRenderableTimelineRuns({
+    const renderable = getRenderableTimelineRuns({
       retainedRuns: retained,
       activeRun: active,
       activeHistoryReady: historyCtx.fetchComplete,
     });
+    return [
+      ...intervalTimelineRuns.filter(
+        (run) => !renderable.some(({ runId }) => runId === run.runId),
+      ),
+      ...renderable,
+    ].sort((a, b) => a.startTimeMs - b.startTimeMs);
   });
 
   const classicGroups = $derived(
@@ -173,6 +183,9 @@
   let timelineWindowControls = $state<TimelineWindowControls>();
   let chainOverviewRuns = $state<WorkflowChainOverviewRun[]>([]);
   let chainOverviewLoading = $state(false);
+  let intervalLoadController: AbortController | null = null;
+
+  onDestroy(() => intervalLoadController?.abort());
 
   const waitForChainPoll = (
     signal: AbortSignal,
@@ -196,12 +209,14 @@
   $effect(() => {
     if (!workflowId || !firstRunId) {
       chainOverviewRuns = [];
+      intervalTimelineRuns = [];
       chainOverviewLoading = false;
       return;
     }
 
     const controller = new AbortController();
     chainOverviewRuns = [];
+    intervalTimelineRuns = [];
     chainOverviewLoading = true;
 
     const pollChain = async () => {
@@ -242,6 +257,87 @@
 
   const handleTimelineInit = (t: Timeline | ClassicTimeline) => {
     timeline = t;
+  };
+
+  const loadTimelineInterval = async (startTimeMs: number) => {
+    if (!workflowId || !timelineWindowControls) return;
+    const endTimeMs = startTimeMs + timelineWindowControls.windowDurationMs;
+    const firstIndex = chainOverviewRuns.findIndex(
+      (run) => run.endTimeMs >= startTimeMs,
+    );
+    if (firstIndex < 0) return;
+    const lastIndex = chainOverviewRuns.findLastIndex(
+      (run) => run.startTimeMs <= endTimeMs,
+    );
+    const requestedRuns = chainOverviewRuns.slice(
+      Math.max(0, firstIndex - 1),
+      Math.min(chainOverviewRuns.length, Math.max(firstIndex, lastIndex) + 2),
+    );
+
+    intervalLoadController?.abort();
+    const controller = new AbortController();
+    intervalLoadController = controller;
+    const requestWithSignal: typeof fetch = (input, init) =>
+      fetch(input, { ...init, signal: controller.signal });
+
+    const loaded = await Promise.all(
+      requestedRuns.map(async (run): Promise<TimelineRun | undefined> => {
+        const [{ workflow: described }, ascending, descending] =
+          await Promise.all([
+            fetchWorkflow(
+              { namespace, workflowId, runId: run.runId },
+              requestWithSignal,
+            ),
+            fetchPartialRawEvents({
+              namespace,
+              workflowId,
+              runId: run.runId,
+              sort: 'ascending',
+              maximumPageSize: '1000',
+              signal: controller.signal,
+            }),
+            fetchPartialRawEvents({
+              namespace,
+              workflowId,
+              runId: run.runId,
+              sort: 'descending',
+              maximumPageSize: '1000',
+              signal: controller.signal,
+            }),
+          ]);
+        if (!described || controller.signal.aborted) return undefined;
+
+        const buffer = createGroupedEventBuffer();
+        buffer.reset(parseInt(described.historyEvents ?? '0') || 0);
+        for (const event of ascending) buffer.ingestHistoryEvent(event);
+        for (const event of descending) buffer.ingestHistoryEvent(event);
+        return {
+          runId: run.runId,
+          status: described.status,
+          startTimeMs: run.startTimeMs,
+          endTimeMs: run.endTimeMs,
+          groups: toTimelineGroups(
+            run.runId,
+            buffer.getGroupArray({ excludeWorkflowTasks: true }),
+          ),
+          active: false,
+          successorRunId: run.nextRunId,
+        };
+      }),
+    );
+    if (controller.signal.aborted) return;
+    intervalTimelineRuns = loaded.filter(
+      (run): run is TimelineRun => run !== undefined,
+    );
+  };
+
+  const moveTimelineWindow = (startTimeMs: number) => {
+    timelineWindowControls?.moveToTime(startTimeMs);
+    void loadTimelineInterval(startTimeMs).catch((error: unknown) => {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        console.error('Unable to load the selected timeline interval.', error);
+      }
+    });
   };
 
   const onToggleIdleTime = () => {
@@ -328,24 +424,19 @@
             {translate('workflows.timeline-jump-beginning')}
           </ToggleButton>
           <ToggleButton
-            LeadingIcon={IconPause}
+            LeadingIcon={timelineWindowControls.mode === 'paused'
+              ? IconPlay
+              : IconPause}
             active={timelineWindowControls.mode === 'paused'}
-            disabled={timelineWindowControls.mode === 'paused'}
-            data-testid="timeline-window-pause"
-            onclick={timelineWindowControls.pause}
+            data-testid="timeline-window-playback"
+            onclick={timelineWindowControls.mode === 'paused'
+              ? timelineWindowControls.resume
+              : timelineWindowControls.pause}
             size="sm"
           >
-            {translate('workflows.timeline-pause')}
-          </ToggleButton>
-          <ToggleButton
-            LeadingIcon={IconPlay}
-            active={timelineWindowControls.mode === 'playing'}
-            disabled={timelineWindowControls.mode !== 'paused'}
-            data-testid="timeline-window-resume"
-            onclick={timelineWindowControls.resume}
-            size="sm"
-          >
-            {translate('workflows.timeline-resume')}
+            {timelineWindowControls.mode === 'paused'
+              ? translate('workflows.timeline-resume')
+              : translate('workflows.timeline-pause')}
           </ToggleButton>
           <ToggleButton
             LeadingIcon={IconArrowRight}
@@ -421,6 +512,7 @@
         windowStartTimeMs={timelineWindowControls?.windowStartTimeMs}
         windowEndTimeMs={timelineWindowControls?.windowEndTimeMs}
         windowDurationMs={timelineWindowControls?.windowDurationMs}
+        onWindowMove={moveTimelineWindow}
       />
     {/if}
     {#if displayMode === 'classic'}

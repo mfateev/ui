@@ -52,6 +52,18 @@ describe('timeline frame visibility', () => {
     });
   });
 
+  it('does not admit a later run compressed into the pixel viewport', () => {
+    const frames = getParticipatingRunFrames({
+      runs: [run('selected', 100, 200), run('current', 10_000, 10_100)],
+      visibleRange: { startPx: 0, endPx: 200 },
+      project: () => 100,
+      liveEndTimeMs: 10_100,
+      visibleTimeRange: { startTimeMs: 100, endTimeMs: 200 },
+    });
+
+    expect(frames.map((frame) => frame.runId)).toEqual(['selected']);
+  });
+
   it('closes a truncated chain at the first participating run', () => {
     const runs = [run('retained', 20, 40), run('active', 40, 80, true)];
     const participatingRuns = getParticipatingRunFrames({
@@ -95,6 +107,30 @@ describe('timeline frame visibility', () => {
       startWorldPx: 20,
       endWorldPx: 40,
       startBoundaryKnown: true,
+      endBoundaryKnown: true,
+    });
+  });
+
+  it('does not animate a historical chain frame using an offscreen live run', () => {
+    const runs = [run('historical', 20, 40), run('active', 1_000, 1_100, true)];
+    const participatingRuns = getParticipatingRunFrames({
+      runs,
+      visibleRange: { startPx: 15, endPx: 45 },
+      project: (timeMs) => timeMs,
+      liveEndTimeMs: 1_100,
+      visibleTimeRange: { startTimeMs: 15, endTimeMs: 45 },
+    });
+    const chain = getChainFrameCandidate({
+      workflowId: 'workflow',
+      runs,
+      participatingRuns,
+      knownChainStartRunId: 'historical',
+    });
+
+    expect(chain).toMatchObject({
+      status: 'Completed',
+      live: false,
+      endWorldPx: 40,
       endBoundaryKnown: true,
     });
   });

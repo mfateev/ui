@@ -88,6 +88,21 @@ describe('timelineGroupIntersectsViewport', () => {
     ).toBe(true);
   });
 
+  it('does not admit a later group compressed into the pixel viewport', () => {
+    expect(
+      timelineGroupIntersectsViewport({
+        group: group({ startMs: 1_000, endMs: 1_100 }),
+        currentTimeMs: T0 + 1_100,
+        project: () => 150,
+        visibleRange,
+        visibleTimeRange: {
+          startTimeMs: T0 + 100,
+          endTimeMs: T0 + 200,
+        },
+      }),
+    ).toBe(false);
+  });
+
   it.each([
     'activity',
     'nexus',

@@ -7,6 +7,31 @@ interface TimelineMotionFrame {
   snapThresholdPx?: number;
 }
 
+export const isTimelineCoordinateRebase = ({
+  previousOffsetPx,
+  nextOffsetPx,
+  previousWorldWidthPx,
+  nextWorldWidthPx,
+  expandedPxPerMs,
+  continuityWindowMs = 2_000,
+}: {
+  previousOffsetPx: number;
+  nextOffsetPx: number;
+  previousWorldWidthPx: number;
+  nextWorldWidthPx: number;
+  expandedPxPerMs: number;
+  continuityWindowMs?: number;
+}): boolean => {
+  const continuousChangeLimitPx = Math.max(
+    expandedPxPerMs * continuityWindowMs,
+    1,
+  );
+  return (
+    Math.abs(nextOffsetPx - previousOffsetPx) > continuousChangeLimitPx ||
+    Math.abs(nextWorldWidthPx - previousWorldWidthPx) > continuousChangeLimitPx
+  );
+};
+
 export class TimelineMotion {
   private _baseTimeMs: number | null = null;
   private _baseOffsetPx = 0;

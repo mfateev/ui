@@ -11,4 +11,5 @@ export interface TimelineWindowControls {
   resume: () => void;
   jumpToBeginning: () => void;
   jumpToCurrent: () => void;
+  moveToTime: (startTimeMs: number) => void;
 }

@@ -63,6 +63,7 @@
     retainedEndTimeMs?: number;
     labelLeadingOffsetPx?: number;
     labelTrailingOffsetPx?: number;
+    viewportEndOverscanPx?: number;
   };
 
   let {
@@ -76,6 +77,7 @@
     retainedEndTimeMs,
     labelLeadingOffsetPx = 0,
     labelTrailingOffsetPx = 0,
+    viewportEndOverscanPx = 0,
   }: Props = $props();
 
   const timelineWidth = $derived(canvasWidth - 2 * GUTTER);
@@ -168,7 +170,7 @@
     getTimelineRowGeometry({
       points,
       viewportStartPx: GUTTER,
-      viewportEndPx: canvasWidth - GUTTER,
+      viewportEndPx: canvasWidth - GUTTER + viewportEndOverscanPx,
       isPending: isLivePending,
       hasPauseTime: Boolean(pauseTime),
       haloPx: HALO,

@@ -37,17 +37,27 @@ export function getParticipatingRunFrames({
   visibleRange,
   project,
   liveEndTimeMs,
+  visibleTimeRange,
 }: {
   runs: TimelineRun[];
   visibleRange: PixelRange;
   project: (timeMs: number) => number;
   liveEndTimeMs: number;
+  visibleTimeRange?: { startTimeMs: number; endTimeMs: number };
 }): TimelineRunFrameCandidate[] {
   return runs.flatMap((run) => {
     const live =
       run.active && (run.status === 'Running' || run.status === 'Paused');
+    const endTimeMs = live ? liveEndTimeMs : run.endTimeMs;
+    if (
+      visibleTimeRange &&
+      (endTimeMs < visibleTimeRange.startTimeMs ||
+        run.startTimeMs > visibleTimeRange.endTimeMs)
+    ) {
+      return [];
+    }
     const startWorldPx = project(run.startTimeMs);
-    const endWorldPx = project(live ? liveEndTimeMs : run.endTimeMs);
+    const endWorldPx = project(endTimeMs);
     const intersects = intersectPixelRanges(
       { startPx: startWorldPx, endPx: endWorldPx },
       visibleRange,
@@ -82,12 +92,14 @@ export function getRecursiveFrameCandidates({
   project,
   liveEndTimeMs,
   rootKnownChainStartRunId,
+  visibleTimeRange,
 }: {
   nodes: TimelineWorkflowNode[];
   visibleRange: PixelRange;
   project: (timeMs: number) => number;
   liveEndTimeMs: number;
   rootKnownChainStartRunId?: string;
+  visibleTimeRange?: { startTimeMs: number; endTimeMs: number };
 }): RecursiveFrameCandidates {
   const runFrames: TimelineRunFrameCandidate[] = [];
   const chainFrames: TimelineChainFrameCandidate[] = [];
@@ -98,6 +110,7 @@ export function getRecursiveFrameCandidates({
       visibleRange,
       project,
       liveEndTimeMs,
+      visibleTimeRange,
     }).map((candidate) => ({
       ...candidate,
       key: workflowFrameKey({
@@ -151,24 +164,17 @@ export function getChainFrameCandidate({
 }): TimelineChainFrameCandidate | null {
   if (runs.length < (allowSingleRun ? 1 : 2) || participatingRuns.length === 0)
     return null;
-  const orderedRuns = [...runs].sort(
-    (a, b) => a.startTimeMs - b.startTimeMs || a.runId.localeCompare(b.runId),
-  );
   const orderedParticipatingRuns = [...participatingRuns].sort(
     (a, b) => a.startWorldPx - b.startWorldPx || a.runId.localeCompare(b.runId),
   );
   const firstParticipatingRun = orderedParticipatingRuns[0];
   const lastParticipatingRun = orderedParticipatingRuns.at(-1)!;
-  const finalRun = orderedRuns[orderedRuns.length - 1];
-  const activeRun = orderedRuns.find((run) => run.active) ?? finalRun;
-  const live =
-    activeRun.active &&
-    (activeRun.status === 'Running' || activeRun.status === 'Paused');
+  const live = lastParticipatingRun.live;
   return {
     kind: 'chain',
     key: `chain-frame:${knownChainStartRunId}`,
     label: workflowId,
-    status: activeRun.status,
+    status: lastParticipatingRun.status,
     live,
     startWorldPx: firstParticipatingRun.startWorldPx,
     endWorldPx: lastParticipatingRun.endWorldPx,

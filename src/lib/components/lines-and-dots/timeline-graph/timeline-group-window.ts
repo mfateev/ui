@@ -45,13 +45,34 @@ export function timelineGroupIntersectsViewport({
   retainedEndTimeMs,
   project,
   visibleRange,
+  visibleTimeRange,
 }: {
   group: EventGroup;
   currentTimeMs: number;
   retainedEndTimeMs?: number;
   project: (timeMs: number) => number;
   visibleRange: PixelRange;
+  visibleTimeRange?: { startTimeMs: number; endTimeMs: number };
 }): boolean {
+  if (visibleTimeRange) {
+    const startTime = group.initialEvent.eventTime;
+    const lastTime = group.lastEvent.eventTime;
+    if (isNullish(startTime)) return false;
+    const groupStartTimeMs = validTimeToDate(startTime).getTime();
+    const lastTimeMs = isNullish(lastTime)
+      ? groupStartTimeMs
+      : validTimeToDate(lastTime).getTime();
+    const groupEndTimeMs = group.isPending
+      ? Math.max(retainedEndTimeMs ?? currentTimeMs, lastTimeMs)
+      : lastTimeMs;
+    if (
+      groupEndTimeMs < visibleTimeRange.startTimeMs ||
+      groupStartTimeMs > visibleTimeRange.endTimeMs
+    ) {
+      return false;
+    }
+  }
+
   const groupRange = getTimelineGroupWorldRange({
     group,
     currentTimeMs,

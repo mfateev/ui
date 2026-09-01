@@ -42,7 +42,10 @@
   import { shouldMoveFocusToTimeline } from './timeline-focus';
   import { getRecursiveFrameCandidates } from './timeline-frame-visibility';
   import { timelineGroupIntersectsViewport } from './timeline-group-window';
-  import { TimelineMotion } from './timeline-motion';
+  import {
+    isTimelineCoordinateRebase,
+    TimelineMotion,
+  } from './timeline-motion';
   import { getRowY, getTotalForY } from './timeline-positioning';
   import {
     getTimelineFrameBoundaryOffset,
@@ -251,7 +254,14 @@
   });
 
   const timelineWidth = $derived(canvasWidth - 2 * GUTTER);
-
+  // Geometry is recomputed on the coarse clock while the painted world moves
+  // every animation frame. Keep a narrow offscreen strip mounted on the right
+  // so that transform motion cannot expose a gap against the stationary rail.
+  const TIMELINE_MOTION_OVERSCAN_PX = 64;
+  const renderedViewportWidthPx = $derived(
+    timelineWidth +
+      (displayMode === 'fixed-window' ? TIMELINE_MOTION_OVERSCAN_PX : 0),
+  );
   const timeline = new Timeline({
     getFullEventHistory: () => $fullEventHistory,
     getWorkflow: () => workflow,
@@ -289,6 +299,12 @@
   });
 
   const viewport = new Viewport();
+  const renderedVisibleRange = $derived({
+    startPx: viewport.visibleRange.startPx,
+    endPx:
+      viewport.visibleRange.endPx +
+      (displayMode === 'fixed-window' ? TIMELINE_MOTION_OVERSCAN_PX : 0),
+  });
   const viewportMotion = new TimelineMotion();
   const liveEdgeMotion = new TimelineMotion();
   const workflowIsLive = $derived(aggregateHasLive);
@@ -296,6 +312,19 @@
   let frozenAnchorTimeMs = $state<number | null>(null);
   let playbackOriginTimeMs = 0;
   let playbackStartedAtMs = 0;
+  const fixedWindowTimeRange = $derived.by(() => {
+    if (
+      displayMode !== 'fixed-window' ||
+      viewport.isFollowing ||
+      frozenAnchorTimeMs === null
+    ) {
+      return undefined;
+    }
+    return {
+      startTimeMs: frozenAnchorTimeMs,
+      endTimeMs: frozenAnchorTimeMs + durationPerViewportMs,
+    };
+  });
   const shouldAnimateTimeline = $derived(
     displayMode === 'fixed-window' &&
       (viewport.isFollowing || windowMode === 'playing') &&
@@ -305,6 +334,8 @@
   const resetTimelineMotion = () => {
     viewportMotion.reset(viewport.offsetPx);
     liveEdgeMotion.reset(scale.totalWorldWidthPx);
+    containerEl?.style.setProperty('--timeline-frame-offset', '0px');
+    containerEl?.style.setProperty('--timeline-live-edge-extension', '0px');
   };
 
   const pauseWindow = () => {
@@ -324,16 +355,36 @@
   };
 
   const jumpToBeginning = () => {
-    windowMode = 'paused';
     frozenAnchorTimeMs = timeline.workflowTimespan.startTimeMs;
     viewport.moveTo(viewport.minimumOffsetPx);
+    if (windowMode !== 'paused') {
+      playbackOriginTimeMs = frozenAnchorTimeMs;
+      playbackStartedAtMs = Date.now();
+      windowMode = 'playing';
+    }
     resetTimelineMotion();
   };
 
   const jumpToCurrent = () => {
-    windowMode = 'following';
-    frozenAnchorTimeMs = null;
     viewport.resume(scale.totalWorldWidthPx, true);
+    if (windowMode === 'paused') {
+      frozenAnchorTimeMs = scale.unproject(viewport.offsetPx);
+      viewport.freeze();
+    } else {
+      windowMode = 'following';
+      frozenAnchorTimeMs = null;
+    }
+    resetTimelineMotion();
+  };
+
+  const moveWindowToTime = (startTimeMs: number) => {
+    frozenAnchorTimeMs = startTimeMs;
+    viewport.moveTo(scale.project(startTimeMs));
+    if (windowMode !== 'paused') {
+      playbackOriginTimeMs = startTimeMs;
+      playbackStartedAtMs = Date.now();
+      windowMode = 'playing';
+    }
     resetTimelineMotion();
   };
 
@@ -347,12 +398,15 @@
       atBeginning: viewport.offsetPx <= viewport.minimumOffsetPx + 0.5,
       atCurrent: viewport.offsetPx >= viewport.maximumOffsetPx - 0.5,
       windowStartTimeMs: scale.unproject(viewport.offsetPx),
-      windowEndTimeMs: scale.unproject(viewport.offsetPx + viewport.widthPx),
+      windowEndTimeMs:
+        fixedWindowTimeRange?.endTimeMs ??
+        scale.unproject(viewport.offsetPx + viewport.widthPx),
       windowDurationMs: durationPerViewportMs,
       pause: pauseWindow,
       resume: resumeWindow,
       jumpToBeginning,
       jumpToCurrent,
+      moveToTime: moveWindowToTime,
     };
   });
 
@@ -381,6 +435,8 @@
   });
 
   $effect(() => {
+    const previousOffsetPx = viewport.offsetPx;
+    const previousWorldWidthPx = viewport.totalWorldWidthPx;
     const anchoredOffsetPx =
       !viewport.isFollowing && frozenAnchorTimeMs !== null
         ? scale.project(frozenAnchorTimeMs)
@@ -390,6 +446,21 @@
       totalWorldWidthPx: scale.totalWorldWidthPx,
       anchoredOffsetPx,
     });
+    if (
+      isTimelineCoordinateRebase({
+        previousOffsetPx,
+        nextOffsetPx: viewport.offsetPx,
+        previousWorldWidthPx,
+        nextWorldWidthPx: viewport.totalWorldWidthPx,
+        expandedPxPerMs: scale.liveEdgePxPerMs,
+      })
+    ) {
+      // Loading the histories around a dropped overview window changes the
+      // scale after the drag has ended. Do not carry the old compositor offset
+      // into that new coordinate system: it can paint the former right edge at
+      // the viewport's left rail until the animation catches up.
+      resetTimelineMotion();
+    }
     if (displayMode === 'fixed-window' && timelineRuns.length) {
       const window = getChainRetentionWindow({
         viewport: {
@@ -508,7 +579,8 @@
             currentTimeMs: nowMs,
             retainedEndTimeMs: entry.active ? undefined : entry.runEndTimeMs,
             project: (timeMs) => scale.project(timeMs),
-            visibleRange: viewport.visibleRange,
+            visibleRange: renderedVisibleRange,
+            visibleTimeRange: fixedWindowTimeRange,
           }),
         ),
   );
@@ -529,10 +601,7 @@
     if (currentRunId === observedRunId) return;
 
     observedRunId = currentRunId;
-    viewportMotion.reset(viewport.offsetPx);
-    liveEdgeMotion.reset(scale.totalWorldWidthPx);
-    containerEl?.style.setProperty('--timeline-frame-offset', '0px');
-    containerEl?.style.setProperty('--timeline-live-edge-extension', '0px');
+    resetTimelineMotion();
   });
 
   // Unfetched skeleton rows. totalExpectedEvents is already a density-adjusted
@@ -559,10 +628,11 @@
               startPx: Number.NEGATIVE_INFINITY,
               endPx: Number.POSITIVE_INFINITY,
             }
-          : viewport.visibleRange,
+          : renderedVisibleRange,
       project: (timeMs) => scale.project(timeMs),
       liveEndTimeMs: timeline.workflowTimespan.endTimeMs,
       rootKnownChainStartRunId: knownChainStartRunId,
+      visibleTimeRange: fixedWindowTimeRange,
     }),
   );
   const participatingRunFrames = $derived(frameCandidates.runFrames);
@@ -1217,7 +1287,7 @@
             startWorldPx: candidate.startWorldPx,
             endWorldPx: candidate.endWorldPx,
             viewportOffsetPx: viewport.offsetPx,
-            viewportWidthPx: timelineWidth,
+            viewportWidthPx: renderedViewportWidthPx,
             gutterPx: GUTTER,
             topPx: vertical.topPx,
             bottomPx: vertical.bottomPx,
@@ -1245,7 +1315,7 @@
             startWorldPx: candidate.startWorldPx,
             endWorldPx: candidate.endWorldPx,
             viewportOffsetPx: viewport.offsetPx,
-            viewportWidthPx: timelineWidth,
+            viewportWidthPx: renderedViewportWidthPx,
             gutterPx: GUTTER,
             topPx: vertical.topPx,
             bottomPx: vertical.bottomPx,
@@ -1288,16 +1358,18 @@
     bind:currentTime={nowMs}
   >
     {#snippet children({ endTime })}
+      {@const visibleStartTime = fixedWindowTimeRange?.startTimeMs ?? startTime}
+      {@const visibleEndTime = fixedWindowTimeRange?.endTimeMs ?? endTime}
       <div
         class="pointer-events-none sticky top-[120px]"
         class:invisible={!!$activeGroups.length}
       >
         <div class="flex w-full justify-between text-xs">
           <p class="w-60 -translate-x-24 rotate-90">
-            {$timestamp(startTime, { format: 'short' })}
+            {$timestamp(visibleStartTime, { format: 'short' })}
           </p>
           <p class="w-60 translate-x-24 rotate-90">
-            {$timestamp(endTime, { format: 'short' })}
+            {$timestamp(visibleEndTime, { format: 'short' })}
           </p>
         </div>
       </div>
@@ -1598,6 +1670,9 @@
                       retainedEndTimeMs={timelineEntry?.active
                         ? undefined
                         : timelineEntry?.runEndTimeMs}
+                      viewportEndOverscanPx={displayMode === 'fixed-window'
+                        ? TIMELINE_MOTION_OVERSCAN_PX
+                        : 0}
                       labelLeadingOffsetPx={slot.row.childEdge &&
                       childControlFitsAfter
                         ? 34

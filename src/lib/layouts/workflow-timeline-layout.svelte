@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext, onDestroy, onMount } from 'svelte';
+  import { getContext, onDestroy, onMount, untrack } from 'svelte';
 
   import { beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -49,6 +49,7 @@
   import { eventBuffer } from '$lib/services/grouped-event-buffer.svelte';
   import {
     loadWorkflowChainOverview,
+    mergeWorkflowChainOverviewRuns,
     type WorkflowChainOverviewRun,
   } from '$lib/services/workflow-chain-overview';
   import { fetchWorkflow } from '$lib/services/workflow-service';
@@ -187,25 +188,6 @@
 
   onDestroy(() => intervalLoadController?.abort());
 
-  const waitForChainPoll = (
-    signal: AbortSignal,
-    delayMs = 2_000,
-  ): Promise<void> =>
-    new Promise((resolve) => {
-      const finish = () => {
-        clearTimeout(timer);
-        signal.removeEventListener('abort', finish);
-        resolve();
-      };
-      const timer = setTimeout(finish, delayMs);
-      signal.addEventListener('abort', finish, { once: true });
-    });
-
-  const chainCanGrow = (run: WorkflowChainOverviewRun | undefined): boolean =>
-    run?.status === 'Running' ||
-    run?.status === 'Paused' ||
-    run?.status === 'ContinuedAsNew';
-
   $effect(() => {
     if (!workflowId || !firstRunId) {
       chainOverviewRuns = [];
@@ -219,40 +201,64 @@
     intervalTimelineRuns = [];
     chainOverviewLoading = true;
 
-    const pollChain = async () => {
-      let runs: WorkflowChainOverviewRun[] = [];
-      let initialLoad = true;
-
-      while (!controller.signal.aborted) {
-        try {
-          runs = await loadWorkflowChainOverview({
-            namespace,
-            workflowId,
-            firstRunId,
-            existingRuns: runs,
-            signal: controller.signal,
-            onProgress: (progress) => {
-              chainOverviewRuns = progress;
-            },
-          });
-          if (controller.signal.aborted) return;
-          chainOverviewRuns = runs;
-          if (initialLoad) chainOverviewLoading = false;
-          initialLoad = false;
-          if (!chainCanGrow(runs.at(-1))) return;
-        } catch (error: unknown) {
-          if (error instanceof DOMException && error.name === 'AbortError') {
-            return;
-          }
+    const loadChain = async () => {
+      try {
+        const runs = await loadWorkflowChainOverview({
+          namespace,
+          workflowId,
+          firstRunId,
+          signal: controller.signal,
+          onProgress: (progress) => {
+            chainOverviewRuns = mergeWorkflowChainOverviewRuns(
+              chainOverviewRuns,
+              progress,
+            );
+          },
+        });
+        if (controller.signal.aborted) return;
+        chainOverviewRuns = mergeWorkflowChainOverviewRuns(
+          chainOverviewRuns,
+          runs,
+        );
+      } catch (error: unknown) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.error('Unable to load the workflow chain overview.', error);
         }
-
-        await waitForChainPoll(controller.signal);
+      } finally {
+        if (!controller.signal.aborted) chainOverviewLoading = false;
       }
     };
 
-    void pollChain();
+    void loadChain();
 
     return () => controller.abort();
+  });
+
+  $effect(() => {
+    const currentWorkflow = workflow;
+    const retainedRuns = workflowRunCtx.retainedRuns;
+    if (!currentWorkflow) return;
+    const existingRuns = untrack(() => chainOverviewRuns);
+
+    const updates: WorkflowChainOverviewRun[] = retainedRuns.map((run) => ({
+      runId: run.runId,
+      status: run.status,
+      startTimeMs: run.startTimeMs,
+      endTimeMs: run.endTimeMs,
+      nextRunId: run.successorRunId,
+      transitionToNext: run.transitionFromPrevious,
+    }));
+    updates.push({
+      runId: currentWorkflow.runId,
+      status: currentWorkflow.status,
+      startTimeMs: Date.parse(currentWorkflow.startTime),
+      endTimeMs:
+        Date.parse(currentWorkflow.endTime) ||
+        existingRuns.find(({ runId }) => runId === currentWorkflow.runId)
+          ?.endTimeMs ||
+        Date.now(),
+    });
+    chainOverviewRuns = mergeWorkflowChainOverviewRuns(existingRuns, updates);
   });
 
   const handleTimelineInit = (t: Timeline | ClassicTimeline) => {
@@ -340,6 +346,17 @@
     });
   };
 
+  const jumpTimelineToBeginning = () => {
+    timelineWindowControls?.jumpToBeginning();
+    const chainStartTimeMs = chainOverviewRuns[0]?.startTimeMs;
+    if (chainStartTimeMs === undefined) return;
+    void loadTimelineInterval(chainStartTimeMs).catch((error: unknown) => {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        console.error('Unable to load the beginning of the timeline.', error);
+      }
+    });
+  };
+
   const onToggleIdleTime = () => {
     if (!timeline) return;
     if (timeline.allCollapsibleSegmentsCollapsed) {
@@ -416,9 +433,10 @@
         >
           <ToggleButton
             LeadingIcon={IconArrowLeft}
-            disabled={timelineWindowControls.atBeginning}
+            disabled={chainOverviewLoading ||
+              timelineWindowControls.atBeginning}
             data-testid="timeline-window-beginning"
-            onclick={timelineWindowControls.jumpToBeginning}
+            onclick={jumpTimelineToBeginning}
             size="sm"
           >
             {translate('workflows.timeline-jump-beginning')}
@@ -512,6 +530,7 @@
         windowStartTimeMs={timelineWindowControls?.windowStartTimeMs}
         windowEndTimeMs={timelineWindowControls?.windowEndTimeMs}
         windowDurationMs={timelineWindowControls?.windowDurationMs}
+        windowMode={timelineWindowControls?.mode}
         onWindowMove={moveTimelineWindow}
       />
     {/if}

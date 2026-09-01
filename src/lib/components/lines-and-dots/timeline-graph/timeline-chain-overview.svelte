@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { TimelineWindowMode } from '$lib/components/lines-and-dots/timeline-graph/timeline-window-controls';
   import { translate } from '$lib/i18n/translate';
   import type { WorkflowChainOverviewRun } from '$lib/services/workflow-chain-overview';
 
@@ -7,6 +8,7 @@
     windowStartTimeMs?: number;
     windowEndTimeMs?: number;
     windowDurationMs?: number;
+    windowMode?: TimelineWindowMode;
     loading?: boolean;
     onWindowMove?: (startTimeMs: number) => void;
   }
@@ -16,21 +18,26 @@
     windowStartTimeMs,
     windowEndTimeMs,
     windowDurationMs,
+    windowMode,
     loading = false,
     onWindowMove,
   }: Props = $props();
 
   let trackElement = $state<HTMLDivElement>();
+  let overviewElement = $state<HTMLDivElement>();
   let dragLeft = $state<number | null>(null);
   let dragOffset = 0;
+  let visualDurationMs = 1;
+  let visualWindowWidth = 0.4;
+
+  const chainEndIsLive = $derived(
+    runs.at(-1)?.status === 'Running' ||
+      runs.at(-1)?.status === 'Paused' ||
+      runs.at(-1)?.status === 'ContinuedAsNew',
+  );
 
   const startTimeMs = $derived(runs[0]?.startTimeMs);
-  const endTimeMs = $derived(
-    Math.max(
-      ...runs.map((run) => run.endTimeMs),
-      windowEndTimeMs ?? Number.NEGATIVE_INFINITY,
-    ),
-  );
+  const endTimeMs = $derived(Math.max(...runs.map((run) => run.endTimeMs)));
   const durationMs = $derived(
     startTimeMs === undefined ? 0 : Math.max(1, endTimeMs - startTimeMs),
   );
@@ -51,6 +58,80 @@
     runs.filter((run) => run.transitionToNext === 'continue-as-new'),
   );
 
+  $effect(() => {
+    const chainStartTimeMs = startTimeMs;
+    const geometryEndTimeMs = endTimeMs;
+    const isLive = chainEndIsLive;
+    const currentWindowStartTimeMs = windowStartTimeMs;
+    const currentWindowEndTimeMs = visualWindowEndTimeMs;
+    const currentWindowDurationMs = windowDurationMs;
+    const currentWindowMode = windowMode;
+    if (chainStartTimeMs === undefined || !trackElement) return;
+
+    const geometryDurationMs = Math.max(
+      1,
+      geometryEndTimeMs - chainStartTimeMs,
+    );
+    let animationFrame = 0;
+    const animationStartedAtMs = performance.now();
+
+    const updateVisualGeometry = () => {
+      const visualEndTimeMs = isLive
+        ? Math.max(geometryEndTimeMs, Date.now())
+        : geometryEndTimeMs;
+      visualDurationMs = Math.max(1, visualEndTimeMs - chainStartTimeMs);
+      const scale = geometryDurationMs / visualDurationMs;
+      trackElement?.style.setProperty('--overview-live-scale', `${scale}`);
+
+      if (currentWindowStartTimeMs !== undefined) {
+        const elapsedMs = performance.now() - animationStartedAtMs;
+        const movingWindowStartTimeMs =
+          currentWindowMode === 'following' &&
+          currentWindowDurationMs !== undefined
+            ? visualEndTimeMs - currentWindowDurationMs
+            : currentWindowMode === 'playing'
+              ? Math.min(
+                  currentWindowStartTimeMs + elapsedMs,
+                  visualEndTimeMs - (currentWindowDurationMs ?? 0),
+                )
+              : currentWindowStartTimeMs;
+        const movingWindowEndTimeMs =
+          currentWindowDurationMs === undefined
+            ? currentWindowEndTimeMs
+            : movingWindowStartTimeMs + currentWindowDurationMs;
+        const left = Math.min(
+          100,
+          Math.max(
+            0,
+            ((movingWindowStartTimeMs - chainStartTimeMs) / visualDurationMs) *
+              100,
+          ),
+        );
+        const right = Math.min(
+          100,
+          Math.max(
+            0,
+            ((movingWindowEndTimeMs - chainStartTimeMs) / visualDurationMs) *
+              100,
+          ),
+        );
+        visualWindowWidth = Math.max(0.4, right - left);
+        trackElement?.style.setProperty('--overview-window-left', `${left}%`);
+        trackElement?.style.setProperty(
+          '--overview-window-width',
+          `${visualWindowWidth}%`,
+        );
+      }
+      if (overviewElement) {
+        overviewElement.dataset.chainEndTimeMs = `${visualEndTimeMs}`;
+      }
+      if (isLive) animationFrame = requestAnimationFrame(updateVisualGeometry);
+    };
+
+    updateVisualGeometry();
+    return () => cancelAnimationFrame(animationFrame);
+  });
+
   const pointerPosition = (event: PointerEvent): number => {
     const bounds = trackElement?.getBoundingClientRect();
     if (!bounds?.width) return 0;
@@ -58,13 +139,14 @@
   };
 
   const clampDragLeft = (left: number): number =>
-    Math.min(Math.max(0, left), Math.max(0, 100 - windowWidth));
+    Math.min(Math.max(0, left), Math.max(0, 100 - visualWindowWidth));
 
   const startDragging = (event: PointerEvent) => {
     if (!trackElement || !onWindowMove) return;
     event.preventDefault();
     dragOffset = pointerPosition(event) - displayedWindowLeft;
     dragLeft = displayedWindowLeft;
+    trackElement.style.removeProperty('--overview-window-left');
     trackElement.setPointerCapture(event.pointerId);
   };
 
@@ -75,7 +157,8 @@
 
   const finishDragging = (event: PointerEvent) => {
     if (dragLeft === null || startTimeMs === undefined) return;
-    const selectedStartTimeMs = startTimeMs + (dragLeft / 100) * durationMs;
+    const selectedStartTimeMs =
+      startTimeMs + (dragLeft / 100) * visualDurationMs;
     trackElement?.releasePointerCapture(event.pointerId);
     onWindowMove?.(selectedStartTimeMs);
     dragLeft = null;
@@ -89,6 +172,7 @@
 </script>
 
 <div
+  bind:this={overviewElement}
   class="surface-background border-b border-subtle px-3 py-2"
   data-testid="timeline-chain-overview"
   data-chain-end-time-ms={endTimeMs}
@@ -113,24 +197,28 @@
     onpointercancel={cancelDragging}
   >
     {#if startTimeMs !== undefined}
-      {#each continuationTicks as run (run.runId)}
-        <span
-          class="absolute inset-y-0 w-0.5 -translate-x-1/2 bg-interactive"
-          style:left="{position(run.endTimeMs)}%"
-          title={translate('workflows.timeline-continued-as-new')}
-          data-testid="timeline-continue-as-new-tick"
-        ></span>
-      {/each}
+      <div
+        class="pointer-events-none absolute inset-0 origin-left"
+        style:transform="scaleX(var(--overview-live-scale, 1))"
+      >
+        {#each continuationTicks as run (run.runId)}
+          <span
+            class="absolute inset-y-0 w-0.5 -translate-x-1/2 bg-interactive"
+            style:left="{position(run.endTimeMs)}%"
+            title={translate('workflows.timeline-continued-as-new')}
+            data-testid="timeline-continue-as-new-tick"
+          ></span>
+        {/each}
+      </div>
       <button
         type="button"
         class="absolute -inset-y-1 z-10 box-border touch-none rounded border-[3px] border-interactive bg-transparent p-0 shadow-sm {onWindowMove
           ? 'cursor-grab active:cursor-grabbing'
           : 'pointer-events-none'}"
-        style:left="{displayedWindowLeft}%"
-        style:width="{windowWidth}%"
-        style:transition={dragLeft === null
-          ? 'left 200ms linear, width 200ms linear'
-          : 'none'}
+        style:left={dragLeft === null
+          ? `var(--overview-window-left, ${displayedWindowLeft}%)`
+          : `${displayedWindowLeft}%`}
+        style:width={`var(--overview-window-width, ${windowWidth}%)`}
         data-testid="timeline-window-position"
         data-window-start-time-ms={windowStartTimeMs}
         data-window-end-time-ms={visualWindowEndTimeMs}

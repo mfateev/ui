@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkflowEvent } from '$lib/types/events';
 import type { WorkflowExecution } from '$lib/types/workflows';
 
-import { loadWorkflowChainOverview } from './workflow-chain-overview';
+import {
+  loadWorkflowChainOverview,
+  mergeWorkflowChainOverviewRuns,
+} from './workflow-chain-overview';
 
 const workflow = (
   runId: string,
@@ -125,5 +128,53 @@ describe('loadWorkflowChainOverview', () => {
     expect(describeRun).toHaveBeenCalledTimes(2);
     expect(describeRun).not.toHaveBeenCalledWith('run-1');
     expect(runs.map(({ runId }) => runId)).toEqual(['run-1', 'run-2', 'run-3']);
+  });
+});
+
+describe('mergeWorkflowChainOverviewRuns', () => {
+  it('adds completed and active runs without losing known transitions', () => {
+    const merged = mergeWorkflowChainOverviewRuns(
+      [
+        {
+          runId: 'run-1',
+          status: 'Running',
+          startTimeMs: 100,
+          endTimeMs: 200,
+          nextRunId: 'run-2',
+          transitionToNext: 'continue-as-new',
+        },
+      ],
+      [
+        {
+          runId: 'run-1',
+          status: 'ContinuedAsNew',
+          startTimeMs: 100,
+          endTimeMs: 300,
+        },
+        {
+          runId: 'run-2',
+          status: 'Running',
+          startTimeMs: 300,
+          endTimeMs: 400,
+        },
+      ],
+    );
+
+    expect(merged).toEqual([
+      {
+        runId: 'run-1',
+        status: 'ContinuedAsNew',
+        startTimeMs: 100,
+        endTimeMs: 300,
+        nextRunId: 'run-2',
+        transitionToNext: 'continue-as-new',
+      },
+      {
+        runId: 'run-2',
+        status: 'Running',
+        startTimeMs: 300,
+        endTimeMs: 400,
+      },
+    ]);
   });
 });

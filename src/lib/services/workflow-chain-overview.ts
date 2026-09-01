@@ -16,6 +16,27 @@ export interface WorkflowChainOverviewRun {
   transitionToNext?: ChainTransition;
 }
 
+export const mergeWorkflowChainOverviewRuns = (
+  current: WorkflowChainOverviewRun[],
+  updates: WorkflowChainOverviewRun[],
+): WorkflowChainOverviewRun[] => {
+  const runs = new Map(current.map((run) => [run.runId, run]));
+
+  for (const update of updates) {
+    const existing = runs.get(update.runId);
+    runs.set(update.runId, {
+      ...existing,
+      ...update,
+      nextRunId: update.nextRunId ?? existing?.nextRunId,
+      transitionToNext: update.transitionToNext ?? existing?.transitionToNext,
+    });
+  }
+
+  return [...runs.values()].sort(
+    (left, right) => left.startTimeMs - right.startTimeMs,
+  );
+};
+
 interface LoadWorkflowChainOverviewOptions {
   namespace: string;
   workflowId: string;

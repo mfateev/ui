@@ -66,6 +66,7 @@ export class RecursiveWorkflowSession {
     string,
     TimelineWorkflowNode
   >();
+  private readonly visibleEdgeKeys = new SvelteSet<string>();
   private retained: Reservation = emptyReservation();
   private reserved: Reservation = emptyReservation();
   private activeRequests = 0;
@@ -140,7 +141,11 @@ export class RecursiveWorkflowSession {
     if (this.disposed) return;
     const now = Date.now();
     let changed = false;
-    for (const key of edgeKeys) {
+    const keys = [...edgeKeys];
+    this.visibleEdgeKeys.clear();
+    for (const key of keys) this.visibleEdgeKeys.add(key);
+    if (this.pruneInvisibleTasks()) changed = true;
+    for (const key of keys) {
       const found = this.findEdge(key);
       if (!found) continue;
       found.edge.lastVisibleAt = now;
@@ -153,7 +158,10 @@ export class RecursiveWorkflowSession {
         changed = true;
       }
     }
-    if (changed) this.changed();
+    if (changed) {
+      this.changed();
+      this.drain();
+    }
   }
 
   toggle(edgeKey: string): void {
@@ -323,7 +331,7 @@ export class RecursiveWorkflowSession {
       return;
     }
 
-    let reservation = this.reserve();
+    let reservation = this.reserveWithEviction(ancestry);
     const canWaitForCapacity =
       !reservation &&
       this.activeRequests >= this.limits.maximumConcurrentRequests &&
@@ -394,6 +402,39 @@ export class RecursiveWorkflowSession {
     };
     this.add(this.reserved, reservation);
     return reservation;
+  }
+
+  private reserveWithEviction(ancestry: string[]): Reservation | null {
+    let reservation = this.reserve();
+    if (reservation) return reservation;
+
+    const protectedNodeKeys = new SvelteSet(ancestry);
+    const candidates: TimelineChildEdge[] = [];
+    const visited = new SvelteSet<TimelineWorkflowNode>();
+    const visit = (node: TimelineWorkflowNode): void => {
+      if (visited.has(node)) return;
+      visited.add(node);
+      for (const edge of node.childrenByGroupKey.values()) {
+        if (edge.load.state !== 'loaded') continue;
+        if (
+          !this.visibleEdgeKeys.has(edge.key) &&
+          !protectedNodeKeys.has(edge.load.node.key)
+        ) {
+          candidates.push(edge);
+        }
+        visit(edge.load.node);
+      }
+    };
+    visit(this.rootNode);
+    candidates.sort((left, right) => left.lastVisibleAt - right.lastVisibleAt);
+
+    for (const candidate of candidates) {
+      candidate.load = { state: 'evicted' };
+      this.rebuildLoadedIndex();
+      reservation = this.reserve();
+      if (reservation) return reservation;
+    }
+    return null;
   }
 
   private limitReason():
@@ -579,17 +620,34 @@ export class RecursiveWorkflowSession {
         if (!reachableEdges.has(edge)) task.edges.delete(edge);
       }
       if (task.edges.size) continue;
-
-      task.controller.abort();
-      const queuedIndex = this.queued.indexOf(task);
-      if (queuedIndex >= 0) this.queued.splice(queuedIndex, 1);
-      if (this.tasksByExecutionKey.get(task.key) === task) {
-        this.tasksByExecutionKey.delete(task.key);
-      }
-      this.subtract(this.reserved, task.reservation);
-      task.reservation = emptyReservation();
-      task.awaitingReservation = false;
+      this.cancelTask(task);
     }
+  }
+
+  private pruneInvisibleTasks(): boolean {
+    let changed = false;
+    for (const task of [...this.tasksByExecutionKey.values()]) {
+      for (const edge of [...task.edges]) {
+        if (this.visibleEdgeKeys.has(edge.key)) continue;
+        task.edges.delete(edge);
+        if (edge.load.state === 'loading') edge.load = { state: 'idle' };
+        changed = true;
+      }
+      if (!task.edges.size) this.cancelTask(task);
+    }
+    return changed;
+  }
+
+  private cancelTask(task: QueueTask): void {
+    task.controller.abort();
+    const queuedIndex = this.queued.indexOf(task);
+    if (queuedIndex >= 0) this.queued.splice(queuedIndex, 1);
+    if (this.tasksByExecutionKey.get(task.key) === task) {
+      this.tasksByExecutionKey.delete(task.key);
+    }
+    this.subtract(this.reserved, task.reservation);
+    task.reservation = emptyReservation();
+    task.awaitingReservation = false;
   }
 
   private enqueueKnownSuccessors(task: QueueTask): void {

@@ -3,9 +3,20 @@ import { describe, expect, it } from 'vitest';
 import {
   clampTimelineWindowDuration,
   formatTimelineWindowDuration,
+  getTimelineWindowModeAfterManualPosition,
   getTimelineWindowTimeRange,
   getTimelineWindowZoomDuration,
 } from './timeline-window-controls';
+
+describe('getTimelineWindowModeAfterManualPosition', () => {
+  it.each([
+    ['paused', 'paused'],
+    ['playing', 'playing'],
+    ['following', 'playing'],
+  ] as const)('maps %s to %s', (mode, expected) => {
+    expect(getTimelineWindowModeAfterManualPosition(mode)).toBe(expected);
+  });
+});
 
 describe('getTimelineWindowZoomDuration', () => {
   it('steps inward and outward from the default one-minute window', () => {

@@ -411,6 +411,75 @@ describe('RecursiveWorkflowSession', () => {
     session.dispose();
   });
 
+  it('evicts an off-screen child before truncating a visible child', async () => {
+    const loader = vi.fn(
+      ({ reference }: Parameters<typeof loadChildWorkflow>[0]) =>
+        Promise.resolve(loaded(reference.workflowId)),
+    );
+    const session = new RecursiveWorkflowSession({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1, 'first'), childGroup(2, 'second')])],
+      limits: { ...DEFAULT_RECURSIVE_TIMELINE_LIMITS, maximumNodes: 2 },
+      loader,
+    });
+    const [firstEdge, secondEdge] = [
+      ...session.snapshot.childrenByGroupKey.values(),
+    ];
+    session.observeEdges([firstEdge.key]);
+    await vi.waitFor(() => expect(firstEdge.load.state).toBe('loaded'));
+
+    session.observeEdges([secondEdge.key]);
+
+    await vi.waitFor(() => expect(secondEdge.load.state).toBe('loaded'));
+    expect(firstEdge.load.state).toBe('evicted');
+    expect(loader).toHaveBeenCalledTimes(2);
+    session.dispose();
+  });
+
+  it('cancels an off-screen load before reserving its replacement', async () => {
+    const loader = vi.fn(
+      ({ reference, signal }: Parameters<typeof loadChildWorkflow>[0]) =>
+        new Promise<LoadedChildWorkflow>((resolve, reject) => {
+          const timer = setTimeout(
+            () => resolve(loaded(reference.workflowId)),
+            reference.workflowId === 'first' ? 10_000 : 0,
+          );
+          signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              reject(new DOMException('Aborted', 'AbortError'));
+            },
+            { once: true },
+          );
+        }),
+    );
+    const session = new RecursiveWorkflowSession({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1, 'first'), childGroup(2, 'second')])],
+      limits: {
+        ...DEFAULT_RECURSIVE_TIMELINE_LIMITS,
+        maximumNodes: 2,
+        maximumConcurrentRequests: 1,
+      },
+      loader,
+    });
+    const [firstEdge, secondEdge] = [
+      ...session.snapshot.childrenByGroupKey.values(),
+    ];
+    session.observeEdges([firstEdge.key]);
+    await vi.waitFor(() => expect(session.requestCount).toBe(1));
+
+    session.observeEdges([secondEdge.key]);
+
+    await vi.waitFor(() => expect(secondEdge.load.state).toBe('loaded'));
+    expect(firstEdge.load.state).toBe('idle');
+    expect(loader).toHaveBeenCalledTimes(2);
+    session.dispose();
+  });
+
   it('drops stale Continue-As-New aliases outside run retention', async () => {
     const successorByRun = new Map([
       ['chain-1', 'chain-2'],

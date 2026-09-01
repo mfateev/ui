@@ -69,6 +69,7 @@
   } from './timeline-window-controls';
   import {
     clampTimelineWindowDuration,
+    getTimelineWindowModeAfterManualPosition,
     getTimelineWindowTimeRange,
     getTimelineWindowZoomDuration,
     TIMELINE_WINDOW_DURATIONS_MS,
@@ -408,7 +409,11 @@
   const moveWindowToTime = (startTimeMs: number) => {
     frozenAnchorTimeMs = startTimeMs;
     viewport.moveTo(scale.project(startTimeMs));
-    windowMode = 'paused';
+    windowMode = getTimelineWindowModeAfterManualPosition(windowMode);
+    if (windowMode === 'playing') {
+      playbackOriginTimeMs = startTimeMs;
+      playbackStartedAtMs = Date.now();
+    }
     windowLayoutRevision += 1;
     resetTimelineMotion();
   };
@@ -465,7 +470,11 @@
         latestStartTimeMs,
       );
       viewport.moveTo(scale.project(frozenAnchorTimeMs));
-      windowMode = 'paused';
+      windowMode = getTimelineWindowModeAfterManualPosition(windowMode);
+      if (windowMode === 'playing') {
+        playbackOriginTimeMs = frozenAnchorTimeMs;
+        playbackStartedAtMs = Date.now();
+      }
     }
 
     fixedWindowDurationMs = nextDurationMs;

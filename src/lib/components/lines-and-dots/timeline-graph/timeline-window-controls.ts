@@ -42,6 +42,12 @@ export function clampTimelineWindowDuration(durationMs: number): number {
   );
 }
 
+export function getTimelineWindowModeAfterManualPosition(
+  mode: TimelineWindowMode,
+): TimelineWindowMode {
+  return mode === 'paused' ? 'paused' : 'playing';
+}
+
 export function formatTimelineWindowDuration(durationMs: number): string {
   const totalSeconds = Math.max(1, Math.round(durationMs / 1_000));
   if (totalSeconds < 60) return `${totalSeconds}s`;

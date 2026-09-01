@@ -247,8 +247,9 @@
   const timeline = new Timeline({
     getFullEventHistory: () => $fullEventHistory,
     getWorkflow: () => workflow,
-    getEventGroups: () => renderedGroups,
-    getEventGroupEndMs: (group) => getRetainedEndTimeMs(group),
+    getLazyGroups: () => renderedGroups,
+    getLazyGroupEndMs: (group) =>
+      getRetainedEndTimeMs(group as EventGroups[number]),
     getCurrentTimeMs: () => nowMs,
     getLoading: () => timelineLoading,
     getShouldCollapseByDefault: () => $collapseIdleTime === 'on',

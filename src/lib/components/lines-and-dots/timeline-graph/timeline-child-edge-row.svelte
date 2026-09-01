@@ -1,6 +1,7 @@
 <script lang="ts">
   import Button from '$lib/holocene/button.svelte';
   import { translate } from '$lib/i18n/translate';
+  import { IconChevronDown, IconChevronRight } from '$lib/io/icon';
 
   import { GUTTER } from './constants';
   import type { TimelineChildEdge } from './recursive-timeline-model';
@@ -101,7 +102,7 @@
       ? regionId
       : undefined}
     loading={edge.load.state === 'loading'}
-    leadingIcon={expanded ? 'chevron-down' : 'chevron-right'}
+    LeadingIcon={expanded ? IconChevronDown : IconChevronRight}
     title={expanded
       ? translate('workflows.child-timeline-collapse')
       : translate('workflows.child-timeline-expand')}

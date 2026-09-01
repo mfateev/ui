@@ -8,7 +8,6 @@
   import { timestamp } from '$lib/components/timestamp.svelte';
   import Button from '$lib/holocene/button.svelte';
   import DatePicker from '$lib/holocene/date-picker.svelte';
-  import Icon from '$lib/holocene/icon/icon.svelte';
   import ChipInput from '$lib/holocene/input/chip-input.svelte';
   import Input from '$lib/holocene/input/input.svelte';
   import { Menu, MenuButton, MenuContainer } from '$lib/holocene/menu';
@@ -19,6 +18,7 @@
   import ToggleButton from '$lib/holocene/toggle-button/toggle-button.svelte';
   import ToggleButtons from '$lib/holocene/toggle-button/toggle-buttons.svelte';
   import { translate } from '$lib/i18n/translate';
+  import { IconClock, IconTrash } from '$lib/io/icon';
   import type { SearchAttributeFilter } from '$lib/models/search-attribute-filters';
   import { prefixSearchEnabled } from '$lib/stores/capability-enablement';
   import {
@@ -346,9 +346,17 @@
 {/snippet}
 
 <MenuContainer {open}>
-  <MenuButton size="xs" controls={controlsId} hasIndicator class="bg-secondary">
-    {getDisplayKeyWithConditional(localFilter)}<span
-      class="max-w-[160px] truncate pl-1 text-brand lg:max-w-full"
+  <MenuButton
+    size="xs"
+    controls={controlsId}
+    hasIndicator
+    class="min-w-0 max-w-full bg-secondary"
+    title="{getDisplayKeyWithConditional(localFilter)} {getDisplayValue(
+      localFilter,
+    )}"
+  >
+    <span class="truncate">{getDisplayKeyWithConditional(localFilter)}</span
+    ><span class="max-w-[160px] truncate pl-1 text-brand lg:max-w-full"
       >{getDisplayValue(localFilter)}</span
     >
   </MenuButton>
@@ -475,7 +483,7 @@
             <p
               class="flex items-center justify-end gap-1 text-sm text-secondary"
             >
-              <Icon name="clock" aria-hidden="true" />
+              <IconClock />
               {translate('common.based-on-time-preface')}
               {selectedTime}
             </p>
@@ -571,7 +579,7 @@
 
         <div class="flex justify-end gap-2">
           <Button
-            trailingIcon="trash"
+            TrailingIcon={IconTrash}
             variant="secondary"
             size="xs"
             data-testid="remove-filter-button"

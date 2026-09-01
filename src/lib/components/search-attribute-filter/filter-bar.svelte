@@ -5,8 +5,8 @@
   import { page } from '$app/state';
 
   import Button from '$lib/holocene/button.svelte';
-  import Icon from '$lib/holocene/icon/icon.svelte';
   import Tooltip from '$lib/holocene/tooltip.svelte';
+  import { IconCode } from '$lib/io/icon';
   import type { SearchAttributeFilter } from '$lib/models/search-attribute-filters';
   import type { SearchAttributeOption } from '$lib/stores/search-attributes';
   import type { SearchAttributes } from '$lib/types/workflows';
@@ -53,7 +53,7 @@
 
 <div>
   <div
-    class="flex w-full flex-wrap items-center justify-between gap-2 border border-subtle bg-primary p-1.5"
+    class="flex w-full flex-wrap items-center justify-between gap-2 border border-b-0 border-subtle bg-primary p-1.5"
   >
     <Filter
       {filters}
@@ -70,7 +70,7 @@
         <Button
           variant="ghost"
           size="xs"
-          leadingIcon="json"
+          LeadingIcon={IconCode}
           active={viewManualQuery}
           data-testid="toggle-manual-query"
           onclick={() => (viewManualQuery = !viewManualQuery)}

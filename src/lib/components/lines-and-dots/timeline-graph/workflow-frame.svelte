@@ -1,6 +1,7 @@
 <script lang="ts">
   import Button from '$lib/holocene/button.svelte';
   import { translate } from '$lib/i18n/translate';
+  import { IconChevronDown, IconChevronRight } from '$lib/io/icon';
 
   import type { DotColors } from '../colors';
   import { DOT_STROKE, GUTTER, RADIUS } from './constants';
@@ -253,7 +254,7 @@
                 onclick={onToggle}
                 aria-label={`${expanded ? translate('workflows.child-timeline-collapse') : translate('workflows.child-timeline-expand')}: ${label}`}
                 aria-expanded={expanded}
-                leadingIcon={expanded ? 'chevron-down' : 'chevron-right'}
+                LeadingIcon={expanded ? IconChevronDown : IconChevronRight}
                 title={expanded
                   ? translate('workflows.child-timeline-collapse')
                   : translate('workflows.child-timeline-expand')}

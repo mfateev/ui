@@ -36,15 +36,18 @@
   import type { PauseHandle } from '$lib/services/fetch-bidirectional';
   import { fetchBidirectional } from '$lib/services/fetch-bidirectional';
   import {
-    appendLiveEvent,
     createGroupedEventBuffer,
     getEventArray,
     getGroupArray,
+    ingestHistoryEvent,
     replaceActiveBuffer,
+    setPendingMetadata,
   } from '$lib/services/grouped-event-buffer';
+  import { eventBuffer } from '$lib/services/grouped-event-buffer.svelte';
   import { runLivePoll } from '$lib/services/live-poll';
   import { getPollers } from '$lib/services/pollers-service';
   import { getWorkflowMetadata } from '$lib/services/query-service';
+  import { fetchWorkerCount } from '$lib/services/worker-service';
   import {
     fetchLatestWorkflowExecutionIdentity,
     fetchWorkflow,
@@ -52,11 +55,11 @@
   import { resetLastDataEncoderSuccess } from '$lib/stores/data-encoder-config';
   import { eventFilterSort, type EventSortOrder } from '$lib/stores/event-view';
   import {
-    bufferVersion,
     fullEventHistory,
     pauseLiveUpdates,
     timelineEvents,
   } from '$lib/stores/events';
+  import { workerCountEnabled } from '$lib/stores/workers';
   import {
     initialWorkflowRun,
     refresh,
@@ -99,9 +102,15 @@
   let backfillSourceRunId = '';
   let loadGeneration = 0;
   let showJson = $derived(page.url.searchParams.has('json'));
-  let fullJson = $derived.by(() => {
-    $bufferVersion;
-    return { ...$workflowRun, eventHistory: getEventArray() };
+  let workerHeartbeatsEnabled = $derived(
+    !!page.data?.namespace?.namespaceInfo?.capabilities?.workerHeartbeats,
+  );
+  let workerCountEnabledForNamespace = $derived(
+    workerHeartbeatsEnabled && $workerCountEnabled,
+  );
+  let fullJson = $derived({
+    ...$workflowRun,
+    eventHistory: eventBuffer.events,
   });
 
   let workflowError: NetworkError | null = $state(null);
@@ -279,12 +288,11 @@
       startToken,
       signal: livePollingController.signal,
       onEvent: (ev) => {
-        const isNew = appendLiveEvent(ev);
+        const isNew = ingestHistoryEvent(ev);
         if (isNew)
           latestEventId = Math.max(latestEventId, parseInt(ev.eventId));
         return isNew;
       },
-      onNewEvents: () => bufferVersion.update((v) => v + 1),
     }).then((lastToken) => {
       _lastPollToken = lastToken;
     });
@@ -382,9 +390,25 @@
         pendingRetainedRun = null;
       }
       $fullEventHistory = nextBuffer.getEventArray();
-      $bufferVersion += 1;
       committed = true;
       staging = false;
+
+      const onWorkersRoute = page.url.pathname.endsWith('/workers');
+      if (workerCountEnabledForNamespace && taskQueue && !onWorkersRoute) {
+        fetchWorkerCount(
+          { namespace: ns, query: `TaskQueue="${taskQueue}"` },
+          (input, init) =>
+            fetch(input, { ...init, signal: stagingController.signal }),
+        ).then(({ count }) => {
+          if (
+            !stagingController.signal.aborted &&
+            rId === activeRunId &&
+            count !== undefined
+          ) {
+            $workflowRun.workerCount = count;
+          }
+        });
+      }
 
       if (following && retainedRuns.length === 0) {
         void backfillPredecessors(rId, nextBuffer.getEventArray(), generation);
@@ -440,24 +464,22 @@
               stagedChainRunId = firstExecutionRunId;
             }
           }
-          nextBuffer.processEvent(event, isAscending);
+          nextBuffer.ingestHistoryEvent(event);
           const id = parseInt(event.eventId);
           if (id > stagedLatestEventId) stagedLatestEventId = id;
         }
         if (events.length && committed) {
           latestEventId = stagedLatestEventId;
-          bufferVersion.update((v) => v + 1);
         }
       },
     })
       .then(() => {
         if (!commitStagedRun()) return;
-        nextBuffer.enrichGroups(
+        nextBuffer.setPendingMetadata(
           workflow.pendingActivities ?? [],
           workflow.pendingNexusOperations ?? [],
         );
         fetchComplete = true;
-        bufferVersion.update((v) => v + 1);
         if (following && retainedRuns.length === 0) {
           void backfillPredecessors(
             rId,
@@ -644,8 +666,8 @@
 
       const buffer = createGroupedEventBuffer();
       buffer.reset(parseInt(workflow.historyEvents ?? '0') || 0);
-      for (const event of ascending) buffer.processEvent(event, true);
-      for (const event of descending) buffer.processEvent(event, false);
+      for (const event of ascending) buffer.ingestHistoryEvent(event);
+      for (const event of descending) buffer.ingestHistoryEvent(event);
       const events = buffer.getEventArray();
       const startedAttributes = events.find(
         (event) => event.eventType === 'WorkflowExecutionStarted',
@@ -688,21 +710,25 @@
   };
 
   $effect(() => {
-    $bufferVersion;
-    untrack(() => {
-      const events = getEventArray();
-      $fullEventHistory = events;
-      if (following && !$pauseLiveUpdates && !staging) {
-        const successor = getSuccessorFromEvents(events);
-        if (successor) {
-          void stageNextRun(
-            successor.runId,
-            successor.transition,
-            successor.timeMs,
-          );
-        }
+    setPendingMetadata(
+      $workflowRun.workflow?.pendingActivities ?? [],
+      $workflowRun.workflow?.pendingNexusOperations ?? [],
+    );
+  });
+
+  $effect(() => {
+    const events = eventBuffer.events;
+    $fullEventHistory = events;
+    if (following && !$pauseLiveUpdates && !staging) {
+      const successor = getSuccessorFromEvents(events);
+      if (successor) {
+        void stageNextRun(
+          successor.runId,
+          successor.transition,
+          successor.timeMs,
+        );
       }
-    });
+    }
   });
 
   const clearWorkflowData = () => {
@@ -710,7 +736,6 @@
     $timelineEvents = null;
     $workflowRun = initialWorkflowRun;
     $fullEventHistory = [];
-    $bufferVersion = 0;
     workflowError = null;
     fetchComplete = false;
     latestEventId = 0;

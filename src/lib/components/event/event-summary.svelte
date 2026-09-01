@@ -4,6 +4,7 @@
   import EventSummaryTable from '$lib/components/event/event-summary-table.svelte';
   import TabButton from '$lib/holocene/tab-buttons/tab-button.svelte';
   import TabButtons from '$lib/holocene/tab-buttons/tab-buttons.svelte';
+  import { IconCode, IconCompact, IconFeed } from '$lib/io/icon';
   import type { EventGroups } from '$lib/models/event-groups/event-groups';
   import WorkflowHistoryJson from '$lib/pages/workflow-history-json.svelte';
   import { eventFilterSort, eventViewType } from '$lib/stores/event-view';
@@ -43,12 +44,20 @@
     workflow?.pendingNexusOperations ?? [],
   );
 
-  const items = $derived(
+  // Union on `compact` — the pair travels as one object.
+  const tableProps = $derived(
     compact
-      ? orderGroupsByPending(groups, reverseSort)
-      : reverseSort
-        ? [...pendingNexusOperations, ...pendingActivities, ...history]
-        : [...history, ...pendingActivities, ...pendingNexusOperations],
+      ? {
+          compact: true as const,
+          items: orderGroupsByPending(groups, reverseSort),
+        }
+      : {
+          compact: false as const,
+          items: reverseSort
+            ? [...pendingNexusOperations, ...pendingActivities, ...history]
+            : [...history, ...pendingActivities, ...pendingNexusOperations],
+          groups,
+        },
   );
 
   const onAllClick = () => {
@@ -70,21 +79,21 @@
       <TabButton
         active={$eventViewType === 'feed'}
         data-testid="feed"
-        icon="feed"
+        Icon={IconFeed}
         class="h-10"
         onclick={onAllClick}>All</TabButton
       >
       <TabButton
         active={$eventViewType === 'compact'}
         data-testid="compact"
-        icon="compact"
+        Icon={IconCompact}
         class="h-10"
         onclick={onCompactClick}>Compact</TabButton
       >
       <TabButton
         active={$eventViewType === 'json'}
         data-testid="json"
-        icon="json"
+        Icon={IconCode}
         class="h-10"
         onclick={onJSONClick}>JSON</TabButton
       >
@@ -97,6 +106,6 @@
   </div>
 {:else}
   <div data-testid="event-summary-table">
-    <EventSummaryTable {updating} {items} {groups} {compact} {minimized} />
+    <EventSummaryTable {updating} {minimized} {...tableProps} />
   </div>
 {/if}

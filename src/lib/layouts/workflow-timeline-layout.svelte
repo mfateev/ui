@@ -24,18 +24,20 @@
   import ToggleButtons from '$lib/holocene/toggle-button/toggle-buttons.svelte';
   import { translate } from '$lib/i18n/translate';
   import {
+    IconArrowAscending,
+    IconArrowDescending,
+    IconCollapse,
+    IconDownload,
+  } from '$lib/io/icon';
+  import {
     getRenderableTimelineRuns,
     type TimelineRun,
     toTimelineGroups,
   } from '$lib/services/chain-workflow-session';
-  import {
-    enrichGroups,
-    getWorkflowTaskFailedEvent as getBufferWftFailedEvent,
-    getGroupArray,
-  } from '$lib/services/grouped-event-buffer';
+  import { eventBuffer } from '$lib/services/grouped-event-buffer.svelte';
   import { clearActives } from '$lib/stores/active-events';
   import { collapseIdleTime, eventFilterSort } from '$lib/stores/event-view';
-  import { bufferVersion, pauseLiveUpdates } from '$lib/stores/events';
+  import { pauseLiveUpdates } from '$lib/stores/events';
   import { workflowRun } from '$lib/stores/workflow-run';
   import type {
     WorkflowTaskFailedEvent,
@@ -69,18 +71,11 @@
   const reverseSort = $derived($eventFilterSort === 'descending');
 
   const bufferGroups = $derived.by(() => {
-    void $bufferVersion;
     // The buffer owns its run identity. Never infer that identity from the
     // independently refreshed workflow model: a stale Describe response must
     // not be able to relabel one run's groups as another run.
     if (workflowRunCtx.activeBufferRunId !== workflow?.runId) return [];
-    if (historyCtx.fetchComplete) {
-      enrichGroups(
-        $workflowRun.workflow?.pendingActivities ?? [],
-        $workflowRun.workflow?.pendingNexusOperations ?? [],
-      );
-    }
-    return getGroupArray({ excludeWorkflowTasks: true });
+    return eventBuffer.groupsWithoutWorkflowTasks;
   });
 
   const timelineRuns = $derived.by<TimelineRun[]>(() => {
@@ -105,9 +100,8 @@
   });
 
   const workflowTaskFailedError = $derived.by(() => {
-    void $bufferVersion;
     if (!historyCtx.fetchComplete) return undefined;
-    return getBufferWftFailedEvent() as
+    return eventBuffer.workflowTaskFailedEvent as
       | WorkflowTaskFailedEvent
       | WorkflowTaskTimedOutEvent
       | undefined;
@@ -189,13 +183,13 @@
     <div class="flex items-center gap-2">
       <ToggleButtons>
         <ToggleButton
-          leadingIcon={reverseSort ? 'descending' : 'ascending'}
+          LeadingIcon={reverseSort ? IconArrowDescending : IconArrowAscending}
           data-testid="zoom-in"
           onclick={onSort}
           size="sm">{reverseSort ? 'Descending' : 'Ascending'}</ToggleButton
         >
         <ToggleButton
-          leadingIcon="timeline-collapse"
+          LeadingIcon={IconCollapse}
           data-testid="toggle-idle-time"
           loading={!historyCtx.fetchComplete}
           disabled={!historyCtx.fetchComplete ||
@@ -226,7 +220,7 @@
         </ToggleButton>
         <ToggleButton
           data-testid="download"
-          leadingIcon="download"
+          LeadingIcon={IconDownload}
           size="sm"
           onclick={() => (showDownloadPrompt = true)}
         >

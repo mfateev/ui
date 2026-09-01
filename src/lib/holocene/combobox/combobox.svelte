@@ -53,12 +53,17 @@
   import MenuContainer from '$lib/holocene/menu/menu-container.svelte';
   import Menu from '$lib/holocene/menu/menu.svelte';
   import { translate } from '$lib/i18n/translate';
+  import {
+    IconAdd,
+    IconChevronDown,
+    type IconComponent,
+    IconExternalLinkOptical,
+    IconSpinner,
+  } from '$lib/io/icon';
 
   import Badge from '../badge.svelte';
   import Button from '../button.svelte';
   import Chip from '../chip.svelte';
-  import type { IconName } from '../icon';
-  import Icon from '../icon/icon.svelte';
   import MenuDivider from '../menu/menu-divider.svelte';
   import Tooltip from '../tooltip.svelte';
 
@@ -76,7 +81,7 @@
     placeholder?: string;
     readonly?: boolean;
     required?: boolean;
-    leadingIcon?: IconName;
+    LeadingIcon?: IconComponent;
     showChevron?: boolean;
     minSize?: number;
     maxSize?: number;
@@ -129,12 +134,18 @@
     options: string[];
     optionValueKey?: never;
     optionLabelKey?: never;
+    optionDescriptionKey?: never;
   }
 
   interface CustomOptionProps {
     options: T[];
     optionValueKey: keyof T;
     optionLabelKey?: keyof T;
+    /**
+     * Optional key whose value renders as a secondary line beneath each
+     * option's label. Filtering still matches on the label only.
+     */
+    optionDescriptionKey?: keyof T;
   }
 
   type Props =
@@ -156,10 +167,11 @@
     placeholder = undefined,
     readonly = false,
     required = false,
-    leadingIcon = undefined,
+    LeadingIcon,
     showChevron = false,
     optionValueKey = undefined,
     optionLabelKey = optionValueKey,
+    optionDescriptionKey = undefined,
     minSize = 0,
     maxSize = 120,
     hintText = '',
@@ -269,6 +281,10 @@
     return Array.isArray(value);
   };
 
+  const selectedCountLabel = $derived(
+    isArrayValue(value) ? numberOfItemsSelectedLabel(value.length) : '',
+  );
+
   const addCustomValue = () => {
     if (!trimmedFilterValue) return;
     if (isArrayValue(value) && value.includes(trimmedFilterValue)) return;
@@ -320,6 +336,18 @@
     }
 
     return '';
+  }
+
+  function getOptionDescription(option: string | T): string | undefined {
+    if (optionDescriptionKey == null) return undefined;
+    if (option === null) return undefined;
+    if (isStringOption(option)) return undefined;
+    if (!isObjectOption(option)) return undefined;
+    if (!(optionDescriptionKey in option)) return undefined;
+
+    const description = option[optionDescriptionKey];
+
+    return description == null ? undefined : String(description);
   }
 
   function getSelectedOption(options: (string | T)[]) {
@@ -514,15 +542,15 @@
         className,
       )}
     >
-      {#if leadingIcon}
-        <Icon class="ml-2 shrink-0" name={leadingIcon} />
+      {#if LeadingIcon}
+        <LeadingIcon class="ml-2 shrink-0" />
       {/if}
       <div
         class={merge(
           'input-wrapper',
           multiselect && 'gap-1',
           multiselect && 'm-1',
-          leadingIcon && multiselect && 'ml-2',
+          LeadingIcon && multiselect && 'ml-2',
         )}
       >
         {#if multiselect && isArrayValue(value) && value.length > 0}
@@ -536,8 +564,8 @@
             {#if value.length > chipLimit}
               <p>+{value.slice(chipLimit).length}</p>
             {/if}
-          {:else}
-            <Badge>{numberOfItemsSelectedLabel(value.length)}</Badge>
+          {:else if selectedCountLabel}
+            <Badge>{selectedCountLabel}</Badge>
           {/if}
         {/if}
         <input
@@ -551,7 +579,7 @@
           class={merge(
             'combobox-input',
             multiselect
-              ? value.length > 0 || leadingIcon
+              ? value.length > 0 || LeadingIcon
                 ? 'indent-0'
                 : 'indent-1'
               : 'indent-2',
@@ -603,7 +631,7 @@
                 size="xs"
                 {href}
                 disabled={hrefDisabled}
-                leadingIcon="external-link"
+                LeadingIcon={IconExternalLinkOptical}
               />
             </Tooltip>
           {:else}
@@ -612,7 +640,7 @@
               size="xs"
               {href}
               disabled={hrefDisabled}
-              leadingIcon="external-link"
+              LeadingIcon={IconExternalLinkOptical}
             />
           {/if}
         </div>
@@ -625,8 +653,7 @@
           aria-label={$open ? 'Close options' : 'Open options'}
           tabindex="-1"
         >
-          <Icon
-            name="chevron-down"
+          <IconChevronDown
             class={merge(
               'transition-transform duration-200',
               $open && 'rotate-180',
@@ -680,7 +707,7 @@
         label="{translate('common.add')} {trimmedFilterValue}"
       >
         {#snippet leading()}
-          <Icon name="add" />
+          <IconAdd />
         {/snippet}
       </ComboboxOption>
       {#if list.length > 0}
@@ -693,6 +720,7 @@
         onclick={() => handleSelectOption(option)}
         selected={isSelected(option, value)}
         label={getDisplayValue(option)}
+        description={getOptionDescription(option)}
         class={optionClass}
       />
     {:else}
@@ -704,7 +732,7 @@
     {#if loading}
       <ComboboxOption disabled label={loadingText}>
         {#snippet leading()}
-          <Icon name="spinner" class="animate-spin" />
+          <IconSpinner class="animate-spin" />
         {/snippet}
       </ComboboxOption>
     {/if}

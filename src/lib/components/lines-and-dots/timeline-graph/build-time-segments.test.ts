@@ -17,7 +17,7 @@ describe('buildTimeSegments', () => {
   it('uses a retained run boundary instead of extending pending work to now', () => {
     const segments = buildTimeSegments({
       workflowTimespan: new Timespan(T0, T0 + 100),
-      eventGroups: [pendingGroup],
+      lazyGroups: [pendingGroup],
       getEventGroupEndMs: () => T0 + 40,
     });
 

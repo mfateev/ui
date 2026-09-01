@@ -25,6 +25,7 @@
   import { translate } from '$lib/i18n/translate';
   import type { EventGroup } from '$lib/models/event-groups/event-groups';
   import { setActiveGroup } from '$lib/stores/active-events';
+  import { resolveSystemNexusEvent } from '$lib/system-nexus-endpoints';
   import {
     decodeLocalActivity,
     getLocalActivityMarkerEvent,
@@ -216,9 +217,14 @@
   );
   const retried = $derived(retryAttempt > 1);
 
+  const effectiveCategory = $derived(
+    resolveSystemNexusEvent(group.initialEvent)?.timelineCategory ??
+      group.category,
+  );
+
   const lineColor = $derived(
     strokeColor({
-      category: group.category,
+      category: effectiveCategory,
       classification: group.lastEvent.classification,
     }),
   );
@@ -233,7 +239,7 @@
         ? (pendingActivity.attempt ?? 0) > 1
           ? 'retry'
           : 'pending'
-        : group.category,
+        : effectiveCategory,
       classification: group.lastEvent.classification,
     }),
   );
@@ -297,8 +303,10 @@
     {#if icon}
       <svg
         class="absolute left-1/2 top-1/2 h-[55%] w-[55%] -translate-x-1/2 -translate-y-1/2 text-black"
-        viewBox="0 0 24 24"><use href="#ti-{icon}" /></svg
+        viewBox="0 0 16 16"
       >
+        <use href="#ti-{icon}" />
+      </svg>
     {/if}
   </div>
 {/snippet}
@@ -322,7 +330,7 @@
       onclick={onClick}
     >
       <div
-        class="highlight {groupHover({ category: group.category })}"
+        class="highlight {groupHover({ category: effectiveCategory })}"
         style:border-radius="{highlightRadius}px"
       ></div>
       {#each rowGeometry.connectors as visibleConnector (visibleConnector.index)}
@@ -372,7 +380,7 @@
                 ? 'pause'
                 : decodedLocalActivity
                   ? CategoryIcon['local-activity'].name
-                  : CategoryIcon[group.category].name,
+                  : CategoryIcon[effectiveCategory].name,
             alignment,
           )}
         {/if}
@@ -419,7 +427,7 @@
               {#if iconName}
                 <svg
                   class="h-[var(--dot)] w-[var(--dot)] shrink-0 rounded-full p-[3px] text-current"
-                  viewBox="0 0 24 24"
+                  viewBox="0 0 16 16"
                 >
                   <use href="#ti-{iconName}" />
                 </svg>

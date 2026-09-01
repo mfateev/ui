@@ -29,7 +29,7 @@ function makeTimeline({
   return new Timeline({
     getFullEventHistory: () => fullEventHistory,
     getWorkflow: () => resolvedWorkflow,
-    getEventGroups: () => [],
+    getLazyGroups: () => [],
     getCurrentTimeMs: () => currentTimeMs,
     getStartTimeMs: () => startTimeMs,
   });

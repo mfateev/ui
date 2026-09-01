@@ -5,19 +5,27 @@
   import type { ComponentProps } from 'svelte';
 
   import Combobox from '$lib/holocene/combobox/combobox.svelte';
-  import { iconNames } from '$lib/holocene/icon';
+  import * as ioIcons from '$lib/io/icon';
 
   import Button from '../button.svelte';
 
   import AsyncTest from './async-test.svelte';
 
+  const iconOptions: Record<string, unknown> = { ...ioIcons };
+
   type ComboboxArgs = Omit<
     Partial<ComponentProps<typeof Combobox>>,
-    'options' | 'value' | 'optionLabelKey' | 'optionValueKey' | 'multiselect'
+    | 'options'
+    | 'value'
+    | 'optionLabelKey'
+    | 'optionValueKey'
+    | 'optionDescriptionKey'
+    | 'multiselect'
   > & {
     options?: readonly (string | Record<string, unknown>)[];
     optionLabelKey?: string;
     optionValueKey?: string;
+    optionDescriptionKey?: string;
     multiselect?: boolean;
     allowCustomValue?: boolean;
     showChevron?: boolean;
@@ -38,7 +46,7 @@
       valid: true,
       error: '',
       hintText: '',
-      leadingIcon: 'search',
+      LeadingIcon: ioIcons.IconSearch,
       labelHidden: false,
     },
     argTypes: {
@@ -54,14 +62,16 @@
       labelHidden: { name: 'Label Hidden', control: 'boolean' },
       minSize: { name: 'Minimum Size', control: 'number' },
       maxSize: { name: 'Maximum Size', control: 'number' },
-      leadingIcon: {
-        name: 'Icon',
+      LeadingIcon: {
+        name: 'Leading Icon',
         control: 'select',
-        options: iconNames,
+        options: Object.keys(iconOptions),
+        mapping: iconOptions,
       },
       noResultsText: { name: 'No Results Text', control: 'text' },
       optionValueKey: { control: 'text', table: { disable: true } },
       optionLabelKey: { control: 'text', table: { disable: true } },
+      optionDescriptionKey: { control: 'text', table: { disable: true } },
 
       options: { table: { disable: true } },
     },
@@ -155,6 +165,60 @@
 />
 
 <Story
+  name="Custom Options With Descriptions"
+  args={{
+    label: 'Select a Namespace',
+    options: [
+      {
+        label: 'billing-prod',
+        value: 'billing-prod',
+        description: 'Invoicing and payment workflows',
+      },
+      {
+        label: 'billing-staging',
+        value: 'billing-staging',
+        description: 'Pre-release verification',
+      },
+      {
+        label: 'search-prod',
+        value: 'search-prod',
+        description: 'Indexing pipeline',
+      },
+      { label: 'internal-tools', value: 'internal-tools' },
+    ],
+    optionLabelKey: 'label',
+    optionValueKey: 'value',
+    optionDescriptionKey: 'description',
+  }}
+  play={async ({ canvasElement, id }) => {
+    const canvas = within(canvasElement);
+    const combobox = canvas.getByTestId(id);
+
+    await userEvent.type(combobox, 'billing');
+
+    const menu = await canvas.findByRole('listbox');
+    expect(menu).toBeInTheDocument();
+
+    // Descriptions render as a secondary line beneath the label.
+    expect(
+      canvas.getByText('Invoicing and payment workflows'),
+    ).toBeInTheDocument();
+
+    // An option without a description still renders, with no secondary line.
+    await userEvent.clear(combobox);
+    await userEvent.type(combobox, 'internal');
+    expect(canvas.getByText('internal-tools')).toBeInTheDocument();
+
+    // Filtering matches the label only — never the description.
+    await userEvent.clear(combobox);
+    await userEvent.type(combobox, 'Indexing');
+    await waitFor(() => {
+      expect(canvas.getByText('No Results')).toBeInTheDocument();
+    });
+  }}
+/>
+
+<Story
   name="No Results"
   args={{
     options: ['English', 'English (UK)', 'German', 'French', 'Japanese'],
@@ -196,6 +260,34 @@
     // Wait for the listbox to appear since it may have a transition
     const menu = await canvas.findByRole('listbox');
     expect(menu).toBeInTheDocument();
+  }}
+/>
+
+<Story
+  name="Multiselect Without Count Label"
+  args={{
+    options: ['English', 'German', 'French'],
+    multiselect: true,
+    displayChips: false,
+    value: ['English'],
+    numberOfItemsSelectedLabel: () => '',
+  }}
+  play={async ({ canvasElement }) => {
+    expect(canvasElement.querySelectorAll('.rounded-sm.p-1')).toHaveLength(0);
+  }}
+/>
+
+<Story
+  name="Multiselect With Count Label"
+  args={{
+    options: ['English', 'German', 'French'],
+    multiselect: true,
+    displayChips: false,
+    value: ['English'],
+  }}
+  play={async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByText('1 option selected')).toBeInTheDocument();
   }}
 />
 
@@ -310,7 +402,7 @@
         id={context.id}
         data-testid={context.id}
         onchange={logAction('change')}
-        leadingIcon="search"
+        LeadingIcon={ioIcons.IconSearch}
         options={[
           'English',
           'English (UK)',
@@ -330,7 +422,7 @@
             onclick={() => {}}
             variant="ghost"
             size="xs"
-            leadingIcon="close"
+            LeadingIcon={ioIcons.IconClose}
             aria-label="clear"
           />
         {/snippet}

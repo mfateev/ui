@@ -39,6 +39,7 @@
   import FilterBar from '$lib/components/workflow/filter-bar/index.svelte';
   import WorkflowsSummaryConfigurableTable from '$lib/components/workflow/workflows-summary-configurable-table.svelte';
   import Button from '$lib/holocene/button.svelte';
+  import MaximizableTableView from '$lib/holocene/table/paginated-table/maximizable-view.svelte';
   import { translate } from '$lib/i18n/translate';
   import Translate from '$lib/i18n/translate.svelte';
   import { fetchWorkflowTaskFailures } from '$lib/services/workflow-counts';
@@ -219,7 +220,7 @@
 />
 
 <header class="flex flex-col gap-2">
-  <div class="flex flex-col justify-between gap-2 md:flex-row">
+  <div class="flex flex-col items-start justify-between gap-2 md:flex-row">
     <div class="flex flex-row flex-wrap items-start gap-2">
       <div>
         <div class="flex flex-row flex-wrap items-start gap-2">
@@ -266,20 +267,21 @@
   </div>
 </header>
 
-<FilterBar />
-<SavedQueryViews
-  filters={workflowFilters}
-  savedQueries={savedWorkflowQueries}
-  {systemViews}
-  defaultView={DEFAULT_WORKFLOW_SYSTEM_VIEW}
-  {searchAttributes}
-  id="workflow"
->
+<MaximizableTableView>
+  <SavedQueryViews
+    filters={workflowFilters}
+    savedQueries={savedWorkflowQueries}
+    {systemViews}
+    defaultView={DEFAULT_WORKFLOW_SYSTEM_VIEW}
+    {searchAttributes}
+    id="workflow"
+  />
+  <FilterBar />
   <WorkflowsSummaryConfigurableTable
     onClickConfigure={openCustomizationDrawer}
     {cloud}
   />
-</SavedQueryViews>
+</MaximizableTableView>
 <ConfigurableTableHeadersDrawer
   {availableColumns}
   bind:open={customizationDrawerOpen}

@@ -12,6 +12,7 @@
   import Option from '$lib/holocene/select/option.svelte';
   import Select from '$lib/holocene/select/select.svelte';
   import { translate } from '$lib/i18n/translate';
+  import { IconClose } from '$lib/io/icon';
   import { type PayloadInputEncoding } from '$lib/models/payload-encoding';
   import { updateWorkflow } from '$lib/services/workflow-service';
   import { toaster } from '$lib/stores/toaster';
@@ -155,7 +156,7 @@
                 name = '';
               }}
               variant="secondary"
-              leadingIcon="close"
+              LeadingIcon={IconClose}
               disabled={loading}
             />
           {/if}

@@ -1,6 +1,6 @@
 import { SvelteSet } from 'svelte/reactivity';
 
-import type { EventGroups } from '$lib/models/event-groups/event-groups';
+import type { LazyGroup } from '$lib/services/grouped-event-buffer';
 import type { WorkflowEvents } from '$lib/types/events';
 import type { WorkflowExecution } from '$lib/types/workflows';
 import { isWorkflowDelayed } from '$lib/utilities/delayed-workflows';
@@ -16,8 +16,8 @@ const DEFAULT_DURATION_THRESHOLD_RATIO = 0.1;
 interface TimelineInit {
   getFullEventHistory: () => WorkflowEvents;
   getWorkflow: () => WorkflowExecution;
-  getEventGroups: () => EventGroups;
-  getEventGroupEndMs?: (group: EventGroups[number]) => number | undefined;
+  getLazyGroups: () => LazyGroup[];
+  getLazyGroupEndMs?: (group: LazyGroup) => number | undefined;
   getCurrentTimeMs: () => number;
   getDurationThresholdRatio?: () => number;
   getLoading?: () => boolean;
@@ -33,10 +33,8 @@ export class Timeline {
 
   private _getFullEventHistory: () => WorkflowEvents;
   private _getWorkflow: () => WorkflowExecution;
-  private _getEventGroups: () => EventGroups;
-  private _getEventGroupEndMs?: (
-    group: EventGroups[number],
-  ) => number | undefined;
+  private _getLazyGroups: () => LazyGroup[];
+  private _getLazyGroupEndMs?: (group: LazyGroup) => number | undefined;
   private _getCurrentTimeMs: () => number;
   private _getDurationThresholdRatio: () => number;
   private _getLoading: () => boolean;
@@ -48,8 +46,8 @@ export class Timeline {
   constructor({
     getFullEventHistory,
     getWorkflow,
-    getEventGroups,
-    getEventGroupEndMs,
+    getLazyGroups,
+    getLazyGroupEndMs,
     getCurrentTimeMs,
     getDurationThresholdRatio,
     getLoading,
@@ -60,8 +58,8 @@ export class Timeline {
   }: TimelineInit) {
     this._getFullEventHistory = getFullEventHistory;
     this._getWorkflow = getWorkflow;
-    this._getEventGroups = getEventGroups;
-    this._getEventGroupEndMs = getEventGroupEndMs;
+    this._getLazyGroups = getLazyGroups;
+    this._getLazyGroupEndMs = getLazyGroupEndMs;
     this._getCurrentTimeMs = getCurrentTimeMs;
     this._getDurationThresholdRatio =
       getDurationThresholdRatio ?? (() => DEFAULT_DURATION_THRESHOLD_RATIO);
@@ -85,7 +83,7 @@ export class Timeline {
   }
 
   readonly workflow = $derived.by(() => this._getWorkflow());
-  readonly eventGroups = $derived.by(() => this._getEventGroups());
+  readonly lazyGroups = $derived.by(() => this._getLazyGroups());
   private readonly _endUnbounded = $derived.by(() => this._getEndUnbounded());
 
   private readonly _endMs = $derived.by(() => {
@@ -149,8 +147,8 @@ export class Timeline {
     }
     return buildTimeSegments({
       workflowTimespan: this.workflowTimespan,
-      eventGroups: this.eventGroups,
-      getEventGroupEndMs: this._getEventGroupEndMs,
+      lazyGroups: this.lazyGroups,
+      getEventGroupEndMs: this._getLazyGroupEndMs,
     });
   });
 

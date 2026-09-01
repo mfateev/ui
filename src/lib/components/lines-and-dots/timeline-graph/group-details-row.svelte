@@ -4,8 +4,8 @@
   import EventDetailsFull from '$lib/components/event/event-details-full.svelte';
   import WorkflowStatus from '$lib/components/execution-status.svelte';
   import Button from '$lib/holocene/button.svelte';
-  import Icon from '$lib/holocene/icon/icon.svelte';
   import { translate } from '$lib/i18n/translate';
+  import { IconClock, IconClose } from '$lib/io/icon';
   import type { EventGroup } from '$lib/models/event-groups/event-groups';
   import { setActiveGroup } from '$lib/stores/active-events';
   import { formatEventGroupDuration } from '$lib/utilities/event-group-duration';
@@ -86,7 +86,7 @@
         {title}
         {#if duration}
           <div class="flex items-center gap-1">
-            <Icon name="clock" />
+            <IconClock />
             {duration}
           </div>
         {/if}
@@ -96,12 +96,17 @@
           variant="ghost"
           size="xs"
           onclick={() => setActiveGroup(group, timelineKey)}
-          >{translate('common.close')} <Icon name="close" /></Button
+          >{translate('common.close')} <IconClose /></Button
         >
       </div>
     </div>
     <div class="surface-primary">
-      <EventDetailsFull {group} event={group.initialEvent} lazy={true} />
+      <EventDetailsFull
+        {group}
+        event={group.initialEvent}
+        lazy={true}
+        groupRow={true}
+      />
     </div>
   </div>
 </div>

@@ -7,15 +7,18 @@
 
 <script lang="ts" generics="T">
   import type { HTMLAttributes } from 'svelte/elements';
+  import { writable } from 'svelte/store';
 
   import { debounce } from 'es-toolkit';
   import type { Snippet } from 'svelte';
-  import { onMount } from 'svelte';
+  import { getContext, onMount } from 'svelte';
+  import { twMerge as merge } from 'tailwind-merge';
 
   import Alert from '$lib/holocene/alert.svelte';
   import EmptyState from '$lib/holocene/empty-state.svelte';
   import IconButton from '$lib/holocene/icon-button.svelte';
   import FilterSelect from '$lib/holocene/select/filter-select.svelte';
+  import { IconArrowLeft, IconArrowRight } from '$lib/io/icon';
   import {
     createPaginationStore,
     type PaginationStore,
@@ -24,6 +27,11 @@
   import { isError } from '$lib/utilities/is';
 
   import PaginatedTable from './index.svelte';
+  import {
+    TABLE_MAXIMIZABLE_CONTEXT,
+    type TableMaximizableContext,
+  } from './maximizable-view.svelte';
+  import MaximizeToggle from './maximize-toggle.svelte';
 
   type KeyboardHandler = ((event: KeyboardEvent) => void) | undefined;
 
@@ -37,7 +45,7 @@
     onShiftUp?: KeyboardHandler;
     onShiftDown?: KeyboardHandler;
     onSpace?: KeyboardHandler;
-    total?: string | number;
+    total?: number;
     pageSizeSelectLabel: string;
     emptyStateTitle?: string;
     emptyStateMessage?: string;
@@ -66,7 +74,7 @@
     onShiftUp,
     onShiftDown,
     onSpace,
-    total = '',
+    total,
     pageSizeSelectLabel,
     emptyStateTitle = '',
     emptyStateMessage = '',
@@ -223,6 +231,12 @@
   const adjustedTotal = $derived(
     !$store.hasNext && $store.indexEnd !== total ? $store.indexEnd : total,
   );
+
+  const maximizableContext = getContext<TableMaximizableContext | undefined>(
+    TABLE_MAXIMIZABLE_CONTEXT,
+  );
+  const maximizable = Boolean(maximizableContext);
+  const maximized = maximizableContext?.maximized ?? writable(false);
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -248,7 +262,8 @@
   loading={$store.loading}
   updating={$store.updating}
   visibleItems={$store.visibleItems}
-  {maxHeight}
+  maxHeight={maximizable && $maximized ? '100%' : maxHeight}
+  class={merge(maximizable && $maximized && 'border-x-0 border-b-0')}
   {id}
   {caption}
   {headers}
@@ -271,11 +286,14 @@
         visibleItems: $store.visibleItems,
         page: $store.index + 1,
       })}
+      {#if maximizable}
+        <MaximizeToggle {maximized} />
+      {/if}
       <IconButton
         label={previousButtonLabel}
         disabled={!$store.hasPrevious}
         onclick={handlePreviousPage}
-        icon="arrow-left"
+        Icon={IconArrowLeft}
       />
       <div class="flex gap-1">
         <p>
@@ -291,7 +309,7 @@
         label={nextButtonLabel}
         disabled={!$store.hasNext || $store.updating}
         onclick={fetchIndexData}
-        icon="arrow-right"
+        Icon={IconArrowRight}
       />
     </nav>
   {/snippet}

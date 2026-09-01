@@ -1,14 +1,18 @@
-import type {
-  EventGroup,
-  EventGroups,
-} from '$lib/models/event-groups/event-groups';
+import type { WorkflowEvent } from '$lib/types/events';
 import { maxDate, validTimeToDate } from '$lib/utilities/format-time';
 import { isNullish } from '$lib/utilities/type-predicates';
 
 import { Timespan } from './timespan';
 import type { TimeSegment } from './types';
 
-function getGroupStartMs(group: EventGroup): number | null {
+/** Satisfied by both EventGroup and LazyGroup, so neither needs building. */
+type GroupForSegments = {
+  initialEvent: WorkflowEvent;
+  lastEvent: WorkflowEvent;
+  isPending: boolean;
+};
+
+function getGroupStartMs(group: GroupForSegments): number | null {
   const { eventTime } = group.initialEvent;
 
   if (isNullish(eventTime)) {
@@ -18,7 +22,10 @@ function getGroupStartMs(group: EventGroup): number | null {
   return validTimeToDate(eventTime).getTime();
 }
 
-function getGroupEndMs(group: EventGroup, pendingTimestampMs: number): number {
+function getGroupEndMs(
+  group: GroupForSegments,
+  pendingTimestampMs: number,
+): number {
   const { eventTime } = group.lastEvent;
 
   if (isNullish(eventTime)) {
@@ -32,20 +39,20 @@ function getGroupEndMs(group: EventGroup, pendingTimestampMs: number): number {
   return validTimeToDate(eventTime).getTime();
 }
 
-export function buildTimeSegments({
+export function buildTimeSegments<T extends GroupForSegments>({
   workflowTimespan,
-  eventGroups,
+  lazyGroups,
   getEventGroupEndMs,
 }: {
   workflowTimespan: Timespan;
-  eventGroups: EventGroups;
-  getEventGroupEndMs?: (group: EventGroup) => number | undefined;
+  lazyGroups: T[];
+  getEventGroupEndMs?: (group: T) => number | undefined;
 }): TimeSegment[] {
   const groupTimespans: Timespan[] = [];
 
   let isSorted = true;
   let prevStartTimeMs = -Infinity;
-  for (const group of eventGroups) {
+  for (const group of lazyGroups) {
     const startMs = getGroupStartMs(group);
 
     if (isNullish(startMs)) {

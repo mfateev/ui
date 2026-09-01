@@ -124,6 +124,29 @@ describe('fetchBidirectional onRawPage', () => {
     const countOf3 = received.filter((id) => id === '3').length;
     expect(countOf3).toBe(1);
   });
+
+  it('falls back to exact deduplication for malformed pages', async () => {
+    const received: string[] = [];
+    const onInvariantViolation = vi.fn();
+    requestFromAPI.mockImplementation((url: string) => {
+      if (url === 'asc') return Promise.resolve(ascPage([1, 3, 3]));
+      return Promise.resolve(emptyPage);
+    });
+
+    const stats = await fetchBidirectional({
+      namespace: 'ns',
+      workflowId: 'wf',
+      runId: 'run',
+      onRawPage: (events) =>
+        received.push(...events.map(({ eventId }) => eventId)),
+      onInvariantViolation,
+    });
+
+    expect(received).toEqual(['1', '3']);
+    expect(stats.totalEvents).toBe(2);
+    expect(stats.overlap).toBe(1);
+    expect(onInvariantViolation).toHaveBeenCalledOnce();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -217,5 +240,24 @@ describe('fetchBidirectional abort', () => {
     });
 
     expect(onRawPage).not.toHaveBeenCalled();
+  });
+
+  it('unblocks paused cursors when aborted', async () => {
+    const controller = new AbortController();
+    requestFromAPI.mockImplementation((url: string) => {
+      if (url === 'asc') return Promise.resolve(ascPage([1, 2], 'next'));
+      return Promise.resolve(emptyPage);
+    });
+
+    await fetchBidirectional({
+      namespace: 'ns',
+      workflowId: 'wf',
+      runId: 'run',
+      signal: controller.signal,
+      pauseAfterPages: 1,
+      onPause: () => controller.abort(),
+      onRawPage: () => undefined,
+    });
+    expect(controller.signal.aborted).toBe(true);
   });
 });

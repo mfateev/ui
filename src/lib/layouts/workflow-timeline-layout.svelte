@@ -50,15 +50,17 @@
     type TimelineRun,
     toTimelineGroups,
   } from '$lib/services/chain-workflow-session';
-  import { fetchPartialRawEvents } from '$lib/services/events-service';
-  import { createGroupedEventBuffer } from '$lib/services/grouped-event-buffer';
   import { eventBuffer } from '$lib/services/grouped-event-buffer.svelte';
+  import { TimelineIntervalLoader } from '$lib/services/timeline-interval-loader';
+  import {
+    BufferTimelineRunModel,
+    type TimelineRunModel,
+  } from '$lib/services/timeline-run-model';
   import {
     loadWorkflowChainOverview,
     mergeWorkflowChainOverviewRuns,
     type WorkflowChainOverviewRun,
   } from '$lib/services/workflow-chain-overview';
-  import { fetchWorkflow } from '$lib/services/workflow-service';
   import { clearActives } from '$lib/stores/active-events';
   import { collapseIdleTime, eventFilterSort } from '$lib/stores/event-view';
   import { pauseLiveUpdates } from '$lib/stores/events';
@@ -72,12 +74,18 @@
     parseEventFilterParams,
     updateEventFilterParams,
   } from '$lib/utilities/event-filter-params';
+  import { validTimeToDate } from '$lib/utilities/format-time';
 
   const historyCtx = getContext<HistoryContext>(HISTORY_CTX);
   const workflowRunCtx = getContext<WorkflowRunContext>(WORKFLOW_RUN_CTX);
 
   const namespace = $derived(page.params.namespace);
   const workflow = $derived($workflowRun.workflow);
+  const firstEventTime = $derived(
+    eventBuffer.firstEvent?.eventTime
+      ? validTimeToDate(eventBuffer.firstEvent.eventTime).toISOString()
+      : undefined,
+  );
   const workflowId = $derived(workflow?.id);
   const firstRunId = $derived(
     workflow?.firstExecutionRunId || workflowRunCtx.chainRunId,
@@ -105,6 +113,12 @@
     // The buffer owns its run identity. Never infer that identity from the
     // independently refreshed workflow model: a stale Describe response must
     // not be able to relabel one run's groups as another run.
+    if (workflowRunCtx.activeBufferRunId !== workflow?.runId) return [];
+    return eventBuffer.lazyGroupsWithoutWorkflowTasks;
+  });
+
+  const classicBufferGroups = $derived.by(() => {
+    if (displayMode !== 'classic') return [];
     if (workflowRunCtx.activeBufferRunId !== workflow?.runId) return [];
     return eventBuffer.groupsWithoutWorkflowTasks;
   });
@@ -138,7 +152,9 @@
 
   const classicGroups = $derived(
     getTimelineGroups(
-      bufferGroups.filter((group) => $eventTypeFilter.includes(group.category)),
+      classicBufferGroups.filter((group) =>
+        $eventTypeFilter.includes(group.category),
+      ),
       reverseSort,
       historyCtx.fetchComplete,
       historyCtx.descMinId,
@@ -190,21 +206,41 @@
   let timelineWindowControls = $state<TimelineWindowControls>();
   let chainOverviewRuns = $state<WorkflowChainOverviewRun[]>([]);
   let chainOverviewLoading = $state(false);
-  let intervalLoadController: AbortController | null = null;
+  let chainLoadGeneration = 0;
+  const intervalLoader = new TimelineIntervalLoader();
+  let intervalLoadGeneration = 0;
+  let intervalModelReleases: (() => void)[] = [];
+  let intervalTruncated = $state(false);
 
-  onDestroy(() => intervalLoadController?.abort());
+  const releaseIntervalModels = () => {
+    for (const release of intervalModelReleases) release();
+    intervalModelReleases = [];
+  };
+
+  onDestroy(() => {
+    releaseIntervalModels();
+    intervalLoader.dispose();
+  });
 
   $effect(() => {
     if (!workflowId || !firstRunId) {
+      intervalLoadGeneration += 1;
+      intervalLoader.abort();
+      releaseIntervalModels();
       chainOverviewRuns = [];
       intervalTimelineRuns = [];
+      intervalTruncated = false;
       chainOverviewLoading = false;
       return;
     }
 
     const controller = new AbortController();
+    const generation = ++chainLoadGeneration;
+    intervalLoadGeneration += 1;
+    intervalLoader.abort();
     chainOverviewRuns = [];
     intervalTimelineRuns = [];
+    releaseIntervalModels();
     chainOverviewLoading = true;
 
     const loadChain = async () => {
@@ -214,18 +250,28 @@
           workflowId,
           firstRunId,
           signal: controller.signal,
-          onProgress: (progress) => {
-            chainOverviewRuns = mergeWorkflowChainOverviewRuns(
-              chainOverviewRuns,
-              progress,
-            );
+          generation,
+          onRun: (progress) => {
+            if (
+              controller.signal.aborted ||
+              progress.generation !== chainLoadGeneration ||
+              progress.firstRunId !== firstRunId
+            ) {
+              return;
+            }
+            if (progress.mutation === 'append') {
+              chainOverviewRuns.push(progress.run);
+            } else {
+              chainOverviewRuns[progress.index] = progress.run;
+            }
           },
         });
-        if (controller.signal.aborted) return;
-        chainOverviewRuns = mergeWorkflowChainOverviewRuns(
-          chainOverviewRuns,
-          runs,
-        );
+        if (controller.signal.aborted || generation !== chainLoadGeneration) {
+          return;
+        }
+        if (chainOverviewRuns.length === 0 && runs.length > 0) {
+          chainOverviewRuns = runs;
+        }
       } catch (error: unknown) {
         if (!(error instanceof DOMException && error.name === 'AbortError')) {
           console.error('Unable to load the workflow chain overview.', error);
@@ -276,6 +322,12 @@
     durationMs = timelineWindowControls?.windowDurationMs,
   ) => {
     if (!workflowId || !timelineWindowControls) return;
+    const generation = ++intervalLoadGeneration;
+    intervalLoader.abort();
+    releaseIntervalModels();
+    intervalTimelineRuns = [];
+    intervalTruncated = false;
+
     const endTimeMs = startTimeMs + (durationMs ?? 0);
     const firstIndex = chainOverviewRuns.findIndex(
       (run) => run.endTimeMs >= startTimeMs,
@@ -289,61 +341,35 @@
       Math.min(chainOverviewRuns.length, Math.max(firstIndex, lastIndex) + 2),
     );
 
-    intervalLoadController?.abort();
-    const controller = new AbortController();
-    intervalLoadController = controller;
-    intervalTimelineRuns = [];
-    const requestWithSignal: typeof fetch = (input, init) =>
-      fetch(input, { ...init, signal: controller.signal });
+    const appendModel = (model: TimelineRunModel) => {
+      if (generation !== intervalLoadGeneration) return;
+      if (!(model instanceof BufferTimelineRunModel)) return;
+      intervalModelReleases.push(model.retain());
+      const run = model.run;
+      intervalTimelineRuns.push({
+        runId: run.runId,
+        status: run.status,
+        startTimeMs: run.startTimeMs,
+        endTimeMs: run.endTimeMs,
+        groups: toTimelineGroups(run.runId, [...model.sourceGroups], (group) =>
+          model.materializeSource(group),
+        ),
+        active: false,
+        successorRunId: run.nextRunId,
+      });
+    };
 
-    const loaded = await Promise.all(
-      requestedRuns.map(async (run): Promise<TimelineRun | undefined> => {
-        const [{ workflow: described }, ascending, descending] =
-          await Promise.all([
-            fetchWorkflow(
-              { namespace, workflowId, runId: run.runId },
-              requestWithSignal,
-            ),
-            fetchPartialRawEvents({
-              namespace,
-              workflowId,
-              runId: run.runId,
-              sort: 'ascending',
-              maximumPageSize: '1000',
-              signal: controller.signal,
-            }),
-            fetchPartialRawEvents({
-              namespace,
-              workflowId,
-              runId: run.runId,
-              sort: 'descending',
-              maximumPageSize: '1000',
-              signal: controller.signal,
-            }),
-          ]);
-        if (!described || controller.signal.aborted) return undefined;
-
-        const buffer = createGroupedEventBuffer();
-        buffer.reset(parseInt(described.historyEvents ?? '0') || 0);
-        for (const event of ascending) buffer.ingestHistoryEvent(event);
-        for (const event of descending) buffer.ingestHistoryEvent(event);
-        return {
-          runId: run.runId,
-          status: described.status,
-          startTimeMs: run.startTimeMs,
-          endTimeMs: run.endTimeMs,
-          groups: toTimelineGroups(
-            run.runId,
-            buffer.getGroupArray({ excludeWorkflowTasks: true }),
-          ),
-          active: false,
-          successorRunId: run.nextRunId,
-        };
-      }),
-    );
-    if (controller.signal.aborted) return;
-    intervalTimelineRuns = loaded.filter(
-      (run): run is TimelineRun => run !== undefined,
+    const result = await intervalLoader.load({
+      namespace,
+      workflowId,
+      runs: requestedRuns,
+      startTimeMs,
+      endTimeMs,
+      onModel: appendModel,
+    });
+    if (generation !== intervalLoadGeneration) return;
+    intervalTruncated = result.truncation.some(
+      ({ affectsSelectedWindow }) => affectsSelectedWindow,
     );
   };
 
@@ -633,6 +659,7 @@
         loading={!historyCtx.fetchComplete}
         totalExpectedEvents={estimatedTotalGroups}
         descMinId={historyCtx.descMinId}
+        {firstEventTime}
         error={Boolean(workflowTaskFailedError)}
         onTimelineInit={handleTimelineInit}
         onRetentionWindow={workflowRunCtx.pruneRetainedRuns}
@@ -645,7 +672,7 @@
         {timelineRuns}
       />
     {/if}
-    {#if workflowRunCtx.truncation?.affectsVisibleInterval}
+    {#if workflowRunCtx.truncation?.affectsVisibleInterval || intervalTruncated}
       <p class="text-muted mt-2 text-sm" role="status">
         {translate('workflows.chained-timeline-truncated')}
       </p>

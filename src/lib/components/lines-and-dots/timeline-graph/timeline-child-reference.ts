@@ -1,4 +1,5 @@
 import type { EventGroup } from '$lib/models/event-groups/event-groups';
+import type { LazyGroup } from '$lib/services/grouped-event-buffer';
 import type { WorkflowEvent } from '$lib/types/events';
 
 import type { ChildWorkflowReference } from './recursive-timeline-model';
@@ -10,9 +11,19 @@ const stringValue = (value: unknown): string | undefined =>
   typeof value === 'string' && value.length > 0 ? value : undefined;
 
 export const getChildWorkflowReference = (
-  group: EventGroup,
+  group: EventGroup | LazyGroup,
   currentNamespace: string,
 ): ChildWorkflowReference | null => {
+  const childWorkflow =
+    'childWorkflow' in group ? group.childWorkflow : undefined;
+  if (childWorkflow) {
+    return {
+      namespace: childWorkflow.namespace ?? currentNamespace,
+      workflowId: childWorkflow.workflowId,
+      runId: childWorkflow.runId,
+    };
+  }
+  if (!('eventList' in group)) return null;
   const started = group.eventList.find(
     (event) => event.eventType === 'ChildWorkflowExecutionStarted',
   );

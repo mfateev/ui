@@ -50,6 +50,7 @@ export type FetchBidirectionalParams = {
   pauseAfterPages?: number;
   /** Called once when the pauseAfterPages threshold is reached. */
   onPause?: (handle: PauseHandle) => void;
+  onInvariantViolation?: (reason: string) => void;
 };
 
 export const fetchBidirectional = async ({
@@ -63,6 +64,7 @@ export const fetchBidirectional = async ({
   maximumPageSize,
   pauseAfterPages,
   onPause,
+  onInvariantViolation,
 }: FetchBidirectionalParams): Promise<BidirectionalStats> => {
   if (signal?.aborted) {
     return {
@@ -80,9 +82,11 @@ export const fetchBidirectional = async ({
 
   const ascCtrl = new AbortController();
   const descCtrl = new AbortController();
+  let releasePause: (() => void) | null = null;
   const onAbort = () => {
     ascCtrl.abort();
     descCtrl.abort();
+    releasePause?.();
   };
   signal?.addEventListener('abort', onAbort);
 
@@ -96,7 +100,129 @@ export const fetchBidirectional = async ({
   let totalEvents = 0;
   let pauseFired = false;
 
-  const seen = new Set<number>();
+  type CoveredRange = { minimum: number; maximum: number };
+  let ascendingRange: CoveredRange | null = null;
+  let descendingRange: CoveredRange | null = null;
+  let fallbackSeen: Set<number> | null = null;
+  let rawDeliveredCount = 0;
+
+  const rangeSize = (range: CoveredRange | null): number =>
+    range ? range.maximum - range.minimum + 1 : 0;
+
+  const uniqueRangeSize = (): number => {
+    if (!ascendingRange) return rangeSize(descendingRange);
+    if (!descendingRange) return rangeSize(ascendingRange);
+    const overlapStart = Math.max(
+      ascendingRange.minimum,
+      descendingRange.minimum,
+    );
+    const overlapEnd = Math.min(
+      ascendingRange.maximum,
+      descendingRange.maximum,
+    );
+    const overlap = Math.max(0, overlapEnd - overlapStart + 1);
+    return rangeSize(ascendingRange) + rangeSize(descendingRange) - overlap;
+  };
+
+  const covered = (id: number): boolean =>
+    Boolean(
+      (ascendingRange &&
+        id >= ascendingRange.minimum &&
+        id <= ascendingRange.maximum) ||
+      (descendingRange &&
+        id >= descendingRange.minimum &&
+        id <= descendingRange.maximum),
+    );
+
+  const addRangeToFallback = (
+    seen: Set<number>,
+    range: CoveredRange | null,
+  ): void => {
+    if (!range) return;
+    for (let id = range.minimum; id <= range.maximum; id += 1) seen.add(id);
+  };
+
+  const enableFallback = (reason: string): Set<number> => {
+    if (fallbackSeen) return fallbackSeen;
+    fallbackSeen = new Set<number>();
+    addRangeToFallback(fallbackSeen, ascendingRange);
+    addRangeToFallback(fallbackSeen, descendingRange);
+    onInvariantViolation?.(reason);
+    return fallbackSeen;
+  };
+
+  const pageIsContiguous = (ids: number[], ascending: boolean): boolean => {
+    if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) return false;
+    for (let index = 1; index < ids.length; index += 1) {
+      if (ids[index] - ids[index - 1] !== (ascending ? 1 : -1)) return false;
+    }
+    return true;
+  };
+
+  const processPage = (
+    events: HistoryEvent[],
+    ascending: boolean,
+  ): { fresh: HistoryEvent[]; accept: () => void } => {
+    rawDeliveredCount += events.length;
+    const ids = events.map((event) => Number(event.eventId));
+    const currentRange = ascending ? ascendingRange : descendingRange;
+    const pageMinimum = Math.min(...ids);
+    const pageMaximum = Math.max(...ids);
+    const connectsToCursor =
+      !currentRange ||
+      (pageMinimum <= currentRange.maximum + 1 &&
+        pageMaximum >= currentRange.minimum - 1);
+
+    if (!pageIsContiguous(ids, ascending) || !connectsToCursor) {
+      const seen = enableFallback(
+        `The ${ascending ? 'ascending' : 'descending'} history cursor returned a non-contiguous or incorrectly ordered page.`,
+      );
+      const accepted = new Set(seen);
+      const fresh = events.filter((event) => {
+        const id = Number(event.eventId);
+        if (!Number.isSafeInteger(id) || accepted.has(id)) return false;
+        accepted.add(id);
+        return true;
+      });
+      return {
+        fresh,
+        accept: () => {
+          fallbackSeen = accepted;
+        },
+      };
+    }
+
+    if (fallbackSeen) {
+      const accepted = new Set(fallbackSeen);
+      const fresh = events.filter((event) => {
+        const id = Number(event.eventId);
+        if (accepted.has(id)) return false;
+        accepted.add(id);
+        return true;
+      });
+      return {
+        fresh,
+        accept: () => {
+          fallbackSeen = accepted;
+        },
+      };
+    }
+
+    const fresh = events.filter((event) => !covered(Number(event.eventId)));
+    const nextRange = currentRange
+      ? {
+          minimum: Math.min(currentRange.minimum, pageMinimum),
+          maximum: Math.max(currentRange.maximum, pageMaximum),
+        }
+      : { minimum: pageMinimum, maximum: pageMaximum };
+    return {
+      fresh,
+      accept: () => {
+        if (ascending) ascendingRange = nextRange;
+        else descendingRange = nextRange;
+      },
+    };
+  };
 
   const gap = () => Math.max(0, descMinId - ascMaxId - 1);
 
@@ -118,11 +244,13 @@ export const fetchBidirectional = async ({
     ) {
       pauseFired = true;
       pauseLatch = new Promise<void>((resolve) => {
+        releasePause = () => {
+          pauseLatch = null;
+          releasePause = null;
+          resolve();
+        };
         onPause({
-          resume: () => {
-            pauseLatch = null;
-            resolve();
-          },
+          resume: () => releasePause?.(),
         });
       });
     }
@@ -186,16 +314,14 @@ export const fetchBidirectional = async ({
       ascPages++;
       observedPageSize = Math.max(observedPageSize, events.length);
 
-      const fresh: HistoryEvent[] = [];
       for (const e of events) {
         const id = parseInt(e.eventId);
         if (id > ascMaxId) ascMaxId = id;
-        if (!seen.has(id)) {
-          seen.add(id);
-          fresh.push(e);
-        }
       }
+      const processed = processPage(events, true);
+      const { fresh } = processed;
       if (fresh.length) onRawPage(fresh, true);
+      processed.accept();
       reportProgress();
       maybePause();
 
@@ -250,7 +376,6 @@ export const fetchBidirectional = async ({
       descPages++;
       observedPageSize = Math.max(observedPageSize, events.length);
 
-      const fresh: HistoryEvent[] = [];
       for (const e of events) {
         const id = parseInt(e.eventId);
         if (id < descMinId) descMinId = id;
@@ -258,13 +383,12 @@ export const fetchBidirectional = async ({
           descMaxId = id;
           totalEvents = id;
         }
-        if (!seen.has(id)) {
-          seen.add(id);
-          fresh.push(e);
-        }
       }
+      const processed = processPage(events, false);
+      const { fresh } = processed;
       if (fresh.length) onRawPage(fresh, false);
       if (descPages === 1) onFirstDescPage?.(fresh);
+      processed.accept();
       reportProgress();
       maybePause();
 
@@ -280,10 +404,8 @@ export const fetchBidirectional = async ({
   signal?.removeEventListener('abort', onAbort);
 
   const durationMs = performance.now() - t0;
-  const total = seen.size;
-  const fetched =
-    ascPages * (observedPageSize || 1) + descPages * (observedPageSize || 1);
-  const overlap = Math.max(0, fetched - total);
+  const total = (fallbackSeen as Set<number> | null)?.size ?? uniqueRangeSize();
+  const overlap = Math.max(0, rawDeliveredCount - total);
 
   const winner: BidirectionalStats['winner'] =
     ascPages === descPages

@@ -3,6 +3,8 @@
   import { translate } from '$lib/i18n/translate';
   import type { WorkflowChainOverviewRun } from '$lib/services/workflow-chain-overview';
 
+  import { binTimelineContinuations } from './timeline-continuation-bins';
+
   interface Props {
     runs: WorkflowChainOverviewRun[];
     windowStartTimeMs?: number;
@@ -41,6 +43,7 @@
   let visualDurationMs = 1;
   let visualWindowLeft = 0;
   let visualWindowWidth = 0.4;
+  let trackWidth = $state(1);
 
   const chainEndIsLive = $derived(
     runs.at(-1)?.status === 'Running' ||
@@ -49,7 +52,13 @@
   );
 
   const startTimeMs = $derived(runs[0]?.startTimeMs);
-  const endTimeMs = $derived(Math.max(...runs.map((run) => run.endTimeMs)));
+  const endTimeMs = $derived.by(() => {
+    let maximum = 0;
+    for (const run of runs) {
+      if (run.endTimeMs > maximum) maximum = run.endTimeMs;
+    }
+    return maximum;
+  });
   const durationMs = $derived(
     startTimeMs === undefined ? 0 : Math.max(1, endTimeMs - startTimeMs),
   );
@@ -67,9 +76,23 @@
   const windowWidth = $derived(Math.max(0.4, windowRight - windowLeft));
   const displayedWindowLeft = $derived(dragLeft ?? windowLeft);
   const displayedWindowWidth = $derived(dragWidth ?? windowWidth);
-  const continuationTicks = $derived(
-    runs.filter((run) => run.transitionToNext === 'continue-as-new'),
+  const continuationBins = $derived(
+    binTimelineContinuations({
+      runs,
+      startTimeMs: startTimeMs ?? 0,
+      durationMs,
+      widthPx: trackWidth,
+    }),
   );
+
+  $effect(() => {
+    if (!trackElement) return;
+    const observer = new ResizeObserver(([entry]) => {
+      trackWidth = Math.max(1, Math.round(entry.contentRect.width));
+    });
+    observer.observe(trackElement);
+    return () => observer.disconnect();
+  });
 
   $effect(() => {
     const chainStartTimeMs = startTimeMs;
@@ -298,7 +321,7 @@
     bind:this={trackElement}
     class="relative h-5 rounded border border-subtle bg-subtle"
     role="group"
-    aria-label={translate('workflows.timeline-chain-overview-description')}
+    aria-label={`${translate('workflows.timeline-chain-overview-description')} ${continuationBins.totalCount} continuations, ${continuationBins.binCount} visible markers.`}
     onpointermove={dragWindow}
     onpointerup={finishDragging}
     onpointercancel={cancelDragging}
@@ -308,14 +331,23 @@
         class="pointer-events-none absolute inset-0 origin-left"
         style:transform="scaleX(var(--overview-live-scale, 1))"
       >
-        {#each continuationTicks as run (run.runId)}
-          <span
-            class="absolute inset-y-0 w-0.5 -translate-x-1/2 bg-interactive"
-            style:left="{position(run.endTimeMs)}%"
-            title={translate('workflows.timeline-continued-as-new')}
-            data-testid="timeline-continue-as-new-tick"
-          ></span>
-        {/each}
+        <svg
+          class="text-interactive absolute inset-0 h-full w-full overflow-visible"
+          viewBox="0 0 {trackWidth} 20"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+          data-testid="timeline-continuation-bins"
+          data-continuation-count={continuationBins.totalCount}
+          data-continuation-bin-count={continuationBins.binCount}
+        >
+          <path
+            d={continuationBins.path}
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1"
+            vector-effect="non-scaling-stroke"
+          />
+        </svg>
       </div>
       <div
         class="absolute -inset-y-1 z-10 box-border touch-none rounded border-[3px] border-interactive bg-transparent shadow-sm"

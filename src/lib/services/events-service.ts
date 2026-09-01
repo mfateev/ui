@@ -192,6 +192,32 @@ export const fetchPartialRawEvents = async ({
   }
 };
 
+export const fetchPartialRawEventsOrThrow = async ({
+  namespace,
+  workflowId,
+  runId,
+  sort,
+  maximumPageSize = '20',
+  signal,
+  request = fetch,
+}: FetchEventsParameters & { request?: typeof fetch }): Promise<
+  HistoryEvent[]
+> => {
+  const route = routeForApi(getEndpointForSortOrder(sort), {
+    namespace,
+    workflowId,
+  });
+  const response = await requestFromAPI<GetWorkflowExecutionHistoryResponse>(
+    route,
+    {
+      request,
+      params: { maximumPageSize, 'execution.runId': runId },
+      options: { signal },
+    },
+  );
+  return response?.history?.events ?? [];
+};
+
 type PaginatedEventParams = {
   namespace: string;
   workflowId: string;

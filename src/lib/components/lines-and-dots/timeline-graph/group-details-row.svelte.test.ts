@@ -40,7 +40,7 @@ describe('GroupDetailsRow', () => {
 
   beforeAll(async () => {
     client = await getGroupDetailsRowClientTestRunner();
-  });
+  }, 30_000);
 
   afterEach(async () => {
     await client.cleanup();

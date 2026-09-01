@@ -3,9 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkflowEvent } from '$lib/types/events';
 import type { WorkflowExecution } from '$lib/types/workflows';
 
+import { DEFAULT_TIMELINE_PERFORMANCE_LIMITS } from './timeline-performance-limits';
 import {
   loadWorkflowChainOverview,
   mergeWorkflowChainOverviewRuns,
+  WorkflowChainOverviewAccumulator,
 } from './workflow-chain-overview';
 
 const workflow = (
@@ -129,6 +131,45 @@ describe('loadWorkflowChainOverview', () => {
     expect(describeRun).not.toHaveBeenCalledWith('run-1');
     expect(runs.map(({ runId }) => runId)).toEqual(['run-1', 'run-2', 'run-3']);
   });
+
+  it('publishes one tagged run at a time and reports the discovery limit', async () => {
+    const onRun = vi.fn();
+    const onDiagnostic = vi.fn();
+    const runs = await loadWorkflowChainOverview({
+      namespace: 'default',
+      workflowId: 'workflow',
+      firstRunId: 'run-1',
+      generation: 7,
+      limits: {
+        ...DEFAULT_TIMELINE_PERFORMANCE_LIMITS,
+        successorDiscoveryRuns: 2,
+      },
+      describeRun: async (runId) =>
+        workflow(
+          runId,
+          `2026-01-01T00:0${Number(runId.slice(4)) - 1}:00Z`,
+          `2026-01-01T00:0${Number(runId.slice(4))}:00Z`,
+        ),
+      fetchFinalEvents: async (runId) => [
+        continuedAsNew(
+          `run-${Number(runId.slice(4)) + 1}`,
+          '2026-01-01T00:01:00Z',
+        ),
+      ],
+      onRun,
+      onDiagnostic,
+    });
+    expect(runs).toHaveLength(2);
+    expect(onRun).toHaveBeenCalledTimes(2);
+    expect(onRun.mock.calls[0][0]).toMatchObject({
+      generation: 7,
+      firstRunId: 'run-1',
+      mutation: 'append',
+    });
+    expect(onDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'discovery-limit' }),
+    );
+  });
 });
 
 describe('mergeWorkflowChainOverviewRuns', () => {
@@ -176,5 +217,21 @@ describe('mergeWorkflowChainOverviewRuns', () => {
         endTimeMs: 400,
       },
     ]);
+  });
+
+  it('accumulates 10k ordered runs without sorting or copying prefixes', () => {
+    const accumulator = new WorkflowChainOverviewAccumulator();
+    for (let index = 0; index < 10_000; index += 1) {
+      expect(
+        accumulator.upsert({
+          runId: `run-${index}`,
+          status: 'Completed',
+          startTimeMs: index,
+          endTimeMs: index + 1,
+        }),
+      ).toBe('append');
+    }
+    expect(accumulator.runs).toHaveLength(10_000);
+    expect(accumulator.indexOf('run-9999')).toBe(9999);
   });
 });

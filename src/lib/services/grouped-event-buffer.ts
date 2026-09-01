@@ -16,6 +16,7 @@ import type {
   PendingNexusOperation,
   WorkflowEvent,
 } from '$lib/types/events';
+import { validTimeToDate } from '$lib/utilities/format-time';
 import {
   isFailedTaskEvent,
   isTimedOutTaskEvent,
@@ -78,7 +79,23 @@ export interface LazyGroup {
   readonly isPending: boolean;
   readonly pendingActivity: PendingActivity | undefined;
   readonly pendingNexusOperation: PendingNexusOperation | undefined;
+  readonly eventPoints?: readonly LazyTimelineEventPoint[];
+  readonly activityStartedTimeMs?: number;
+  readonly activityAttempt?: number;
+  readonly childWorkflow?: LazyChildWorkflowReference;
 }
+
+export type LazyTimelineEventPoint = {
+  eventId: number;
+  timeMs: number;
+  classification: WorkflowEvent['classification'];
+};
+
+export type LazyChildWorkflowReference = {
+  namespace?: string;
+  workflowId: string;
+  runId: string;
+};
 
 export type ChangeListener = (immediate: boolean) => void;
 
@@ -134,6 +151,12 @@ export function createGroupedEventBuffer() {
     hasTerminalActivity = false;
     hasTerminalNexus = false;
     private lastSlot = -1;
+    private pointsVersion = -1;
+    private cachedPoints: readonly LazyTimelineEventPoint[] = [];
+    activityStartedTimeMs: number | undefined;
+    activityAttempt: number | undefined;
+    childWorkflow: LazyChildWorkflowReference | undefined;
+    private childNamespace: string | undefined;
 
     constructor(readonly headSlot: number) {
       this.id = String(headSlot + 1);
@@ -148,6 +171,7 @@ export function createGroupedEventBuffer() {
       }
       if (isTerminalActivityEvent(event)) this.hasTerminalActivity = true;
       if (isTerminalNexusEvent(event)) this.hasTerminalNexus = true;
+      this.captureTimelineFields(event);
       if (slot === this.headSlot) {
         this.initialEvent = event;
         this.category = groupCategory(event);
@@ -156,6 +180,47 @@ export function createGroupedEventBuffer() {
       // A head arriving picks pending metadata up; a terminal event drops it.
       applyPendingMetadataTo(this);
       this.version++;
+    }
+
+    private captureTimelineFields(event: WorkflowEvent): void {
+      const eventAttributes = event.attributes as Record<string, unknown>;
+      if (event.eventType === 'ActivityTaskStarted') {
+        this.activityStartedTimeMs = event.eventTime
+          ? validTimeToDate(event.eventTime).getTime()
+          : undefined;
+        const attempt = Number(eventAttributes.attempt);
+        this.activityAttempt = Number.isFinite(attempt) ? attempt : undefined;
+      }
+      if (event.eventType === 'StartChildWorkflowExecutionInitiated') {
+        const namespace = eventAttributes.namespace;
+        if (typeof namespace === 'string' && namespace) {
+          this.childNamespace = namespace;
+          if (this.childWorkflow && !this.childWorkflow.namespace) {
+            this.childWorkflow = { ...this.childWorkflow, namespace };
+          }
+        }
+      }
+      if (event.eventType !== 'ChildWorkflowExecutionStarted') return;
+      const execution = eventAttributes.workflowExecution;
+      if (!execution || typeof execution !== 'object') return;
+      const { workflowId, runId } = execution as Record<string, unknown>;
+      if (
+        typeof workflowId !== 'string' ||
+        !workflowId ||
+        typeof runId !== 'string' ||
+        !runId
+      ) {
+        return;
+      }
+      const namespace = eventAttributes.namespace;
+      this.childWorkflow = {
+        namespace:
+          typeof namespace === 'string' && namespace
+            ? namespace
+            : this.childNamespace,
+        workflowId,
+        runId,
+      };
     }
 
     get eventCount(): number {
@@ -178,6 +243,26 @@ export function createGroupedEventBuffer() {
         this.pendingNexusOperation,
       );
     }
+
+    get eventPoints(): readonly LazyTimelineEventPoint[] {
+      if (this.pointsVersion === this.version) return this.cachedPoints;
+      const points: LazyTimelineEventPoint[] = [];
+      for (const slot of this.slots) {
+        const event = events[slot];
+        if (!event) continue;
+        points.push({
+          eventId: Number(event.id),
+          timeMs: event.eventTime
+            ? validTimeToDate(event.eventTime).getTime()
+            : 0,
+          classification: event.classification,
+        });
+      }
+      points.sort((left, right) => left.eventId - right.eventId);
+      this.cachedPoints = points;
+      this.pointsVersion = this.version;
+      return points;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -188,6 +273,7 @@ export function createGroupedEventBuffer() {
   let headGroup = new Int32Array(0); // head slot -> record index + 1 (0 = none)
   let records: GroupRecord[] = [];
   let maxSlot = -1;
+  let minSlot = Number.POSITIVE_INFINITY;
 
   let failedEvent: HistoryEvent | null = null;
 
@@ -385,6 +471,7 @@ export function createGroupedEventBuffer() {
     pendingByActivityId = new Map();
     pendingByNexusScheduledId = new Map();
     maxSlot = -1;
+    minSlot = Number.POSITIVE_INFINITY;
 
     failedEvent = null;
     processedWorkflowTaskIds.clear();
@@ -421,6 +508,7 @@ export function createGroupedEventBuffer() {
     const event = toWorkflowEvent(raw);
     events[slot] = event;
     if (slot > maxSlot) maxSlot = slot;
+    if (slot < minSlot) minSlot = slot;
 
     // An event whose head is unknown (malformed attributes) heads its own group.
     const parsedHeadSlot =
@@ -538,7 +626,7 @@ export function createGroupedEventBuffer() {
     if (lazy instanceof GroupRecord) {
       return materializeEventGroup(lazy) as EventGroup;
     }
-    return lazy as EventGroup;
+    return lazy as unknown as EventGroup;
   }
 
   /**
@@ -583,6 +671,12 @@ export function createGroupedEventBuffer() {
     return result;
   }
 
+  function getFirstEvent(): WorkflowEvent | undefined {
+    return Number.isFinite(minSlot)
+      ? (events[minSlot] ?? undefined)
+      : undefined;
+  }
+
   /**
    * The WorkflowTaskFailed/TimedOut event that is currently active (i.e. has no
    * subsequent WorkflowTaskCompleted), or undefined if none.
@@ -621,6 +715,7 @@ export function createGroupedEventBuffer() {
 
   return {
     getEventArray,
+    getFirstEvent,
     getGroupArray,
     getLazyGroups,
     getWorkflowTaskFailedEvent,
@@ -673,6 +768,8 @@ export const replaceActiveBuffer = (buffer: GroupedEventBuffer): void =>
 
 export const getEventArray = (): WorkflowEvent[] =>
   activeBufferHandle.current.getEventArray();
+export const getFirstEvent = (): WorkflowEvent | undefined =>
+  activeBufferHandle.current.getFirstEvent();
 export const getGroupArray = (opts?: GroupArrayOptions): EventGroup[] =>
   activeBufferHandle.current.getGroupArray(opts);
 export const getLazyGroups = (opts?: GroupArrayOptions): LazyGroup[] =>

@@ -20,6 +20,10 @@ export const SHARED_WITH_EVENT_GROUP = {
   isPending: true,
   pendingActivity: true,
   pendingNexusOperation: true,
+  eventPoints: false,
+  activityStartedTimeMs: false,
+  activityAttempt: false,
+  childWorkflow: false,
   // Buffer bookkeeping — an EventGroup has no counterpart.
   version: false,
 } satisfies Record<keyof LazyGroup, boolean>;

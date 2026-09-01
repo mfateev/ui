@@ -3,6 +3,7 @@ import type {
   TimelineGroup,
   TimelineRun,
 } from '$lib/services/chain-workflow-session';
+import type { LazyGroup } from '$lib/services/grouped-event-buffer';
 import type { EventTypeCategory } from '$lib/types/events';
 import { getFailedOrPendingGroups } from '$lib/utilities/get-failed-or-pending';
 
@@ -53,8 +54,8 @@ export function filterTimelineGroupEntriesByStatus(
 }
 
 export function getTimelineEntryMaps(entries: TimelineGroupEntry[]): {
-  entryByGroup: Map<EventGroup, TimelineGroupEntry>;
-  keyByGroup: Map<EventGroup, string>;
+  entryByGroup: Map<EventGroup | LazyGroup, TimelineGroupEntry>;
+  keyByGroup: Map<EventGroup | LazyGroup, string>;
 } {
   return {
     entryByGroup: new Map(entries.map((entry) => [entry.group, entry])),

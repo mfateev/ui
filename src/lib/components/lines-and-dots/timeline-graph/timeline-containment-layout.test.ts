@@ -9,7 +9,10 @@ import {
   timelineRunKey,
   type TimelineWorkflowNode,
 } from './recursive-timeline-model';
-import { getRecursiveTimelineContainmentLayout } from './timeline-containment-layout';
+import {
+  getRecursiveTimelineContainmentLayout,
+  type TimelineContainmentLayout,
+} from './timeline-containment-layout';
 import type { TimelineGroupEntry } from './timeline-run-entries';
 
 const entry = (runId: string, id: number): TimelineGroupEntry => ({
@@ -36,7 +39,42 @@ const run = (
   groups: [],
 });
 
+const allRows = (layout: TimelineContainmentLayout) =>
+  layout.rows(0, layout.rowCount);
+
 describe('getRecursiveTimelineContainmentLayout', () => {
+  it('addresses a large run without materializing its complete row list', () => {
+    const entries = Array.from({ length: 100_000 }, (_, index) =>
+      entry('large-run', index + 1),
+    );
+    const root = {
+      key: 'root',
+      namespace: 'default',
+      workflowId: 'root',
+      firstRunId: 'large-run',
+      workflow: { id: 'root' } as WorkflowExecution,
+      runs: [{ ...run('large-run', 0), groups: entries }],
+      childrenByGroupKey: new Map(),
+      depth: 0,
+    } as TimelineWorkflowNode;
+    const layout = getRecursiveTimelineContainmentLayout({
+      root,
+      visibleEntries: entries,
+      participatingRunKeys: new Set([timelineRunKey('root', 'large-run')]),
+      reverseSort: false,
+      pendingGroupCount: 0,
+      descMinId: 0,
+    });
+
+    expect(layout.rowCount).toBe(100_002);
+    expect(layout.rows(50_000, 50_008)).toHaveLength(8);
+    expect(layout.rowAt(100_001)).toMatchObject({
+      kind: 'group',
+      entry: { timelineKey: 'large-run:100000' },
+    });
+    expect(layout.indexOfGroup('large-run:75000')).toBe(75_001);
+  });
+
   it('places consecutive run spans on one shared boundary', () => {
     const firstEntry = entry('first', 1);
     const secondEntry = entry('second', 2);
@@ -66,7 +104,8 @@ describe('getRecursiveTimelineContainmentLayout', () => {
       descMinId: 0,
     });
 
-    expect(layout.runSpans[0].rowEnd).toBe(layout.runSpans[1].rowStart);
+    const spans = layout.runSpans();
+    expect(spans[0].rowEnd).toBe(spans[1].rowStart);
   });
 
   it('flattens child and grandchild blocks while enclosing them in ancestor spans', () => {
@@ -129,7 +168,8 @@ describe('getRecursiveTimelineContainmentLayout', () => {
       descMinId: 0,
     });
 
-    expect(layout.rows.map((row) => row.key)).toEqual([
+    const rows = allRows(layout);
+    expect(rows.map((row) => row.key)).toEqual([
       expect.stringContaining('workflow-header'),
       expect.stringContaining('frame-header'),
       expect.stringContaining('workflow-spacing-before'),
@@ -140,7 +180,7 @@ describe('getRecursiveTimelineContainmentLayout', () => {
       expect.stringContaining('workflow-spacing-after-padding'),
       expect.stringContaining('root'),
     ]);
-    expect(layout.runSpans).toEqual(
+    expect(layout.runSpans()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           key: timelineRunKey('root', 'root-run'),
@@ -154,19 +194,19 @@ describe('getRecursiveTimelineContainmentLayout', () => {
         }),
       ]),
     );
-    const childSpan = layout.workflowSpans.find(
-      (span) => span.workflowKey === 'child',
-    );
-    const leadingSpacing = layout.rows.find((row) =>
+    const childSpan = layout
+      .workflowSpans()
+      .find((span) => span.workflowKey === 'child');
+    const leadingSpacing = rows.find((row) =>
       row.key.endsWith('workflow-spacing-before'),
     );
-    const trailingSpacing = layout.rows.find((row) =>
+    const trailingSpacing = rows.find((row) =>
       row.key.endsWith('workflow-spacing-after'),
     );
-    const trailingPadding = layout.rows.find((row) =>
+    const trailingPadding = rows.find((row) =>
       row.key.endsWith('workflow-spacing-after-padding'),
     );
-    const followingParentRow = layout.rows.find(
+    const followingParentRow = rows.find(
       (row) => row.kind === 'group' && row.entry === rootAction,
     );
     expect(leadingSpacing?.rowIndex).toBe((childSpan?.rowStart ?? 0) - 1);
@@ -217,11 +257,15 @@ describe('getRecursiveTimelineContainmentLayout', () => {
       visibleEntries: [],
     });
 
-    expect(shown.rows.find((row) => row.key === 'stable-edge')).toMatchObject({
+    expect(
+      allRows(shown).find((row) => row.key === 'stable-edge'),
+    ).toMatchObject({
       kind: 'group',
       key: 'stable-edge',
     });
-    expect(filtered.rows.some((row) => row.key === 'stable-edge')).toBe(false);
+    expect(allRows(filtered).some((row) => row.key === 'stable-edge')).toBe(
+      false,
+    );
   });
 
   it('keeps the relationship layout stable while an expanded child loads', () => {
@@ -257,10 +301,10 @@ describe('getRecursiveTimelineContainmentLayout', () => {
       pendingGroupCount: 0,
       descMinId: 0,
     };
-    const idleRows = getRecursiveTimelineContainmentLayout(input).rows;
+    const idleRows = allRows(getRecursiveTimelineContainmentLayout(input));
 
     edge.load = { state: 'loading', requestKey: 'child-request' };
-    const loadingRows = getRecursiveTimelineContainmentLayout(input).rows;
+    const loadingRows = allRows(getRecursiveTimelineContainmentLayout(input));
 
     expect(loadingRows.map((row) => row.key)).toEqual(
       idleRows.map((row) => row.key),

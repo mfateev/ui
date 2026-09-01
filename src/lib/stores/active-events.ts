@@ -1,7 +1,5 @@
 import { get, writable } from 'svelte/store';
 
-import type { EventGroup } from '$lib/models/event-groups/event-groups';
-
 export const indexPageSize = 200;
 export const startIndex = writable(0);
 export const endIndex = writable(indexPageSize);
@@ -21,7 +19,7 @@ export const clearActiveGroups = () => {
   activeGroupHeight.set(0);
 };
 
-export const setActiveGroup = (group: EventGroup, key = group.id) => {
+export const setActiveGroup = (group: { id: string }, key = group.id) => {
   if (!get(activeGroups).includes(key)) {
     activeGroups.set([key]);
   } else {

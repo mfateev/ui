@@ -3,6 +3,7 @@ import {
   DEFAULT_CHAIN_RETENTION_LIMITS,
   type TimelineRun,
 } from '$lib/services/chain-workflow-session';
+import type { LazyGroup } from '$lib/services/grouped-event-buffer';
 import type { WorkflowExecution } from '$lib/types/workflows';
 
 export type ChildWorkflowReference = {
@@ -155,7 +156,7 @@ export const countNodeData = (
     (count, run) =>
       count +
       run.groups.reduce(
-        (runCount, entry) => runCount + entry.group.eventList.length,
+        (runCount, entry) => runCount + entry.group.eventCount,
         0,
       ),
     0,
@@ -165,7 +166,7 @@ export const countNodeData = (
 export const getGroupForEdge = (
   node: TimelineWorkflowNode,
   edge: TimelineChildEdge,
-): EventGroup | undefined =>
+): EventGroup | LazyGroup | undefined =>
   node.runs
     .flatMap((run) => run.groups)
     .find((entry) => entry.timelineKey === edge.parentGroupKey)?.group;

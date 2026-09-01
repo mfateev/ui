@@ -24,13 +24,15 @@
   import PayloadSummary from '$lib/components/payload/payload-summary.svelte';
   import { translate } from '$lib/i18n/translate';
   import type { EventGroup } from '$lib/models/event-groups/event-groups';
+  import { getEventGroupDisplayName } from '$lib/models/event-groups/get-group-name';
+  import type { LazyGroup } from '$lib/services/grouped-event-buffer';
   import { setActiveGroup } from '$lib/stores/active-events';
   import { resolveSystemNexusEvent } from '$lib/system-nexus-endpoints';
   import {
     decodeLocalActivity,
     getLocalActivityMarkerEvent,
   } from '$lib/utilities/decode-local-activity';
-  import type { ValidTime } from '$lib/utilities/format-time';
+  import { type ValidTime, validTimeToDate } from '$lib/utilities/format-time';
   import type { SummaryAttribute } from '$lib/utilities/get-single-attribute-for-event';
   import { getEventClassificationLabel } from '$lib/utilities/get-status-label';
   import {
@@ -51,7 +53,7 @@
   } from './timeline-row-geometry';
 
   type Props = {
-    group: EventGroup;
+    group: EventGroup | LazyGroup;
     canvasWidth: number;
     project: (time: ValidTime | undefined | null) => number;
     readOnly: boolean;
@@ -83,11 +85,22 @@
   const timelineWidth = $derived(canvasWidth - 2 * GUTTER);
   const isLivePending = $derived(active && group.isPending);
   const pendingActivity = $derived(active ? group?.pendingActivity : undefined);
+  const materializedGroup = $derived('eventList' in group ? group : undefined);
+  const lazyEventPoints = $derived(
+    'eventPoints' in group ? group.eventPoints : undefined,
+  );
+  const lazyActivityAttempt = $derived(
+    'activityAttempt' in group ? group.activityAttempt : undefined,
+  );
+  const displayName = $derived(
+    materializedGroup?.displayName ??
+      getEventGroupDisplayName(group.initialEvent as never),
+  );
 
   // Reactive (not untrack) so a re-pointed pooled row relabels for its new group.
   const accessibleName = $derived(
     translate('events.row-accessible-name', {
-      eventType: group.displayName,
+      eventType: displayName,
       classification: getEventClassificationLabel(
         group.finalClassification || group.classification,
       ),
@@ -106,8 +119,12 @@
   // value already decoded onto the group, otherwise decodes once.
   $effect(() => {
     const currentGroup = group;
-    decodedLocalActivity = currentGroup.decodedLocalActivity;
+    decodedLocalActivity =
+      'decodedLocalActivity' in currentGroup
+        ? currentGroup.decodedLocalActivity
+        : undefined;
     if (currentGroup.category !== 'local-activity') return;
+    if (!('eventList' in currentGroup)) return;
     if (currentGroup.decodedLocalActivity) return;
 
     const localActivityEvent = getLocalActivityMarkerEvent(currentGroup);
@@ -130,15 +147,17 @@
 
   const getDistancePointsAndPositions = (
     timelineWidth: number,
-    events: EventGroup['eventList'],
+    eventTimesMs: readonly number[],
     count: number,
     retainedEndTimeMs: number | undefined,
   ) => {
     // Loop to `count` (not events.map) to depend on eventCount without allocating.
     const points: number[] = [];
-    const pointCount = Math.min(count, events.length);
+    const pointCount = Math.min(count, eventTimesMs.length);
     for (let idx = 0; idx < pointCount; idx++) {
-      points.push(Math.round(project(events[idx].eventTime)));
+      points.push(
+        Math.round(project(new Date(eventTimesMs[idx]).toISOString())),
+      );
     }
     if (pauseTime) {
       points.push(Math.round(project(pauseTime)));
@@ -161,7 +180,11 @@
   const { points, textAnchor, textPosition } = $derived(
     getDistancePointsAndPositions(
       timelineWidth,
-      group.eventList,
+      lazyEventPoints?.map((point) => point.timeMs) ??
+        materializedGroup?.eventList.map((event) =>
+          event.eventTime ? validTimeToDate(event.eventTime).getTime() : 0,
+        ) ??
+        [],
       eventCount,
       retainedEndTimeMs,
     ),
@@ -211,11 +234,11 @@
   // categories don't scan their whole eventList every re-point for nothing.
   const activityTaskScheduled = $derived(
     group.category === 'activity'
-      ? group.eventList.find(isActivityTaskStartedEvent)
+      ? materializedGroup?.eventList.find(isActivityTaskStartedEvent)
       : undefined,
   );
   const retryAttempt = $derived(
-    activityTaskScheduled?.attributes?.attempt ?? 0,
+    lazyActivityAttempt ?? activityTaskScheduled?.attributes?.attempt ?? 0,
   );
   const retried = $derived(retryAttempt > 1);
 
@@ -360,12 +383,12 @@
         {@const index = visibleDot.index}
         {@const alignment = getTimelineDotAlignment({
           index,
-          eventCount: group.eventList.length,
+          eventCount: group.eventCount,
           pending: group.isPending,
         })}
         {@const role = getTimelineDotRole({
           index,
-          eventCount: group.eventList.length,
+          eventCount: group.eventCount,
           pointCount: points.length,
           pending: group.isPending,
           livePending: isLivePending,
@@ -375,7 +398,10 @@
         {#if role}
           {@render dot(
             localX,
-            dotColors(group.eventList[index]?.classification),
+            dotColors(
+              lazyEventPoints?.[index]?.classification ??
+                materializedGroup?.eventList[index]?.classification,
+            ),
             role === 'pending'
               ? 'retry'
               : role === 'pause'
@@ -391,13 +417,13 @@
          positioned button-local (offset by spanLeft), may overflow the box. -->
       {#if labelVisible}
         <PayloadSummary
-          value={group?.userMetadata?.summary}
+          value={materializedGroup?.userMetadata?.summary}
           prefix={isActivityTaskScheduledEvent(group.initialEvent)
-            ? group?.displayName
+            ? displayName
             : ''}
           fallback={decodedLocalActivity
             ? translate('events.category.local-activity')
-            : group?.displayName}
+            : displayName}
         >
           {#snippet children(decodedValue)}
             {@const iconName =

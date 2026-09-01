@@ -1,5 +1,9 @@
 import type { EventGroup } from '$lib/models/event-groups/event-groups';
 import type { PauseHandle } from '$lib/services/fetch-bidirectional';
+import {
+  type LazyGroup,
+  materializeGroup,
+} from '$lib/services/grouped-event-buffer';
 import type { WorkflowEvent } from '$lib/types/events';
 import type { WorkflowExecution, WorkflowStatus } from '$lib/types/workflows';
 import { validTimeToDate } from '$lib/utilities/format-time';
@@ -9,7 +13,8 @@ export type ChainTransition = 'continue-as-new' | 'retry' | 'reset' | 'cron';
 export type TimelineGroup = {
   timelineKey: string;
   runId: string;
-  group: EventGroup;
+  group: EventGroup | LazyGroup;
+  materialize?: () => EventGroup;
 };
 
 export type TimelineRun = {
@@ -120,13 +125,19 @@ export const timelineKey = (runId: string, groupId: string): string =>
 
 export const toTimelineGroups = (
   runId: string,
-  groups: EventGroup[],
+  groups: (EventGroup | LazyGroup)[],
+  materialize: (group: EventGroup | LazyGroup) => EventGroup = materializeGroup,
 ): TimelineGroup[] =>
   groups.map((group) => ({
     timelineKey: timelineKey(runId, group.id),
     runId,
     group,
+    materialize: () => materialize(group),
   }));
+
+export const materializeTimelineGroup = (entry: TimelineGroup): EventGroup =>
+  entry.materialize?.() ??
+  ('eventList' in entry.group ? entry.group : materializeGroup(entry.group));
 
 export const createRunRuntime = (): RunRuntimeState => {
   const runtime: RunRuntimeState = {
@@ -328,6 +339,12 @@ const eventTimeMs = (event: WorkflowEvent | undefined): number | null => {
   return Number.isFinite(timeMs) ? timeMs : null;
 };
 
+const timelineGroupEventCount = (timelineGroup: TimelineGroup): number =>
+  timelineGroup.group.eventCount ??
+  ('eventList' in timelineGroup.group
+    ? timelineGroup.group.eventList.length
+    : 0);
+
 const groupTimeRange = (
   timelineGroup: TimelineGroup,
   run: RetainedTimelineRun,
@@ -373,7 +390,7 @@ export const limitRetainedRuns = (
       count +
       run.groups.reduce(
         (runCount, timelineGroup) =>
-          runCount + timelineGroup.group.eventList.length,
+          runCount + timelineGroupEventCount(timelineGroup),
         0,
       ),
     0,
@@ -405,7 +422,7 @@ export const limitRetainedRuns = (
     const removed = runs.shift();
     if (!removed) break;
     const removedEvents = removed.groups.reduce(
-      (count, timelineGroup) => count + timelineGroup.group.eventList.length,
+      (count, timelineGroup) => count + timelineGroupEventCount(timelineGroup),
       0,
     );
     groupCount -= removed.groups.length;
@@ -462,7 +479,7 @@ export const limitRetainedRuns = (
       1,
     );
     groupCount -= 1;
-    eventCount -= removed.group.eventList.length;
+    eventCount -= timelineGroupEventCount(removed);
     recordTruncation(candidate.endTimeMs, reason, candidate.visible);
     return true;
   };

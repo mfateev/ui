@@ -6,6 +6,7 @@ import {
   type TimelineWorkflowNode,
   workflowGroupKey,
 } from './recursive-timeline-model';
+import { TimelineVisibilityBitset } from './timeline-interval-index';
 import type { TimelineGroupEntry } from './timeline-run-entries';
 
 export type TimelineLayoutRow =
@@ -87,18 +88,23 @@ export type TimelineWorkflowSpan = {
   ancestorRunKeys: string[];
 };
 
-export type TimelineContainmentLayout = {
-  rows: TimelineLayoutRow[];
-  runSpans: TimelineRunSpan[];
-  workflowSpans: TimelineWorkflowSpan[];
+export type LogicalTimelineLayout = {
+  rowCount: number;
+  totalRowCount: number;
+  rowAt(index: number): TimelineLayoutRow | undefined;
+  rows(start: number, end: number): TimelineLayoutRow[];
+  indexOfGroup(key: string): number | undefined;
+  runSpans(start?: number, end?: number): TimelineRunSpan[];
+  workflowSpans(start?: number, end?: number): TimelineWorkflowSpan[];
   chainSpan: { rowStart: number; rowEnd: number } | null;
   pendingGap: {
     insertionIndex: number;
     rowStart: number;
     rowCount: number;
   } | null;
-  totalRowCount: number;
 };
+
+export type TimelineContainmentLayout = LogicalTimelineLayout;
 
 export type RecursiveContainmentLayoutInput = {
   root: TimelineWorkflowNode;
@@ -109,9 +115,32 @@ export type RecursiveContainmentLayoutInput = {
   descMinId: number;
 };
 
+type WithoutRowIndex<Row> = Row extends unknown ? Omit<Row, 'rowIndex'> : never;
+type RowWithoutIndex = WithoutRowIndex<TimelineLayoutRow>;
+type RowSegment = {
+  start: number;
+  count: number;
+  rowAt(localIndex: number): TimelineLayoutRow | undefined;
+};
+type GroupRowSegment = RowSegment & {
+  run: TimelineRun;
+  ordinalStart: number;
+  ordinalEnd: number;
+  reverse: boolean;
+  mask: TimelineVisibilityBitset;
+};
+
 const eventId = (entry: TimelineGroupEntry): number =>
   Number(entry.group.initialEvent.id);
 
+const intersects = (
+  rowStart: number,
+  rowEnd: number,
+  start = 0,
+  end = Number.POSITIVE_INFINITY,
+): boolean => rowEnd > start && rowStart < end;
+
+/** Prefix-addressable containment without allocating a row object per group. */
 export function getRecursiveTimelineContainmentLayout({
   root,
   visibleEntries,
@@ -123,11 +152,28 @@ export function getRecursiveTimelineContainmentLayout({
   const visibleByGroup = new Map(
     visibleEntries.map((entry) => [entry.group, entry]),
   );
-  const rows: TimelineLayoutRow[] = [];
-  const runSpans: TimelineRunSpan[] = [];
-  const workflowSpans: TimelineWorkflowSpan[] = [];
-  let rowIndex = 0;
-  let pendingGap: TimelineContainmentLayout['pendingGap'] = null;
+  const segments: RowSegment[] = [];
+  const groupSegments: GroupRowSegment[] = [];
+  const allRunSpans: TimelineRunSpan[] = [];
+  const allWorkflowSpans: TimelineWorkflowSpan[] = [];
+  let logicalRowIndex = 0;
+  let physicalRowIndex = 0;
+  let pendingGap: LogicalTimelineLayout['pendingGap'] = null;
+
+  const appendRow = (row: RowWithoutIndex): void => {
+    const start = logicalRowIndex;
+    const rowIndex = physicalRowIndex;
+    segments.push({
+      start,
+      count: 1,
+      rowAt: (localIndex) =>
+        localIndex === 0
+          ? ({ ...row, rowIndex } as TimelineLayoutRow)
+          : undefined,
+    });
+    logicalRowIndex += 1;
+    physicalRowIndex += 1;
+  };
 
   const appendState = ({
     edge,
@@ -141,8 +187,8 @@ export function getRecursiveTimelineContainmentLayout({
     run: TimelineRun;
     runKey: string;
     ancestorRunKeys: string[];
-  }) => {
-    rows.push({
+  }): void => {
+    appendRow({
       kind: 'child-state',
       key: `${edge.key}:state`,
       edge,
@@ -151,9 +197,7 @@ export function getRecursiveTimelineContainmentLayout({
       runId: run.runId,
       depth: edge.depth,
       ancestorRunKeys,
-      rowIndex,
     });
-    rowIndex += 1;
   };
 
   const visitWorkflow = (
@@ -161,17 +205,15 @@ export function getRecursiveTimelineContainmentLayout({
     ancestorRunKeys: string[],
   ): void => {
     if (node.depth > 0) {
-      rows.push({
+      appendRow({
         kind: 'workflow-spacing',
         key: `${node.key}:workflow-spacing-before`,
         workflowKey: node.key,
         depth: node.depth,
         ancestorRunKeys,
-        rowIndex,
       });
-      rowIndex += 1;
     }
-    const workflowStart = rowIndex;
+    const workflowStart = physicalRowIndex;
     const participatingRuns = node.runs
       .filter((run) =>
         participatingRunKeys.has(timelineRunKey(node.key, run.runId)),
@@ -183,22 +225,20 @@ export function getRecursiveTimelineContainmentLayout({
       });
 
     if (participatingRuns.length > 0) {
-      rows.push({
+      appendRow({
         kind: 'workflow-header',
         key: `${node.key}:workflow-header`,
         workflowKey: node.key,
         depth: node.depth,
         ancestorRunKeys,
-        rowIndex,
       });
-      rowIndex += 1;
     }
 
     for (const run of participatingRuns) {
       const runKey = timelineRunKey(node.key, run.runId);
       const owners = [...ancestorRunKeys, runKey];
-      const runStart = rowIndex;
-      rows.push({
+      const runStart = physicalRowIndex;
+      appendRow({
         kind: 'frame-header',
         key: `${runKey}:frame-header`,
         workflowKey: node.key,
@@ -206,88 +246,153 @@ export function getRecursiveTimelineContainmentLayout({
         runId: run.runId,
         depth: node.depth,
         ancestorRunKeys,
-        rowIndex,
       });
-      rowIndex += 1;
-      const orderedGroups = [...run.groups].sort((a, b) => {
-        const idDifference =
-          Number(a.group.initialEvent.id) - Number(b.group.initialEvent.id);
-        const ordered =
-          idDifference || a.timelineKey.localeCompare(b.timelineKey);
-        return reverseSort ? -ordered : ordered;
-      });
+
+      const mask = new TimelineVisibilityBitset(run.groups.length);
+      for (let ordinal = 0; ordinal < run.groups.length; ordinal += 1) {
+        if (visibleByGroup.has(run.groups[ordinal].group)) mask.set(ordinal);
+      }
+
       let appended = false;
       let gapInserted = false;
       const runPendingCount =
         node === root && run.active ? pendingGroupCount : 0;
       const hasCursorGap = runPendingCount > 0 && descMinId > 0;
+      let rangeStart = 0;
+      let rangeEnd = run.groups.length;
 
-      for (const timelineGroup of orderedGroups) {
-        const edge = node.childrenByGroupKey.get(timelineGroup.timelineKey);
+      const appendRange = (ordinalStart: number, ordinalEnd: number): void => {
+        const firstRank = mask.rank(ordinalStart);
+        const endRank = mask.rank(ordinalEnd);
+        const count = endRank - firstRank;
+        if (count <= 0) return;
+        const start = logicalRowIndex;
+        const rowStart = physicalRowIndex;
+        const segment: GroupRowSegment = {
+          start,
+          count,
+          run,
+          ordinalStart,
+          ordinalEnd,
+          reverse: reverseSort,
+          mask,
+          rowAt: (localIndex) => {
+            if (localIndex < 0 || localIndex >= count) return undefined;
+            const rank = reverseSort
+              ? endRank - 1 - localIndex
+              : firstRank + localIndex;
+            const ordinal = mask.select(rank);
+            if (
+              ordinal === undefined ||
+              ordinal < ordinalStart ||
+              ordinal >= ordinalEnd
+            ) {
+              return undefined;
+            }
+            const timelineGroup = run.groups[ordinal];
+            const entry = visibleByGroup.get(timelineGroup.group);
+            if (!entry) return undefined;
+            const edge = node.childrenByGroupKey.get(timelineGroup.timelineKey);
+            return {
+              kind: 'group',
+              key:
+                edge?.key ??
+                workflowGroupKey({
+                  executionKey: node.key,
+                  runId: run.runId,
+                  timelineKey: entry.timelineKey,
+                }),
+              entry,
+              workflowKey: node.key,
+              runKey,
+              depth: node.depth,
+              ancestorRunKeys: owners,
+              childEdge: edge,
+              rowIndex: rowStart + localIndex,
+            };
+          },
+        };
+        segments.push(segment);
+        groupSegments.push(segment);
+        logicalRowIndex += count;
+        physicalRowIndex += count;
+        appended = true;
+      };
+
+      const flushBefore = (ordinal: number): void => {
+        if (reverseSort) {
+          appendRange(ordinal + 1, rangeEnd);
+          rangeEnd = ordinal + 1;
+        } else {
+          appendRange(rangeStart, ordinal);
+          rangeStart = ordinal;
+        }
+      };
+      const skipCurrent = (ordinal: number): void => {
+        if (reverseSort) rangeEnd = ordinal;
+        else rangeStart = ordinal + 1;
+      };
+
+      const start = reverseSort ? run.groups.length - 1 : 0;
+      const stop = reverseSort ? -1 : run.groups.length;
+      const step = reverseSort ? -1 : 1;
+      for (let ordinal = start; ordinal !== stop; ordinal += step) {
+        const timelineGroup = run.groups[ordinal];
         const entry = visibleByGroup.get(timelineGroup.group);
-        if (!entry && !edge) continue;
+        const edge = node.childrenByGroupKey.get(timelineGroup.timelineKey);
+
         if (entry && hasCursorGap && !gapInserted) {
           const highCursor = eventId(entry) >= descMinId;
           if (reverseSort ? !highCursor : highCursor) {
+            flushBefore(ordinal);
             pendingGap = {
-              insertionIndex: rows.length,
-              rowStart: rowIndex,
+              insertionIndex: logicalRowIndex,
+              rowStart: physicalRowIndex,
               rowCount: runPendingCount,
             };
-            rowIndex += runPendingCount;
+            physicalRowIndex += runPendingCount;
             gapInserted = true;
           }
         }
 
-        const childIsExpanded =
-          edge?.expansion === 'expanded' && edge.load.state === 'loaded';
-        if (childIsExpanded) appended = true;
-        if (entry && !childIsExpanded) {
-          rows.push({
-            kind: 'group',
-            key:
-              edge?.key ??
-              workflowGroupKey({
-                executionKey: node.key,
-                runId: run.runId,
-                timelineKey: entry.timelineKey,
-              }),
-            entry,
-            workflowKey: node.key,
-            runKey,
-            depth: node.depth,
-            ancestorRunKeys: owners,
-            childEdge: edge,
-            rowIndex,
-          });
-          rowIndex += 1;
+        if (!edge) continue;
+        flushBefore(ordinal);
+        const loadedChild =
+          edge.expansion === 'expanded' && edge.load.state === 'loaded'
+            ? edge.load
+            : undefined;
+        const childIsExpanded = Boolean(loadedChild);
+        if (entry && !childIsExpanded) appendRange(ordinal, ordinal + 1);
+        if (loadedChild) {
           appended = true;
-        }
-
-        if (!edge || edge.expansion === 'collapsed') continue;
-        if (edge.load.state === 'loaded') {
-          visitWorkflow(edge.load.node, owners);
-          if (edge.load.truncation) {
+          visitWorkflow(loadedChild.node, owners);
+          if (loadedChild.truncation) {
             appendState({ edge, node, run, runKey, ancestorRunKeys: owners });
           }
         } else if (
+          edge.expansion !== 'collapsed' &&
           edge.load.state !== 'idle' &&
           edge.load.state !== 'loading'
         ) {
           appendState({ edge, node, run, runKey, ancestorRunKeys: owners });
+          appended = true;
         }
+        skipCurrent(ordinal);
       }
+
+      if (reverseSort) appendRange(0, rangeEnd);
+      else appendRange(rangeStart, run.groups.length);
 
       if (runPendingCount > 0 && !gapInserted) {
         pendingGap = {
-          insertionIndex: rows.length,
-          rowStart: rowIndex,
+          insertionIndex: logicalRowIndex,
+          rowStart: physicalRowIndex,
           rowCount: runPendingCount,
         };
-        rowIndex += runPendingCount;
+        physicalRowIndex += runPendingCount;
       }
       if (!appended && runPendingCount === 0) {
-        rows.push({
+        appendRow({
           kind: 'empty-run',
           key: `${node.key}:empty-run:${run.runId}`,
           runId: run.runId,
@@ -295,54 +400,111 @@ export function getRecursiveTimelineContainmentLayout({
           runKey,
           depth: node.depth,
           ancestorRunKeys,
-          rowIndex,
         });
-        rowIndex += 1;
       }
-      runSpans.push({
+      allRunSpans.push({
         key: runKey,
         workflowKey: node.key,
         runId: run.runId,
         depth: node.depth,
         ancestorRunKeys,
         rowStart: runStart,
-        rowEnd: rowIndex,
+        rowEnd: physicalRowIndex,
       });
     }
 
     if (participatingRuns.length) {
-      workflowSpans.push({
+      allWorkflowSpans.push({
         key: `${node.key}:workflow-span`,
         workflowKey: node.key,
         depth: node.depth,
         ancestorRunKeys,
         rowStart: workflowStart,
-        rowEnd: rowIndex,
+        rowEnd: physicalRowIndex,
       });
       if (node.depth > 0) {
         for (const suffix of ['after', 'after-padding']) {
-          rows.push({
+          appendRow({
             kind: 'workflow-spacing',
             key: `${node.key}:workflow-spacing-${suffix}`,
             workflowKey: node.key,
             depth: node.depth,
             ancestorRunKeys,
-            rowIndex,
           });
-          rowIndex += 1;
         }
       }
     }
   };
 
   visitWorkflow(root, []);
+
+  const rowAt = (index: number): TimelineLayoutRow | undefined => {
+    if (index < 0 || index >= logicalRowIndex) return undefined;
+    let low = 0;
+    let high = segments.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      const segment = segments[middle];
+      if (index < segment.start) high = middle;
+      else if (index >= segment.start + segment.count) low = middle + 1;
+      else return segment.rowAt(index - segment.start);
+    }
+    return undefined;
+  };
+
+  const indexOfGroup = (key: string): number | undefined => {
+    for (const segment of groupSegments) {
+      for (
+        let ordinal = segment.ordinalStart;
+        ordinal < segment.ordinalEnd;
+        ordinal += 1
+      ) {
+        const timelineGroup = segment.run.groups[ordinal];
+        if (timelineGroup.timelineKey !== key || !segment.mask.has(ordinal)) {
+          continue;
+        }
+        const firstRank = segment.mask.rank(segment.ordinalStart);
+        const endRank = segment.mask.rank(segment.ordinalEnd);
+        const ordinalRank = segment.mask.rank(ordinal);
+        return (
+          segment.start +
+          (segment.reverse
+            ? endRank - ordinalRank - 1
+            : ordinalRank - firstRank)
+        );
+      }
+    }
+    return undefined;
+  };
+
+  const chainSpan =
+    allWorkflowSpans.find((span) => span.workflowKey === root.key) ?? null;
   return {
-    rows,
-    runSpans,
-    workflowSpans,
-    chainSpan:
-      workflowSpans.find((span) => span.workflowKey === root.key) ?? null,
+    rowCount: logicalRowIndex,
+    totalRowCount: physicalRowIndex,
+    rowAt,
+    rows: (start, end) => {
+      const result: TimelineLayoutRow[] = [];
+      for (
+        let index = Math.max(0, start);
+        index < Math.min(logicalRowIndex, end);
+        index += 1
+      ) {
+        const row = rowAt(index);
+        if (row) result.push(row);
+      }
+      return result;
+    },
+    indexOfGroup,
+    runSpans: (start, end) =>
+      allRunSpans.filter((span) =>
+        intersects(span.rowStart, span.rowEnd, start, end),
+      ),
+    workflowSpans: (start, end) =>
+      allWorkflowSpans.filter((span) =>
+        intersects(span.rowStart, span.rowEnd, start, end),
+      ),
+    chainSpan,
     pendingGap,
-    totalRowCount: rowIndex,
   };
 }

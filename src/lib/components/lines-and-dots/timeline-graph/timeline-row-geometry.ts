@@ -129,12 +129,19 @@ export function getTimelineRowGeometry({
     return { connectors, dots, hitRange: null };
   }
 
+  let minimumPoint = Number.POSITIVE_INFINITY;
+  let maximumPoint = Number.NEGATIVE_INFINITY;
+  for (const point of geometryPoints) {
+    if (point < minimumPoint) minimumPoint = point;
+    if (point > maximumPoint) maximumPoint = point;
+  }
+
   return {
     connectors,
     dots,
     hitRange: {
-      startPx: Math.max(viewportStartPx, Math.min(...geometryPoints) - haloPx),
-      endPx: Math.min(viewportEndPx, Math.max(...geometryPoints) + haloPx),
+      startPx: Math.max(viewportStartPx, minimumPoint - haloPx),
+      endPx: Math.min(viewportEndPx, maximumPoint + haloPx),
     },
   };
 }

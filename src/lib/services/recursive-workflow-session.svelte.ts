@@ -13,6 +13,7 @@ import {
 import { getChildWorkflowReference } from '$lib/components/lines-and-dots/timeline-graph/timeline-child-reference';
 import {
   getSuccessorFromEvents,
+  materializeTimelineGroup,
   type TimelineRun,
 } from '$lib/services/chain-workflow-session';
 import type { WorkflowExecution } from '$lib/types/workflows';
@@ -544,7 +545,10 @@ export class RecursiveWorkflowSession {
       : [result.run];
     const runTruncated = mergedRuns.length > this.limits.maximumRunsPerNode;
     const runs = mergedRuns.slice(-this.limits.maximumRunsPerNode);
-    const depth = Math.min(...[...task.edges].map((edge) => edge.depth));
+    let depth = Number.POSITIVE_INFINITY;
+    for (const edge of task.edges) {
+      if (edge.depth < depth) depth = edge.depth;
+    }
     let node = task.previousNode;
     if (node) {
       node.workflow = result.workflow;
@@ -663,7 +667,9 @@ export class RecursiveWorkflowSession {
         finalRun?.successorRunId ??
         (finalRun
           ? getSuccessorFromEvents(
-              finalRun.groups.flatMap((entry) => entry.group.eventList),
+              finalRun.groups.flatMap(
+                (entry) => materializeTimelineGroup(entry).eventList,
+              ),
             )?.runId
           : undefined);
       if (
@@ -807,7 +813,7 @@ export class RecursiveWorkflowSession {
     const controller = new AbortController();
     const seenEventIds = new SvelteSet(
       target.run.groups.flatMap((entry) =>
-        entry.group.eventList.map((event) => event.id),
+        materializeTimelineGroup(entry).eventList.map((event) => event.id),
       ),
     );
     this.livePollsByExecutionKey.set(key, {

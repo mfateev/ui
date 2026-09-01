@@ -1,4 +1,5 @@
 import type { EventGroup } from '$lib/models/event-groups/event-groups';
+import type { LazyGroup } from '$lib/services/grouped-event-buffer';
 import { validTimeToDate } from '$lib/utilities/format-time';
 import { isNullish } from '$lib/utilities/type-predicates';
 
@@ -11,7 +12,7 @@ export function getTimelineGroupWorldRange({
   retainedEndTimeMs,
   project,
 }: {
-  group: EventGroup;
+  group: EventGroup | LazyGroup;
   currentTimeMs: number;
   retainedEndTimeMs?: number;
   project: (timeMs: number) => number;
@@ -47,7 +48,7 @@ export function timelineGroupIntersectsViewport({
   visibleRange,
   visibleTimeRange,
 }: {
-  group: EventGroup;
+  group: EventGroup | LazyGroup;
   currentTimeMs: number;
   retainedEndTimeMs?: number;
   project: (timeMs: number) => number;

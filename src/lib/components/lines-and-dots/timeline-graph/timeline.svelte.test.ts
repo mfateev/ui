@@ -27,7 +27,7 @@ function makeTimeline({
   } as unknown as WorkflowExecution;
 
   return new Timeline({
-    getFullEventHistory: () => fullEventHistory,
+    getFirstEventTime: () => fullEventHistory[0]?.timestamp,
     getWorkflow: () => resolvedWorkflow,
     getLazyGroups: () => [],
     getCurrentTimeMs: () => currentTimeMs,
@@ -36,7 +36,10 @@ function makeTimeline({
 }
 
 const eventAt = (offsetMs: number) =>
-  ({ eventTime: iso(offsetMs) }) as unknown as WorkflowEvents[number];
+  ({
+    eventTime: iso(offsetMs),
+    timestamp: iso(offsetMs),
+  }) as unknown as WorkflowEvents[number];
 
 describe('Timeline.workflowTimespan', () => {
   it('extends the start to an earlier retained run', () => {

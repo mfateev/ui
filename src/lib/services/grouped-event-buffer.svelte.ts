@@ -5,6 +5,7 @@ import type { WorkflowEvent } from '$lib/types/events';
 
 import {
   getEventArray,
+  getFirstEvent,
   getGroupArray,
   getLazyGroups,
   getWorkflowTaskFailedEvent,
@@ -79,6 +80,11 @@ class EventBufferView {
   readonly events: WorkflowEvent[] = $derived.by(() => {
     void this._version;
     return getEventArray();
+  });
+
+  readonly firstEvent: WorkflowEvent | undefined = $derived.by(() => {
+    void this._version;
+    return getFirstEvent();
   });
 
   /** The active WorkflowTaskFailed/TimedOut event, if the run has one. */

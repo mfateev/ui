@@ -6,17 +6,18 @@
 
   import { timestamp } from '$lib/components/timestamp.svelte';
   import { translate } from '$lib/i18n/translate';
-  import type { EventGroups } from '$lib/models/event-groups/event-groups';
   import {
     type ChainRetentionWindow,
     getChainRetentionWindow,
+    materializeTimelineGroup,
     type TimelineRun,
     toTimelineGroups,
   } from '$lib/services/chain-workflow-session';
+  import type { LazyGroup } from '$lib/services/grouped-event-buffer';
   import { RecursiveWorkflowSession } from '$lib/services/recursive-workflow-session.svelte';
   import { activeGroups, clearActiveGroups } from '$lib/stores/active-events';
   import { collapseIdleTime } from '$lib/stores/event-view';
-  import { fullEventHistory, pauseLiveUpdates } from '$lib/stores/events';
+  import { pauseLiveUpdates } from '$lib/stores/events';
   import { eventStatusFilter, eventTypeFilter } from '$lib/stores/filters';
   import type { WorkflowExecution } from '$lib/types/workflows';
   import { isWorkflowDelayed } from '$lib/utilities/delayed-workflows';
@@ -40,6 +41,7 @@
     expandedDurationPerViewportMs,
     fixedWindowScaleDurationMs,
   } from './timeline-display-mode';
+  import { TimelineEntryWindowIndex } from './timeline-entry-window-index';
   import { shouldMoveFocusToTimeline } from './timeline-focus';
   import { getRecursiveFrameCandidates } from './timeline-frame-visibility';
   import { timelineGroupIntersectsViewport } from './timeline-group-window';
@@ -62,6 +64,12 @@
     getTimelineEntryMaps,
     getTimelineGroupEntries,
   } from './timeline-run-entries';
+  import {
+    getTimelineSegmentedScrollModel,
+    physicalYForLogicalRow,
+    rebaseTimelineScroll,
+    revealTimelineLogicalRow,
+  } from './timeline-segmented-scroll';
   import type {
     TimelineWindowControls,
     TimelineWindowMode,
@@ -98,13 +106,14 @@
   interface Props {
     namespace: string;
     workflow: WorkflowExecution;
-    groups: EventGroups;
+    groups: LazyGroup[];
     readOnly?: boolean;
     error?: boolean;
     reverseSort?: boolean;
     loading?: boolean;
     totalExpectedEvents?: number;
     descMinId?: number;
+    firstEventTime?: string;
     panelHeight?: number;
     displayMode?: TimelineDisplayMode;
     onTimelineInit?: (timeline: Timeline) => void;
@@ -126,6 +135,7 @@
     loading = false,
     totalExpectedEvents = 0,
     descMinId = 0,
+    firstEventTime,
     panelHeight = $bindable(0),
     displayMode = DEFAULT_TIMELINE_DISPLAY_MODE,
     onTimelineInit,
@@ -192,14 +202,21 @@
         run.active && (run.status === 'Running' || run.status === 'Paused'),
     ),
   );
-  const aggregateStartTimeMs = $derived(
-    Math.min(...allWorkflowRuns.map((run) => run.startTimeMs)),
-  );
-  const aggregateEndTimeMs = $derived(
-    aggregateHasLive
-      ? nowMs
-      : Math.max(...allWorkflowRuns.map((run) => run.endTimeMs)),
-  );
+  const aggregateStartTimeMs = $derived.by(() => {
+    let minimum = Number.POSITIVE_INFINITY;
+    for (const run of allWorkflowRuns) {
+      if (run.startTimeMs < minimum) minimum = run.startTimeMs;
+    }
+    return Number.isFinite(minimum) ? minimum : nowMs;
+  });
+  const aggregateEndTimeMs = $derived.by(() => {
+    if (aggregateHasLive) return nowMs;
+    let maximum = Number.NEGATIVE_INFINITY;
+    for (const run of allWorkflowRuns) {
+      if (run.endTimeMs > maximum) maximum = run.endTimeMs;
+    }
+    return Number.isFinite(maximum) ? maximum : nowMs;
+  });
 
   const timelineGroupEntries = $derived(
     workflowNodes.flatMap((node) => getTimelineGroupEntries(node.runs)),
@@ -212,22 +229,20 @@
     }),
   );
   const renderedGroups = $derived(
-    eventTypeFilteredEntries.map((entry) => entry.group),
+    eventTypeFilteredEntries.map((entry) => entry.group) as LazyGroup[],
   );
   const timelineEntryMaps = $derived(
     getTimelineEntryMaps(eventTypeFilteredEntries),
   );
   const timelineKeys = $derived(timelineEntryMaps.keyByGroup);
   const timelineEntryByGroup = $derived(timelineEntryMaps.entryByGroup);
-  const getRetainedEndTimeMs = (
-    group: EventGroups[number],
-  ): number | undefined => {
+  const getRetainedEndTimeMs = (group: LazyGroup): number | undefined => {
     const entry = timelineEntryByGroup.get(group);
     return entry && !entry.active && group.isPending
       ? entry.runEndTimeMs
       : undefined;
   };
-  const getTimelineKey = (group: EventGroups[number]): string =>
+  const getTimelineKey = (group: LazyGroup): string =>
     timelineKeys.get(group) ?? `${workflow.runId}:${group.id}`;
   const timelineLoading = $derived(loading);
 
@@ -275,11 +290,10 @@
       (displayMode === 'fixed-window' ? TIMELINE_MOTION_OVERSCAN_PX : 0),
   );
   const timeline = new Timeline({
-    getFullEventHistory: () => $fullEventHistory,
+    getFirstEventTime: () => firstEventTime,
     getWorkflow: () => workflow,
     getLazyGroups: () => renderedGroups,
-    getLazyGroupEndMs: (group) =>
-      getRetainedEndTimeMs(group as EventGroups[number]),
+    getLazyGroupEndMs: (group) => getRetainedEndTimeMs(group),
     getCurrentTimeMs: () => nowMs,
     getLoading: () => timelineLoading,
     getShouldCollapseByDefault: () => $collapseIdleTime === 'on',
@@ -670,25 +684,32 @@
     ),
   );
 
-  const visibleEntries = $derived(
-    displayMode === 'full-duration'
-      ? filteredEntries
-      : filteredEntries.filter((entry) =>
-          timelineGroupIntersectsViewport({
-            group: entry.group,
-            currentTimeMs: nowMs,
-            retainedEndTimeMs: entry.active ? undefined : entry.runEndTimeMs,
-            project: (timeMs) => scale.project(timeMs),
-            visibleRange: renderedVisibleRange,
-            visibleTimeRange: fixedWindowTimeRange,
-          }),
-        ),
+  const fixedWindowEntryIndex = $derived(
+    new TimelineEntryWindowIndex(filteredEntries),
   );
-  const visibleGroups = $derived(visibleEntries.map((entry) => entry.group));
 
-  const visibleGroupIds = $derived(
-    new Set(visibleGroups.map((group) => getTimelineKey(group))),
-  );
+  const visibleEntries = $derived.by(() => {
+    if (displayMode === 'full-duration') return filteredEntries;
+    const timeRange = fixedWindowTimeRange;
+    const candidates = timeRange
+      ? fixedWindowEntryIndex.query(
+          timeRange.startTimeMs,
+          timeRange.endTimeMs,
+          nowMs,
+        ).entries
+      : filteredEntries;
+    return candidates.filter((entry) =>
+      timelineGroupIntersectsViewport({
+        group: entry.group,
+        currentTimeMs: nowMs,
+        retainedEndTimeMs: entry.active ? undefined : entry.runEndTimeMs,
+        project: (timeMs) => scale.project(timeMs),
+        visibleRange: renderedVisibleRange,
+        visibleTimeRange: fixedWindowTimeRange,
+      }),
+    );
+  });
+  const visibleGroups = $derived(visibleEntries.map((entry) => entry.group));
 
   let observedRunId: string | undefined;
 
@@ -746,7 +767,12 @@
       descMinId,
     }),
   );
-  const layoutRows = $derived(containmentLayout.rows);
+  const layoutRowCount = $derived(containmentLayout.rowCount);
+  // Entry animations compare complete key lists. Keep them for normal/live
+  // histories, but never materialize a huge logical layout just to animate it.
+  const animationLayoutRows = $derived(
+    layoutRowCount <= 10_000 ? containmentLayout.rows(0, layoutRowCount) : [],
+  );
   const layoutRowKey = (row: TimelineLayoutRow): string => row.key;
   let previousLayoutKeys: string[] | null = null;
   let rowEntryOffsets = $state.raw(new Map<string, number>());
@@ -805,7 +831,7 @@
   };
 
   $effect.pre(() => {
-    const currentKeys = layoutRows.map(layoutRowKey);
+    const currentKeys = animationLayoutRows.map(layoutRowKey);
     const previousKeys = previousLayoutKeys;
     previousLayoutKeys = currentKeys;
 
@@ -961,7 +987,7 @@
     getTimelineFrameBoundaryOffset({
       offsets: rowEntryOffsets,
       topKey,
-      bottomKey: layoutRows[rowEnd - 1]?.key,
+      bottomKey: containmentLayout.rowAt(rowEnd - 1)?.key,
     });
   const rootChainFrameCandidate = $derived(
     chainFrameCandidates.find((candidate) => candidate.depth === 0),
@@ -1082,37 +1108,26 @@
     return start >= end ? [0, 0] : [start, end];
   }
 
-  const firstStartTime = $derived.by(() => {
-    const firstEventTime = $fullEventHistory[0]?.eventTime;
-
-    if (!firstEventTime) {
-      return workflow.executionTime;
-    }
-
-    return firstEventTime < workflow.executionTime
-      ? firstEventTime
-      : workflow.executionTime;
+  const startTime = $derived.by(() => {
+    const earliest =
+      firstEventTime &&
+      (!workflow.executionTime ||
+        validTimeToDate(firstEventTime).getTime() <
+          validTimeToDate(workflow.executionTime).getTime())
+        ? firstEventTime
+        : workflow.executionTime;
+    return (!isWorkflowDelayed(workflow) && earliest) || workflow.startTime;
   });
-
-  const startTime = $derived(
-    (!isWorkflowDelayed(workflow) && firstStartTime) || workflow.startTime,
-  );
-
-  const groupIndexMap = $derived(
-    new Map(
-      layoutRows.flatMap((row, index) =>
-        row.kind === 'group' ? [[row.entry.timelineKey, index] as const] : [],
-      ),
-    ),
-  );
 
   // Active group's index in visibleGroups (-1 = none). Derived here so the row
   // pool doesn't subscribe to $activeGroups directly.
   const activeIdx = $derived(
-    $activeGroups.length > 0 ? (groupIndexMap.get($activeGroups[0]) ?? -1) : -1,
+    $activeGroups.length > 0
+      ? (containmentLayout.indexOfGroup($activeGroups[0]) ?? -1)
+      : -1,
   );
   const activeLayoutRow = $derived(
-    activeIdx >= 0 ? layoutRows[activeIdx] : undefined,
+    activeIdx >= 0 ? containmentLayout.rowAt(activeIdx) : undefined,
   );
   const activeRowIndex = $derived(
     activeLayoutRow?.kind === 'group' ? activeLayoutRow.rowIndex : -1,
@@ -1124,7 +1139,12 @@
 
   $effect.pre(() => {
     const activeGroupId = $activeGroups[0];
-    if (!activeGroupId || visibleGroupIds.has(activeGroupId)) return;
+    if (
+      !activeGroupId ||
+      containmentLayout.indexOfGroup(activeGroupId) !== undefined
+    ) {
+      return;
+    }
 
     if (containerEl?.contains(document.activeElement)) {
       containerEl.focus({ preventScroll: true });
@@ -1141,14 +1161,14 @@
   }
 
   const descStart = $derived(
-    containmentLayout.pendingGap?.insertionIndex ?? layoutRows.length,
+    containmentLayout.pendingGap?.insertionIndex ?? layoutRowCount,
   );
   const layoutPendingCount = $derived(
     containmentLayout.pendingGap?.rowCount ?? 0,
   );
 
   const totalForY = $derived(
-    getTotalForY(layoutRows.length, layoutPendingCount, descStart),
+    getTotalForY(layoutRowCount, layoutPendingCount, descStart),
   );
 
   // Widen the mount window by the panel's row span: shiftFor moves rows down but
@@ -1159,7 +1179,7 @@
 
   // Full drawn height (rows + axis + detail panel). The container is this tall and
   // scrolls with the page.
-  const timelineHeight = $derived(
+  const logicalTimelineHeight = $derived(
     Math.max(
       ROW_HEIGHT * (heightRowCount + (chainFrameCandidates.length ? 3 : 2)),
       120,
@@ -1167,8 +1187,31 @@
       panelHeight +
       2 * TIMELINE_VERTICAL_PADDING,
   );
+  const verticalScrollModel = $derived(
+    getTimelineSegmentedScrollModel({
+      totalRows: heightRowCount + (chainFrameCandidates.length ? 3 : 2),
+      rowHeightPx: ROW_HEIGHT,
+    }),
+  );
+  let logicalOriginRow = $state(0);
+  const verticalOriginOffsetPx = $derived(
+    verticalScrollModel.segmented ? logicalOriginRow * ROW_HEIGHT : 0,
+  );
+  const timelineHeight = $derived(
+    verticalScrollModel.segmented
+      ? verticalScrollModel.physicalHeightPx +
+          panelHeight +
+          2 * TIMELINE_VERTICAL_PADDING
+      : logicalTimelineHeight,
+  );
   const AXIS_LABEL_ZONE = 150;
   const svgHeight = $derived(timelineHeight + AXIS_LABEL_ZONE);
+  const SEGMENTED_VIEWPORT_HEIGHT_PX = 800;
+  const shellHeight = $derived(
+    verticalScrollModel.segmented
+      ? Math.min(SEGMENTED_VIEWPORT_HEIGHT_PX, svgHeight)
+      : svgHeight,
+  );
 
   // ── Scroll-driven virtualization ────────────────────────────────────────────
   // Each frame we read the container's offset within its scroll parent to get the
@@ -1196,10 +1239,27 @@
   function sampleBand() {
     bandRafId = undefined;
     if (!containerEl) return;
-    const elTop = containerEl.getBoundingClientRect().top;
-    const viewTop = scroller ? scroller.getBoundingClientRect().top : 0;
-    const viewHeight = scroller ? scroller.clientHeight : window.innerHeight;
-    const top = viewTop - elTop; // container-local top of the visible area
+    let top: number;
+    let viewHeight: number;
+    if (verticalScrollModel.segmented) {
+      const rebased = rebaseTimelineScroll({
+        model: verticalScrollModel,
+        originRow: logicalOriginRow,
+        scrollTop: containerEl.scrollTop,
+        viewportHeightPx: containerEl.clientHeight,
+      });
+      if (rebased.originRow !== logicalOriginRow) {
+        logicalOriginRow = rebased.originRow;
+        containerEl.scrollTop = rebased.scrollTop;
+      }
+      top = containerEl.scrollTop;
+      viewHeight = containerEl.clientHeight;
+    } else {
+      const elTop = containerEl.getBoundingClientRect().top;
+      const viewTop = scroller ? scroller.getBoundingClientRect().top : 0;
+      viewHeight = scroller ? scroller.clientHeight : window.innerHeight;
+      top = viewTop - elTop;
+    }
 
     if (top !== lastTop || viewHeight !== lastHeight) {
       lastTop = top;
@@ -1223,6 +1283,32 @@
     }
   }
 
+  const revealLogicalRow = (
+    logicalRow: number,
+    focusEdge?: 'first' | 'last',
+  ): void => {
+    if (!containerEl) return;
+    const revealed = revealTimelineLogicalRow({
+      model: verticalScrollModel,
+      originRow: logicalOriginRow,
+      logicalRow,
+      viewportHeightPx: containerEl.clientHeight,
+    });
+    logicalOriginRow = revealed.originRow;
+    containerEl.scrollTop = revealed.scrollTop;
+    pokeSampler();
+    if (focusEdge) {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          const controls = containerEl?.querySelectorAll<HTMLElement>(
+            '[data-timeline-entry-key] button',
+          );
+          controls?.[focusEdge === 'first' ? 0 : controls.length - 1]?.focus();
+        }),
+      );
+    }
+  };
+
   function findScrollParent(node: HTMLElement): HTMLElement | null {
     let el = node.parentElement;
     while (el) {
@@ -1235,7 +1321,10 @@
 
   $effect(() => {
     if (!containerEl) return;
-    scroller = findScrollParent(containerEl);
+    scroller = verticalScrollModel.segmented
+      ? containerEl
+      : findScrollParent(containerEl);
+    if (!verticalScrollModel.segmented) logicalOriginRow = 0;
     lastTop = NaN;
     lastHeight = NaN;
     stableFrames = 0;
@@ -1256,14 +1345,30 @@
     };
   });
 
+  let revealedActiveGroup: string | null = null;
+  $effect(() => {
+    const activeGroup = $activeGroups[0] ?? null;
+    if (
+      !verticalScrollModel.segmented ||
+      !containerEl ||
+      activeIdx < 0 ||
+      activeGroup === revealedActiveGroup
+    ) {
+      if (!activeGroup) revealedActiveGroup = null;
+      return;
+    }
+    revealLogicalRow(activeIdx);
+    revealedActiveGroup = activeGroup;
+  });
+
   const [windowStart, windowEnd] = $derived.by(() => {
     const band = visibleBand;
     const bandTop = band ? band[0] : 0;
     const bandHeight = band ? band[1] - band[0] : Math.min(svgHeight, 1000);
     return getWindowBounds({
-      bandTop: bandTop - TIMELINE_VERTICAL_PADDING,
+      bandTop: bandTop + verticalOriginOffsetPx - TIMELINE_VERTICAL_PADDING,
       bandHeight,
-      total: layoutRows.length,
+      total: layoutRowCount,
       overscan: windowOverscan,
       reverseSort: false,
       descStart,
@@ -1289,13 +1394,14 @@
   // item and re-run the row derived for rows that didn't move.
   let prevSlots: ({ index: number; row: TimelineLayoutRow } | null)[] = [];
   const pool = $derived.by(() => {
-    const total = layoutRows.length;
+    const total = layoutRowCount;
     const slots: ({ index: number; row: TimelineLayoutRow } | null)[] =
       new Array(poolSize).fill(null);
     const end = Math.min(windowEnd, total, windowStart + poolSize);
     for (let index = windowStart; index < end; index++) {
       const slot = index % poolSize;
-      const row = layoutRows[index];
+      const row = containmentLayout.rowAt(index);
+      if (!row) continue;
       const prev = prevSlots[slot];
       if (prev && prev.index === index && prev.row === row) {
         slots[slot] = prev;
@@ -1319,6 +1425,13 @@
       }),
     ),
   );
+  const pooledGroupIds = $derived(
+    new Set(
+      pool.flatMap((slot) =>
+        slot?.row.kind === 'group' ? [slot.row.entry.timelineKey] : [],
+      ),
+    ),
+  );
 
   $effect(() => {
     const edgeKeys = pooledEdgeKeys;
@@ -1335,7 +1448,7 @@
       ),
       focusedGroupId,
       focusedSlotIndex,
-      visibleGroupIds,
+      visibleGroupIds: pooledGroupIds,
       slotGroupIds: pool.map((slot) =>
         slot?.row.kind === 'group' ? slot.row.entry.timelineKey : null,
       ),
@@ -1351,22 +1464,38 @@
     () =>
       (i: number): number =>
         TIMELINE_VERTICAL_PADDING +
-        getRowY(i, {
-          descStart,
-          pendingGroupCount: layoutPendingCount,
-          totalForY,
-          reverseSort: false,
-        }),
+        physicalYForLogicalRow(
+          verticalScrollModel,
+          logicalOriginRow,
+          getRowY(i, {
+            descStart,
+            pendingGroupCount: layoutPendingCount,
+            totalForY,
+            reverseSort: false,
+          }) / ROW_HEIGHT,
+        ),
   );
 
+  const layoutRunSpans = $derived(
+    containmentLayout.runSpans(windowStart, windowEnd),
+  );
+  const layoutWorkflowSpans = $derived(
+    containmentLayout.workflowSpans(windowStart, windowEnd),
+  );
   const frameVerticalLayout = $derived(
     getTimelineFrameVerticalLayout({
-      runSpans: containmentLayout.runSpans,
-      workflowSpans: containmentLayout.workflowSpans,
+      runSpans: layoutRunSpans,
+      workflowSpans: layoutWorkflowSpans,
       activeRowIndex,
       panelHeight,
-      verticalPaddingPx: TIMELINE_VERTICAL_PADDING,
+      verticalPaddingPx: TIMELINE_VERTICAL_PADDING - verticalOriginOffsetPx,
     }),
+  );
+  const runSpanByKey = $derived(
+    new Map(layoutRunSpans.map((span) => [span.key, span])),
+  );
+  const workflowSpanByKey = $derived(
+    new Map(layoutWorkflowSpans.map((span) => [span.workflowKey, span])),
   );
 
   const runFrameLayouts = $derived.by(() => {
@@ -1376,9 +1505,7 @@
         candidate.runId,
       );
       const vertical = frameVerticalLayout.runBoundsByKey.get(runKey);
-      const span = containmentLayout.runSpans.find(
-        (candidateSpan) => candidateSpan.key === runKey,
-      );
+      const span = runSpanByKey.get(runKey);
       if (!vertical || !span) return [];
       return [
         {
@@ -1404,9 +1531,7 @@
     return chainFrameCandidates.flatMap((candidate) => {
       const workflowKey = candidate.workflowKey ?? '';
       const vertical = frameVerticalLayout.workflowBoundsByKey.get(workflowKey);
-      const span = containmentLayout.workflowSpans.find(
-        (candidateSpan) => candidateSpan.workflowKey === workflowKey,
-      );
+      const span = workflowSpanByKey.get(workflowKey);
       if (!vertical || !span) return [];
       return [
         {
@@ -1444,13 +1569,33 @@
   data-live-paused={$pauseLiveUpdates}
   class:timeline-motion-active={shouldAnimateTimeline}
   class={twMerge(
-    'timeline-height-shell relative overflow-hidden border border-t-0 border-subtle bg-primary',
+    'timeline-height-shell relative border border-t-0 border-subtle bg-primary',
+    verticalScrollModel.segmented ? 'overflow-y-auto' : 'overflow-hidden',
     error && 'bg-danger',
   )}
-  style:height="{svgHeight}px"
+  style:height="{shellHeight}px"
+  data-segmented-scroll={verticalScrollModel.segmented || undefined}
+  data-logical-row-count={layoutRowCount}
+  data-logical-origin-row={verticalScrollModel.segmented
+    ? logicalOriginRow
+    : undefined}
   bind:this={containerEl}
   tabindex="-1"
 >
+  {#if verticalScrollModel.segmented}
+    <button
+      class="sr-only z-50 focus:not-sr-only focus:absolute focus:left-2 focus:top-2"
+      onclick={() => revealLogicalRow(0, 'first')}
+    >
+      {translate('workflows.timeline-jump-beginning')}
+    </button>
+    <button
+      class="sr-only z-50 focus:not-sr-only focus:absolute focus:left-40 focus:top-2"
+      onclick={() => revealLogicalRow(layoutRowCount - 1, 'last')}
+    >
+      {translate('workflows.timeline-jump-current')}
+    </button>
+  {/if}
   <EndTimeInterval
     {workflow}
     {startTime}
@@ -1763,7 +1908,7 @@
                     <TimelineGraphRow
                       group={timelineEntry.group}
                       timelineKey={timelineEntry.timelineKey}
-                      eventCount={timelineEntry.group.eventList.length}
+                      eventCount={timelineEntry.group.eventCount}
                       {canvasWidth}
                       project={projectX}
                       {readOnly}
@@ -1827,7 +1972,7 @@
         {#if !readOnly && activeIdx >= 0}
           {#if activeLayoutRow?.kind === 'group'}
             {@const activeTimelineEntry = activeLayoutRow.entry}
-            {@const activeGroup = activeTimelineEntry.group}
+            {@const activeGroup = materializeTimelineGroup(activeTimelineEntry)}
             {@const panelY = getY(activeIdx) + 1.33 * RADIUS}
             <GroupDetailsRow
               y={panelY}

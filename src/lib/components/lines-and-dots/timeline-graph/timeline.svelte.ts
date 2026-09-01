@@ -1,11 +1,9 @@
 import { SvelteSet } from 'svelte/reactivity';
 
 import type { LazyGroup } from '$lib/services/grouped-event-buffer';
-import type { WorkflowEvents } from '$lib/types/events';
 import type { WorkflowExecution } from '$lib/types/workflows';
 import { isWorkflowDelayed } from '$lib/utilities/delayed-workflows';
 import { validTimeToDate } from '$lib/utilities/format-time';
-import { isNotNullish } from '$lib/utilities/type-predicates';
 
 import { buildTimeSegments } from './build-time-segments';
 import { Timespan } from './timespan';
@@ -14,7 +12,7 @@ import type { TimeSegment, TimeSegmentKey } from './types';
 const DEFAULT_DURATION_THRESHOLD_RATIO = 0.1;
 
 interface TimelineInit {
-  getFullEventHistory: () => WorkflowEvents;
+  getFirstEventTime?: () => string | undefined;
   getWorkflow: () => WorkflowExecution;
   getLazyGroups: () => LazyGroup[];
   getLazyGroupEndMs?: (group: LazyGroup) => number | undefined;
@@ -31,8 +29,8 @@ export class Timeline {
   private _collapsedSegmentKeys = new SvelteSet<TimeSegmentKey>();
   private _hasUserToggled = false;
 
-  private _getFullEventHistory: () => WorkflowEvents;
   private _getWorkflow: () => WorkflowExecution;
+  private _getFirstEventTime: () => string | undefined;
   private _getLazyGroups: () => LazyGroup[];
   private _getLazyGroupEndMs?: (group: LazyGroup) => number | undefined;
   private _getCurrentTimeMs: () => number;
@@ -44,7 +42,7 @@ export class Timeline {
   private _getEndUnbounded: () => boolean;
 
   constructor({
-    getFullEventHistory,
+    getFirstEventTime,
     getWorkflow,
     getLazyGroups,
     getLazyGroupEndMs,
@@ -56,7 +54,7 @@ export class Timeline {
     getEndTimeMs,
     getEndUnbounded,
   }: TimelineInit) {
-    this._getFullEventHistory = getFullEventHistory;
+    this._getFirstEventTime = getFirstEventTime ?? (() => undefined);
     this._getWorkflow = getWorkflow;
     this._getLazyGroups = getLazyGroups;
     this._getLazyGroupEndMs = getLazyGroupEndMs;
@@ -96,20 +94,16 @@ export class Timeline {
   });
 
   private readonly _workflowStartMs = $derived.by(() => {
-    // History is ascending by time, so the earliest event is the first entry.
-    const firstEventTime = this._getFullEventHistory()[0]?.eventTime;
-
-    const startCandidates = [
-      firstEventTime,
-      this.workflow.executionTime,
-    ].filter(isNotNullish);
-
-    const earliestStartTime = startCandidates.length
-      ? Math.min(
-          ...startCandidates.map((time) => validTimeToDate(time).getTime()),
-        )
-      : undefined;
-
+    const firstEventTime = this._getFirstEventTime();
+    let earliestStartTime = this.workflow.executionTime;
+    if (
+      firstEventTime &&
+      (!earliestStartTime ||
+        validTimeToDate(firstEventTime).getTime() <
+          validTimeToDate(earliestStartTime).getTime())
+    ) {
+      earliestStartTime = firstEventTime;
+    }
     const workflowStart =
       (isWorkflowDelayed(this.workflow) && this.workflow.startTime
         ? this.workflow.startTime

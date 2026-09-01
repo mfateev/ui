@@ -1,5 +1,69 @@
 export type TimelineWindowMode = 'following' | 'paused' | 'playing';
 
+export const TIMELINE_WINDOW_DURATIONS_MS = [
+  1_000,
+  5_000,
+  15_000,
+  30_000,
+  60_000,
+  5 * 60_000,
+  15 * 60_000,
+  30 * 60_000,
+  60 * 60_000,
+  6 * 60 * 60_000,
+  12 * 60 * 60_000,
+  24 * 60 * 60_000,
+] as const;
+
+export function getTimelineWindowZoomDuration(
+  durationMs: number,
+  direction: 'in' | 'out',
+): number {
+  if (direction === 'in') {
+    return (
+      [...TIMELINE_WINDOW_DURATIONS_MS]
+        .reverse()
+        .find((duration) => duration < durationMs) ??
+      TIMELINE_WINDOW_DURATIONS_MS[0]
+    );
+  }
+
+  return (
+    TIMELINE_WINDOW_DURATIONS_MS.find((duration) => duration > durationMs) ??
+    TIMELINE_WINDOW_DURATIONS_MS.at(-1)!
+  );
+}
+
+export function formatTimelineWindowDuration(durationMs: number): string {
+  if (durationMs < 60_000) return `${durationMs / 1_000}s`;
+  if (durationMs < 60 * 60_000) return `${durationMs / 60_000}m`;
+  return `${durationMs / (60 * 60_000)}h`;
+}
+
+export function getTimelineWindowTimeRange({
+  following,
+  frozenAnchorTimeMs,
+  durationMs,
+  followingEndTimeMs,
+}: {
+  following: boolean;
+  frozenAnchorTimeMs: number | null;
+  durationMs: number;
+  followingEndTimeMs: number;
+}): { startTimeMs: number; endTimeMs: number } {
+  if (!following && frozenAnchorTimeMs !== null) {
+    return {
+      startTimeMs: frozenAnchorTimeMs,
+      endTimeMs: frozenAnchorTimeMs + durationMs,
+    };
+  }
+
+  return {
+    startTimeMs: followingEndTimeMs - durationMs,
+    endTimeMs: followingEndTimeMs,
+  };
+}
+
 export interface TimelineWindowControls {
   mode: TimelineWindowMode;
   atBeginning: boolean;
@@ -7,8 +71,12 @@ export interface TimelineWindowControls {
   windowStartTimeMs: number;
   windowEndTimeMs: number;
   windowDurationMs: number;
+  canZoomIn: boolean;
+  canZoomOut: boolean;
   pause: () => void;
   resume: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
   jumpToBeginning: () => void;
   jumpToCurrent: () => void;
   moveToTime: (startTimeMs: number) => void;

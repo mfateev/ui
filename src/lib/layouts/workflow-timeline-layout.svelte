@@ -11,7 +11,10 @@
   import { Timeline as ClassicTimeline } from '$lib/components/lines-and-dots/timeline-graph/classic/timeline.svelte';
   import TimelineChainOverview from '$lib/components/lines-and-dots/timeline-graph/timeline-chain-overview.svelte';
   import TimelineGraph from '$lib/components/lines-and-dots/timeline-graph/timeline-graph.svelte';
-  import type { TimelineWindowControls } from '$lib/components/lines-and-dots/timeline-graph/timeline-window-controls';
+  import {
+    formatTimelineWindowDuration,
+    type TimelineWindowControls,
+  } from '$lib/components/lines-and-dots/timeline-graph/timeline-window-controls';
   import type { Timeline } from '$lib/components/lines-and-dots/timeline-graph/timeline.svelte';
   import type { TimelineViewMode } from '$lib/components/lines-and-dots/timeline-graph/types';
   import WorkflowError from '$lib/components/lines-and-dots/workflow-error.svelte';
@@ -30,12 +33,14 @@
   import ToggleButtons from '$lib/holocene/toggle-button/toggle-buttons.svelte';
   import { translate } from '$lib/i18n/translate';
   import {
+    IconAdd,
     IconArrowAscending,
     IconArrowDescending,
     IconArrowLeft,
     IconArrowRight,
     IconCollapse,
     IconDownload,
+    IconHyphen,
     IconPause,
     IconPlay,
   } from '$lib/io/icon';
@@ -428,6 +433,47 @@
       {#if displayMode === 'fixed-window' && timelineWindowControls}
         <ToggleButtons
           role="group"
+          aria-label={translate('workflows.timeline-zoom-controls')}
+          data-testid="timeline-zoom-controls"
+        >
+          <ToggleButton
+            LeadingIcon={IconHyphen}
+            aria-label={translate('workflows.timeline-zoom-out')}
+            title={translate('workflows.timeline-zoom-out')}
+            disabled={!timelineWindowControls.canZoomOut}
+            data-testid="timeline-zoom-out"
+            onclick={timelineWindowControls.zoomOut}
+            size="sm"
+          >
+            <span class="sr-only"
+              >{translate('workflows.timeline-zoom-out')}</span
+            >
+          </ToggleButton>
+          <span
+            class="border-default flex min-w-12 items-center justify-center border-y px-2 text-xs font-medium tabular-nums text-secondary"
+            aria-live="polite"
+            aria-label={translate('workflows.timeline-window-duration')}
+          >
+            {formatTimelineWindowDuration(
+              timelineWindowControls.windowDurationMs,
+            )}
+          </span>
+          <ToggleButton
+            LeadingIcon={IconAdd}
+            aria-label={translate('workflows.timeline-zoom-in')}
+            title={translate('workflows.timeline-zoom-in')}
+            disabled={!timelineWindowControls.canZoomIn}
+            data-testid="timeline-zoom-in"
+            onclick={timelineWindowControls.zoomIn}
+            size="sm"
+          >
+            <span class="sr-only"
+              >{translate('workflows.timeline-zoom-in')}</span
+            >
+          </ToggleButton>
+        </ToggleButtons>
+        <ToggleButtons
+          role="group"
           aria-label={translate('workflows.timeline-window-controls')}
           data-testid="sliding-window-controls"
         >
@@ -470,7 +516,7 @@
       <ToggleButtons>
         <ToggleButton
           LeadingIcon={reverseSort ? IconArrowDescending : IconArrowAscending}
-          data-testid="zoom-in"
+          data-testid="timeline-sort"
           onclick={onSort}
           size="sm">{reverseSort ? 'Descending' : 'Ascending'}</ToggleButton
         >

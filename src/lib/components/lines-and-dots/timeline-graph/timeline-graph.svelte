@@ -38,6 +38,7 @@
   import {
     DEFAULT_TIMELINE_DISPLAY_MODE,
     expandedDurationPerViewportMs,
+    fixedWindowScaleDurationMs,
   } from './timeline-display-mode';
   import { shouldMoveFocusToTimeline } from './timeline-focus';
   import { getRecursiveFrameCandidates } from './timeline-frame-visibility';
@@ -65,6 +66,11 @@
     TimelineWindowControls,
     TimelineWindowMode,
   } from './timeline-window-controls';
+  import {
+    getTimelineWindowTimeRange,
+    getTimelineWindowZoomDuration,
+    TIMELINE_WINDOW_DURATIONS_MS,
+  } from './timeline-window-controls';
   import type { TimelineDisplayMode } from './types';
   import { syncTimelineViewport } from './viewport-lifecycle';
   import {
@@ -78,7 +84,10 @@
   import TimelineCollapsedLayer from './timeline-collapsed-layer.svelte';
   import TimelineGraphRow from './timeline-graph-row.svelte';
   import TimelineIconDefs from './timeline-icon-defs.svelte';
-  import { TimelineScale } from './timeline-scale.svelte';
+  import {
+    DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS,
+    TimelineScale,
+  } from './timeline-scale.svelte';
   import { Timeline } from './timeline.svelte';
   import { Viewport } from './viewport.svelte';
   import WorkflowFrame from './workflow-frame.svelte';
@@ -283,22 +292,46 @@
     ).length,
   );
 
+  const viewport = new Viewport();
+  let windowMode = $state<TimelineWindowMode>('following');
+  let frozenAnchorTimeMs = $state<number | null>(null);
+  let playbackOriginTimeMs = 0;
+  let playbackStartedAtMs = 0;
+  let fixedWindowDurationMs = $state(DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS);
   const durationPerViewportMs = $derived(
-    expandedDurationPerViewportMs({
-      displayMode,
-      viewportWidthPx: timelineWidth,
-      expandedDurationMs: timeline.expandedDurationMs,
-      collapsedSegmentCount,
-    }),
+    displayMode === 'fixed-window'
+      ? fixedWindowDurationMs
+      : expandedDurationPerViewportMs({
+          displayMode,
+          viewportWidthPx: timelineWidth,
+          expandedDurationMs: timeline.expandedDurationMs,
+          collapsedSegmentCount,
+        }),
+  );
+
+  const fixedWindowStartTimeMs = $derived(
+    viewport.isFollowing || frozenAnchorTimeMs === null
+      ? aggregateEndTimeMs - fixedWindowDurationMs
+      : frozenAnchorTimeMs,
+  );
+  const scaleDurationPerViewportMs = $derived(
+    displayMode === 'fixed-window'
+      ? fixedWindowScaleDurationMs({
+          viewportWidthPx: timelineWidth,
+          windowStartTimeMs: fixedWindowStartTimeMs,
+          windowDurationMs: fixedWindowDurationMs,
+          segments: timeline.segments,
+          isCollapsed: (segment) => timeline.isTimeSegmentCollapsed(segment),
+        })
+      : durationPerViewportMs,
   );
 
   const scale = new TimelineScale({
     timeline,
     getViewportWidthPx: () => timelineWidth,
-    getExpandedDurationPerViewportMs: () => durationPerViewportMs,
+    getExpandedDurationPerViewportMs: () => scaleDurationPerViewportMs,
   });
 
-  const viewport = new Viewport();
   const renderedVisibleRange = $derived({
     startPx: viewport.visibleRange.startPx,
     endPx:
@@ -308,22 +341,14 @@
   const viewportMotion = new TimelineMotion();
   const liveEdgeMotion = new TimelineMotion();
   const workflowIsLive = $derived(aggregateHasLive);
-  let windowMode = $state<TimelineWindowMode>('following');
-  let frozenAnchorTimeMs = $state<number | null>(null);
-  let playbackOriginTimeMs = 0;
-  let playbackStartedAtMs = 0;
   const fixedWindowTimeRange = $derived.by(() => {
-    if (
-      displayMode !== 'fixed-window' ||
-      viewport.isFollowing ||
-      frozenAnchorTimeMs === null
-    ) {
-      return undefined;
-    }
-    return {
-      startTimeMs: frozenAnchorTimeMs,
-      endTimeMs: frozenAnchorTimeMs + durationPerViewportMs,
-    };
+    if (displayMode !== 'fixed-window') return undefined;
+    return getTimelineWindowTimeRange({
+      following: viewport.isFollowing,
+      frozenAnchorTimeMs,
+      durationMs: durationPerViewportMs,
+      followingEndTimeMs: aggregateEndTimeMs,
+    });
   });
   const shouldAnimateTimeline = $derived(
     displayMode === 'fixed-window' &&
@@ -388,6 +413,36 @@
     resetTimelineMotion();
   };
 
+  const zoomWindow = (direction: 'in' | 'out') => {
+    const nextDurationMs = getTimelineWindowZoomDuration(
+      fixedWindowDurationMs,
+      direction,
+    );
+    if (nextDurationMs === fixedWindowDurationMs) return;
+
+    if (!viewport.isFollowing) {
+      const currentStartTimeMs =
+        frozenAnchorTimeMs ?? scale.unproject(viewport.offsetPx);
+      const centerTimeMs = currentStartTimeMs + fixedWindowDurationMs / 2;
+      const earliestStartTimeMs = timeline.workflowTimespan.startTimeMs;
+      const latestStartTimeMs = Math.max(
+        earliestStartTimeMs,
+        aggregateEndTimeMs - nextDurationMs,
+      );
+      frozenAnchorTimeMs = Math.min(
+        Math.max(centerTimeMs - nextDurationMs / 2, earliestStartTimeMs),
+        latestStartTimeMs,
+      );
+      if (windowMode === 'playing') {
+        playbackOriginTimeMs = frozenAnchorTimeMs;
+        playbackStartedAtMs = Date.now();
+      }
+    }
+
+    fixedWindowDurationMs = nextDurationMs;
+    resetTimelineMotion();
+  };
+
   $effect(() => {
     if (displayMode !== 'fixed-window') {
       windowControls = undefined;
@@ -397,13 +452,18 @@
       mode: windowMode,
       atBeginning: viewport.offsetPx <= viewport.minimumOffsetPx + 0.5,
       atCurrent: viewport.offsetPx >= viewport.maximumOffsetPx - 0.5,
-      windowStartTimeMs: scale.unproject(viewport.offsetPx),
+      windowStartTimeMs:
+        fixedWindowTimeRange?.startTimeMs ?? scale.unproject(viewport.offsetPx),
       windowEndTimeMs:
         fixedWindowTimeRange?.endTimeMs ??
         scale.unproject(viewport.offsetPx + viewport.widthPx),
       windowDurationMs: durationPerViewportMs,
+      canZoomIn: fixedWindowDurationMs > TIMELINE_WINDOW_DURATIONS_MS[0],
+      canZoomOut: fixedWindowDurationMs < TIMELINE_WINDOW_DURATIONS_MS.at(-1)!,
       pause: pauseWindow,
       resume: resumeWindow,
+      zoomIn: () => zoomWindow('in'),
+      zoomOut: () => zoomWindow('out'),
       jumpToBeginning,
       jumpToCurrent,
       moveToTime: moveWindowToTime,

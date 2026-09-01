@@ -129,6 +129,56 @@ describe('Viewport', () => {
     expect(viewport.isFollowing).toBe(true);
   });
 
+  it('scrolls a frozen viewport backward and forward within its bounds', () => {
+    const viewport = new Viewport({
+      widthPx: 1_000,
+      totalWorldWidthPx: 3_000,
+    });
+
+    viewport.scrollBy(-400);
+
+    expect(viewport.offsetPx).toBe(1_600);
+    expect(viewport.isFollowing).toBe(false);
+
+    viewport.scrollBy(250);
+    expect(viewport.offsetPx).toBe(1_850);
+
+    viewport.scrollBy(1_000);
+    expect(viewport.offsetPx).toBe(2_000);
+  });
+
+  it('moves directly to an offset and clamps it within the world', () => {
+    const viewport = new Viewport({
+      widthPx: 1_000,
+      totalWorldWidthPx: 3_000,
+    });
+
+    viewport.moveTo(500);
+    expect(viewport.offsetPx).toBe(500);
+    expect(viewport.isFollowing).toBe(false);
+
+    viewport.moveTo(-100);
+    expect(viewport.offsetPx).toBe(0);
+
+    viewport.moveTo(3_000);
+    expect(viewport.offsetPx).toBe(2_000);
+  });
+
+  it('scrolls to a negative leading-space boundary', () => {
+    const viewport = new Viewport({ widthPx: 1_000 });
+    viewport.setGeometry({
+      widthPx: 1_000,
+      totalWorldWidthPx: 600,
+      allowLeadingSpace: true,
+    });
+
+    expect(viewport.minimumOffsetPx).toBe(-400);
+    expect(viewport.maximumOffsetPx).toBe(-400);
+
+    viewport.scrollBy(-100);
+    expect(viewport.offsetPx).toBe(-400);
+  });
+
   it('atomically applies recalculated scale geometry to a frozen viewport', () => {
     const viewport = new Viewport({
       widthPx: 1_000,

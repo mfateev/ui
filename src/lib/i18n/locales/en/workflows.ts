@@ -377,6 +377,17 @@ export const Strings = {
   'scheduled-by': 'Scheduled By',
   'auto-refresh-on': 'Auto Refresh On',
   'auto-refresh-off': 'Auto Refresh Off',
+  'timeline-window-controls': 'Sliding window controls',
+  'timeline-pause': 'Pause',
+  'timeline-resume': 'Resume',
+  'timeline-jump-current': 'Jump to current',
+  'timeline-jump-beginning': 'Jump to beginning',
+  'timeline-chain-overview': 'Execution chain',
+  'timeline-chain-loading': 'Loading execution chain…',
+  'timeline-chain-overview-description':
+    'Sliding window position in the complete execution chain',
+  'timeline-current-window': 'Current sliding window',
+  'timeline-continued-as-new': 'Continued as new',
   'follow-chained-runs': 'Follow chained runs',
   'copy-pinned-run-link': 'Copy pinned run link',
   'chained-timeline-truncated':

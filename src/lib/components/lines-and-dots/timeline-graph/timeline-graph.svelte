@@ -58,6 +58,10 @@
     getTimelineEntryMaps,
     getTimelineGroupEntries,
   } from './timeline-run-entries';
+  import type {
+    TimelineWindowControls,
+    TimelineWindowMode,
+  } from './timeline-window-controls';
   import type { TimelineDisplayMode } from './types';
   import { syncTimelineViewport } from './viewport-lifecycle';
   import {
@@ -93,6 +97,8 @@
     onRetentionWindow?: (window: ChainRetentionWindow) => void;
     rowHeightRetentionScopeId?: string;
     knownChainStartRunId?: string;
+    chainStartTimeMs?: number;
+    windowControls?: TimelineWindowControls;
   }
 
   let {
@@ -112,6 +118,8 @@
     onRetentionWindow,
     rowHeightRetentionScopeId,
     knownChainStartRunId = workflow.runId,
+    chainStartTimeMs,
+    windowControls = $bindable(),
   }: Props = $props();
 
   let nowMs = $state(Date.now());
@@ -253,7 +261,8 @@
     getCurrentTimeMs: () => nowMs,
     getLoading: () => timelineLoading,
     getShouldCollapseByDefault: () => $collapseIdleTime === 'on',
-    getStartTimeMs: () => aggregateStartTimeMs,
+    getStartTimeMs: () =>
+      Math.min(chainStartTimeMs ?? aggregateStartTimeMs, aggregateStartTimeMs),
     getEndTimeMs: () => aggregateEndTimeMs,
     getEndUnbounded: () => aggregateHasLive,
   });
@@ -283,14 +292,89 @@
   const viewportMotion = new TimelineMotion();
   const liveEdgeMotion = new TimelineMotion();
   const workflowIsLive = $derived(aggregateHasLive);
+  let windowMode = $state<TimelineWindowMode>('following');
+  let frozenAnchorTimeMs = $state<number | null>(null);
+  let playbackOriginTimeMs = 0;
+  let playbackStartedAtMs = 0;
   const shouldAnimateTimeline = $derived(
     displayMode === 'fixed-window' &&
-      workflowIsLive &&
-      viewport.isFollowing &&
-      !$pauseLiveUpdates &&
+      (viewport.isFollowing || windowMode === 'playing') &&
       scale.liveEdgePxPerMs > 0,
   );
-  let frozenAnchorTimeMs: number | null = null;
+
+  const resetTimelineMotion = () => {
+    viewportMotion.reset(viewport.offsetPx);
+    liveEdgeMotion.reset(scale.totalWorldWidthPx);
+  };
+
+  const pauseWindow = () => {
+    frozenAnchorTimeMs = scale.unproject(viewport.offsetPx);
+    windowMode = 'paused';
+    viewport.freeze();
+    resetTimelineMotion();
+  };
+
+  const resumeWindow = () => {
+    frozenAnchorTimeMs ??= scale.unproject(viewport.offsetPx);
+    playbackOriginTimeMs = frozenAnchorTimeMs;
+    playbackStartedAtMs = Date.now();
+    windowMode = 'playing';
+    viewport.freeze();
+    resetTimelineMotion();
+  };
+
+  const jumpToBeginning = () => {
+    windowMode = 'paused';
+    frozenAnchorTimeMs = timeline.workflowTimespan.startTimeMs;
+    viewport.moveTo(viewport.minimumOffsetPx);
+    resetTimelineMotion();
+  };
+
+  const jumpToCurrent = () => {
+    windowMode = 'following';
+    frozenAnchorTimeMs = null;
+    viewport.resume(scale.totalWorldWidthPx, true);
+    resetTimelineMotion();
+  };
+
+  $effect(() => {
+    if (displayMode !== 'fixed-window') {
+      windowControls = undefined;
+      return;
+    }
+    windowControls = {
+      mode: windowMode,
+      atBeginning: viewport.offsetPx <= viewport.minimumOffsetPx + 0.5,
+      atCurrent: viewport.offsetPx >= viewport.maximumOffsetPx - 0.5,
+      windowStartTimeMs: scale.unproject(viewport.offsetPx),
+      windowEndTimeMs: scale.unproject(viewport.offsetPx + viewport.widthPx),
+      windowDurationMs: durationPerViewportMs,
+      pause: pauseWindow,
+      resume: resumeWindow,
+      jumpToBeginning,
+      jumpToCurrent,
+    };
+  });
+
+  $effect(() => {
+    if (displayMode !== 'fixed-window' || windowMode !== 'playing') return;
+
+    const advancePlayback = () => {
+      const latestStartTimeMs = scale.unproject(viewport.maximumOffsetPx);
+      const nextStartTimeMs = Math.min(
+        playbackOriginTimeMs + Date.now() - playbackStartedAtMs,
+        latestStartTimeMs,
+      );
+      frozenAnchorTimeMs = nextStartTimeMs;
+      if (!workflowIsLive && nextStartTimeMs >= latestStartTimeMs) {
+        windowMode = 'paused';
+      }
+    };
+
+    advancePlayback();
+    const interval = setInterval(advancePlayback, 250);
+    return () => clearInterval(interval);
+  });
 
   $effect(() => {
     onTimelineInit?.(timeline);
@@ -325,14 +409,14 @@
 
   $effect(() => {
     const shouldFreeze =
-      displayMode === 'fixed-window' && $pauseLiveUpdates && workflowIsLive;
+      displayMode === 'fixed-window' && windowMode !== 'following';
     if (shouldFreeze && viewport.isFollowing) {
       frozenAnchorTimeMs = scale.unproject(viewport.offsetPx);
     }
     syncTimelineViewport({
       viewport,
       displayMode,
-      paused: $pauseLiveUpdates,
+      paused: shouldFreeze,
       workflowIsLive,
       totalWorldWidthPx: scale.totalWorldWidthPx,
     });

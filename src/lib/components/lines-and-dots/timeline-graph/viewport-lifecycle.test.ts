@@ -62,14 +62,14 @@ describe('syncTimelineViewport', () => {
     expect(viewport.isFollowing).toBe(true);
   });
 
-  it('anchors a completed workflow at its final edge even if paused', () => {
+  it('keeps a completed workflow frozen when paused', () => {
     const viewport = new Viewport({ widthPx: 100, totalWorldWidthPx: 200 });
     sync(viewport, { paused: true, total: 200 });
 
     sync(viewport, { paused: true, workflowIsLive: false, total: 280 });
 
-    expect(viewport.offsetPx).toBe(180);
-    expect(viewport.isFollowing).toBe(true);
+    expect(viewport.offsetPx).toBe(100);
+    expect(viewport.isFollowing).toBe(false);
   });
 
   it('anchors full-duration timelines at zero when content exceeds the viewport', () => {

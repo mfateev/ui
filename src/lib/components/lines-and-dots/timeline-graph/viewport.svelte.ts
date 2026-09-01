@@ -44,6 +44,15 @@ export class Viewport {
     return this._isFollowing;
   }
 
+  get minimumOffsetPx(): number {
+    const rightEdgeOffset = this._rightEdgeOffset();
+    return this._allowLeadingSpace ? Math.min(0, rightEdgeOffset) : 0;
+  }
+
+  get maximumOffsetPx(): number {
+    return this._rightEdgeOffset();
+  }
+
   setGeometry({
     widthPx,
     totalWorldWidthPx,
@@ -72,16 +81,25 @@ export class Viewport {
     this._isFollowing = false;
   }
 
+  scrollBy(deltaPx: number): void {
+    this.freeze();
+    this.offsetPx = this._clampOffset(this.offsetPx + deltaPx);
+  }
+
+  moveTo(offsetPx: number): void {
+    this.freeze();
+    this.offsetPx = this._clampOffset(offsetPx);
+  }
+
   private _rightEdgeOffset(): number {
     const offset = this._totalWorldWidthPx - this.widthPx;
     return this._allowLeadingSpace ? offset : Math.max(0, offset);
   }
 
   private _clampOffset(offsetPx: number): number {
-    const rightEdgeOffset = this._rightEdgeOffset();
-    const leftEdgeOffset = this._allowLeadingSpace
-      ? Math.min(0, rightEdgeOffset)
-      : 0;
-    return Math.min(Math.max(leftEdgeOffset, offsetPx), rightEdgeOffset);
+    return Math.min(
+      Math.max(this.minimumOffsetPx, offsetPx),
+      this.maximumOffsetPx,
+    );
   }
 }

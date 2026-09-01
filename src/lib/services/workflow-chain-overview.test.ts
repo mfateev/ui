@@ -1,0 +1,129 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import type { WorkflowEvent } from '$lib/types/events';
+import type { WorkflowExecution } from '$lib/types/workflows';
+
+import { loadWorkflowChainOverview } from './workflow-chain-overview';
+
+const workflow = (
+  runId: string,
+  startTime: string,
+  endTime = '',
+): WorkflowExecution =>
+  ({
+    runId,
+    firstExecutionRunId: 'run-1',
+    startTime,
+    endTime,
+    status: endTime ? 'ContinuedAsNew' : 'Running',
+  }) as WorkflowExecution;
+
+const continuedAsNew = (runId: string, eventTime: string): WorkflowEvent =>
+  ({
+    eventType: 'WorkflowExecutionContinuedAsNew',
+    eventTime,
+    attributes: { newExecutionRunId: runId },
+  }) as WorkflowEvent;
+
+describe('loadWorkflowChainOverview', () => {
+  it('walks successors from the first run and reports progress', async () => {
+    const descriptions = new Map([
+      [
+        'run-1',
+        workflow('run-1', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z'),
+      ],
+      ['run-2', workflow('run-2', '2026-01-01T00:01:00Z')],
+    ]);
+    const progress = vi.fn();
+
+    const runs = await loadWorkflowChainOverview({
+      namespace: 'default',
+      workflowId: 'workflow',
+      firstRunId: 'run-1',
+      describeRun: async (runId) => descriptions.get(runId),
+      fetchFinalEvents: async (runId) =>
+        runId === 'run-1'
+          ? [continuedAsNew('run-2', '2026-01-01T00:01:00Z')]
+          : [],
+      onProgress: progress,
+    });
+
+    expect(runs).toEqual([
+      {
+        runId: 'run-1',
+        status: 'ContinuedAsNew',
+        startTimeMs: Date.parse('2026-01-01T00:00:00Z'),
+        endTimeMs: Date.parse('2026-01-01T00:01:00Z'),
+        nextRunId: 'run-2',
+        transitionToNext: 'continue-as-new',
+      },
+      expect.objectContaining({
+        runId: 'run-2',
+        status: 'Running',
+        startTimeMs: Date.parse('2026-01-01T00:01:00Z'),
+      }),
+    ]);
+    expect(progress).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops if a successor leaves the original chain', async () => {
+    const next = workflow('run-2', '2026-01-01T00:01:00Z');
+    next.firstExecutionRunId = 'another-chain';
+
+    const runs = await loadWorkflowChainOverview({
+      namespace: 'default',
+      workflowId: 'workflow',
+      firstRunId: 'run-1',
+      describeRun: async (runId) =>
+        runId === 'run-1'
+          ? workflow('run-1', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z')
+          : next,
+      fetchFinalEvents: async (runId) =>
+        runId === 'run-1'
+          ? [continuedAsNew('run-2', '2026-01-01T00:01:00Z')]
+          : [],
+    });
+
+    expect(runs.map(({ runId }) => runId)).toEqual(['run-1']);
+  });
+
+  it('refreshes only the known tail before appending a new successor', async () => {
+    const existingRuns = [
+      {
+        runId: 'run-1',
+        status: 'ContinuedAsNew' as const,
+        startTimeMs: Date.parse('2026-01-01T00:00:00Z'),
+        endTimeMs: Date.parse('2026-01-01T00:01:00Z'),
+        nextRunId: 'run-2',
+        transitionToNext: 'continue-as-new' as const,
+      },
+      {
+        runId: 'run-2',
+        status: 'Running' as const,
+        startTimeMs: Date.parse('2026-01-01T00:01:00Z'),
+        endTimeMs: Date.parse('2026-01-01T00:02:00Z'),
+      },
+    ];
+    const describeRun = vi.fn(async (runId: string) =>
+      runId === 'run-2'
+        ? workflow('run-2', '2026-01-01T00:01:00Z', '2026-01-01T00:02:00Z')
+        : workflow('run-3', '2026-01-01T00:02:00Z'),
+    );
+
+    const runs = await loadWorkflowChainOverview({
+      namespace: 'default',
+      workflowId: 'workflow',
+      firstRunId: 'run-1',
+      existingRuns,
+      describeRun,
+      fetchFinalEvents: async (runId) =>
+        runId === 'run-2'
+          ? [continuedAsNew('run-3', '2026-01-01T00:02:00Z')]
+          : [],
+    });
+
+    expect(describeRun).toHaveBeenCalledTimes(2);
+    expect(describeRun).not.toHaveBeenCalledWith('run-1');
+    expect(runs.map(({ runId }) => runId)).toEqual(['run-1', 'run-2', 'run-3']);
+  });
+});

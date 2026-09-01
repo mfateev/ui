@@ -169,6 +169,7 @@ export const fetchPartialRawEvents = async ({
   runId,
   sort,
   maximumPageSize = '20',
+  signal,
 }: FetchEventsParameters): Promise<HistoryEvent[]> => {
   const route = routeForApi(getEndpointForSortOrder(sort), {
     namespace,
@@ -181,6 +182,7 @@ export const fetchPartialRawEvents = async ({
       {
         request: fetch,
         params: { maximumPageSize, 'execution.runId': runId },
+        options: { signal },
       },
     );
 

@@ -14,7 +14,6 @@ export function syncTimelineViewport({
   viewport,
   displayMode,
   paused,
-  workflowIsLive,
   totalWorldWidthPx,
 }: TimelineViewportLifecycleOptions): void {
   if (displayMode === 'full-duration') {
@@ -28,7 +27,7 @@ export function syncTimelineViewport({
     return;
   }
 
-  if (displayMode === 'fixed-window' && paused && workflowIsLive) {
+  if (displayMode === 'fixed-window' && paused) {
     viewport.freeze();
     return;
   }

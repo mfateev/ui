@@ -9,7 +9,9 @@
   import { getTimelineGroups } from '$lib/components/lines-and-dots/timeline-graph/classic/sort-timeline-groups';
   import ClassicTimelineGraph from '$lib/components/lines-and-dots/timeline-graph/classic/timeline-graph.svelte';
   import { Timeline as ClassicTimeline } from '$lib/components/lines-and-dots/timeline-graph/classic/timeline.svelte';
+  import TimelineChainOverview from '$lib/components/lines-and-dots/timeline-graph/timeline-chain-overview.svelte';
   import TimelineGraph from '$lib/components/lines-and-dots/timeline-graph/timeline-graph.svelte';
+  import type { TimelineWindowControls } from '$lib/components/lines-and-dots/timeline-graph/timeline-window-controls';
   import type { Timeline } from '$lib/components/lines-and-dots/timeline-graph/timeline.svelte';
   import type { TimelineViewMode } from '$lib/components/lines-and-dots/timeline-graph/types';
   import WorkflowError from '$lib/components/lines-and-dots/workflow-error.svelte';
@@ -30,8 +32,12 @@
   import {
     IconArrowAscending,
     IconArrowDescending,
+    IconArrowLeft,
+    IconArrowRight,
     IconCollapse,
     IconDownload,
+    IconPause,
+    IconPlay,
   } from '$lib/io/icon';
   import {
     getRenderableTimelineRuns,
@@ -39,6 +45,10 @@
     toTimelineGroups,
   } from '$lib/services/chain-workflow-session';
   import { eventBuffer } from '$lib/services/grouped-event-buffer.svelte';
+  import {
+    loadWorkflowChainOverview,
+    type WorkflowChainOverviewRun,
+  } from '$lib/services/workflow-chain-overview';
   import { clearActives } from '$lib/stores/active-events';
   import { collapseIdleTime, eventFilterSort } from '$lib/stores/event-view';
   import { pauseLiveUpdates } from '$lib/stores/events';
@@ -58,6 +68,10 @@
 
   const namespace = $derived(page.params.namespace);
   const workflow = $derived($workflowRun.workflow);
+  const workflowId = $derived(workflow?.id);
+  const firstRunId = $derived(
+    workflow?.firstExecutionRunId || workflowRunCtx.chainRunId,
+  );
 
   const urlParams = $derived(parseEventFilterParams(page.url));
   $effect(() => {
@@ -66,11 +80,11 @@
   });
 
   const onAutoRefreshToggle = () => {
-    updateEventFilterParams(
-      page.url,
-      { refresh_off: !$pauseLiveUpdates },
-      goto,
-    );
+    setAutoRefreshPaused(!$pauseLiveUpdates);
+  };
+
+  const setAutoRefreshPaused = (paused: boolean) => {
+    updateEventFilterParams(page.url, { refresh_off: paused }, goto);
   };
 
   const reverseSort = $derived($eventFilterSort === 'descending');
@@ -156,6 +170,75 @@
   });
 
   let timeline = $state<Timeline | ClassicTimeline>();
+  let timelineWindowControls = $state<TimelineWindowControls>();
+  let chainOverviewRuns = $state<WorkflowChainOverviewRun[]>([]);
+  let chainOverviewLoading = $state(false);
+
+  const waitForChainPoll = (
+    signal: AbortSignal,
+    delayMs = 2_000,
+  ): Promise<void> =>
+    new Promise((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', finish);
+        resolve();
+      };
+      const timer = setTimeout(finish, delayMs);
+      signal.addEventListener('abort', finish, { once: true });
+    });
+
+  const chainCanGrow = (run: WorkflowChainOverviewRun | undefined): boolean =>
+    run?.status === 'Running' ||
+    run?.status === 'Paused' ||
+    run?.status === 'ContinuedAsNew';
+
+  $effect(() => {
+    if (!workflowId || !firstRunId) {
+      chainOverviewRuns = [];
+      chainOverviewLoading = false;
+      return;
+    }
+
+    const controller = new AbortController();
+    chainOverviewRuns = [];
+    chainOverviewLoading = true;
+
+    const pollChain = async () => {
+      let runs: WorkflowChainOverviewRun[] = [];
+      let initialLoad = true;
+
+      while (!controller.signal.aborted) {
+        try {
+          runs = await loadWorkflowChainOverview({
+            namespace,
+            workflowId,
+            firstRunId,
+            existingRuns: runs,
+            signal: controller.signal,
+            onProgress: (progress) => {
+              chainOverviewRuns = progress;
+            },
+          });
+          if (controller.signal.aborted) return;
+          chainOverviewRuns = runs;
+          if (initialLoad) chainOverviewLoading = false;
+          initialLoad = false;
+          if (!chainCanGrow(runs.at(-1))) return;
+        } catch (error: unknown) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            return;
+          }
+        }
+
+        await waitForChainPoll(controller.signal);
+      }
+    };
+
+    void pollChain();
+
+    return () => controller.abort();
+  });
 
   const handleTimelineInit = (t: Timeline | ClassicTimeline) => {
     timeline = t;
@@ -229,6 +312,52 @@
           {translate('workflows.timeline-classic')}
         </ToggleButton>
       </ToggleButtons>
+      {#if displayMode === 'fixed-window' && timelineWindowControls}
+        <ToggleButtons
+          role="group"
+          aria-label={translate('workflows.timeline-window-controls')}
+          data-testid="sliding-window-controls"
+        >
+          <ToggleButton
+            LeadingIcon={IconArrowLeft}
+            disabled={timelineWindowControls.atBeginning}
+            data-testid="timeline-window-beginning"
+            onclick={timelineWindowControls.jumpToBeginning}
+            size="sm"
+          >
+            {translate('workflows.timeline-jump-beginning')}
+          </ToggleButton>
+          <ToggleButton
+            LeadingIcon={IconPause}
+            active={timelineWindowControls.mode === 'paused'}
+            disabled={timelineWindowControls.mode === 'paused'}
+            data-testid="timeline-window-pause"
+            onclick={timelineWindowControls.pause}
+            size="sm"
+          >
+            {translate('workflows.timeline-pause')}
+          </ToggleButton>
+          <ToggleButton
+            LeadingIcon={IconPlay}
+            active={timelineWindowControls.mode === 'playing'}
+            disabled={timelineWindowControls.mode !== 'paused'}
+            data-testid="timeline-window-resume"
+            onclick={timelineWindowControls.resume}
+            size="sm"
+          >
+            {translate('workflows.timeline-resume')}
+          </ToggleButton>
+          <ToggleButton
+            LeadingIcon={IconArrowRight}
+            disabled={timelineWindowControls.atCurrent}
+            data-testid="timeline-window-current"
+            onclick={timelineWindowControls.jumpToCurrent}
+            size="sm"
+          >
+            {translate('workflows.timeline-jump-current')}
+          </ToggleButton>
+        </ToggleButtons>
+      {/if}
       <ToggleButtons>
         <ToggleButton
           LeadingIcon={reverseSort ? IconArrowDescending : IconArrowAscending}
@@ -285,6 +414,15 @@
   no scroll-offset bridge).
 -->
   {#if workflow}
+    {#if displayMode === 'fixed-window'}
+      <TimelineChainOverview
+        runs={chainOverviewRuns}
+        loading={chainOverviewLoading}
+        windowStartTimeMs={timelineWindowControls?.windowStartTimeMs}
+        windowEndTimeMs={timelineWindowControls?.windowEndTimeMs}
+        windowDurationMs={timelineWindowControls?.windowDurationMs}
+      />
+    {/if}
     {#if displayMode === 'classic'}
       <ClassicTimelineGraph
         {workflow}
@@ -313,6 +451,8 @@
           ? workflowRunCtx.chainRunId
           : workflow.runId}
         knownChainStartRunId={workflowRunCtx.chainRunId}
+        chainStartTimeMs={chainOverviewRuns[0]?.startTimeMs}
+        bind:windowControls={timelineWindowControls}
         {timelineRuns}
       />
     {/if}

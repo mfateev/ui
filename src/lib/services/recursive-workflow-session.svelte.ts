@@ -130,7 +130,10 @@ export class RecursiveWorkflowSession {
     this.rootNode.workflow = workflow;
     this.rootNode.runs = runs;
     this.discoverEdges(this.rootNode);
+    this.rebuildLoadedIndex();
+    this.pruneUnreachableTasks();
     this.changed();
+    this.drain();
   }
 
   observeEdges(edgeKeys: Iterable<string>): void {
@@ -478,7 +481,9 @@ export class RecursiveWorkflowSession {
       }
     } finally {
       this.subtract(this.reserved, task.reservation);
-      this.tasksByExecutionKey.delete(task.key);
+      if (this.tasksByExecutionKey.get(task.key) === task) {
+        this.tasksByExecutionKey.delete(task.key);
+      }
       this.activeRequests -= 1;
       if (committed) this.enqueueKnownSuccessors(task);
       this.changed();
@@ -557,6 +562,34 @@ export class RecursiveWorkflowSession {
       this.loadedByExecutionKey.set(key, node);
     }
     this.retained = retained;
+  }
+
+  private pruneUnreachableTasks(): void {
+    const reachableEdges = new SvelteSet<TimelineChildEdge>();
+    const visit = (node: TimelineWorkflowNode): void => {
+      for (const edge of node.childrenByGroupKey.values()) {
+        reachableEdges.add(edge);
+        if (edge.load.state === 'loaded') visit(edge.load.node);
+      }
+    };
+    visit(this.rootNode);
+
+    for (const task of [...this.tasksByExecutionKey.values()]) {
+      for (const edge of [...task.edges]) {
+        if (!reachableEdges.has(edge)) task.edges.delete(edge);
+      }
+      if (task.edges.size) continue;
+
+      task.controller.abort();
+      const queuedIndex = this.queued.indexOf(task);
+      if (queuedIndex >= 0) this.queued.splice(queuedIndex, 1);
+      if (this.tasksByExecutionKey.get(task.key) === task) {
+        this.tasksByExecutionKey.delete(task.key);
+      }
+      this.subtract(this.reserved, task.reservation);
+      task.reservation = emptyReservation();
+      task.awaitingReservation = false;
+    }
   }
 
   private enqueueKnownSuccessors(task: QueueTask): void {

@@ -12,6 +12,7 @@
   import TimelineChainOverview from '$lib/components/lines-and-dots/timeline-graph/timeline-chain-overview.svelte';
   import TimelineGraph from '$lib/components/lines-and-dots/timeline-graph/timeline-graph.svelte';
   import {
+    clampTimelineWindowDuration,
     formatTimelineWindowDuration,
     type TimelineWindowControls,
   } from '$lib/components/lines-and-dots/timeline-graph/timeline-window-controls';
@@ -270,9 +271,12 @@
     timeline = t;
   };
 
-  const loadTimelineInterval = async (startTimeMs: number) => {
+  const loadTimelineInterval = async (
+    startTimeMs: number,
+    durationMs = timelineWindowControls?.windowDurationMs,
+  ) => {
     if (!workflowId || !timelineWindowControls) return;
-    const endTimeMs = startTimeMs + timelineWindowControls.windowDurationMs;
+    const endTimeMs = startTimeMs + (durationMs ?? 0);
     const firstIndex = chainOverviewRuns.findIndex(
       (run) => run.endTimeMs >= startTimeMs,
     );
@@ -288,6 +292,7 @@
     intervalLoadController?.abort();
     const controller = new AbortController();
     intervalLoadController = controller;
+    intervalTimelineRuns = [];
     const requestWithSignal: typeof fetch = (input, init) =>
       fetch(input, { ...init, signal: controller.signal });
 
@@ -349,6 +354,32 @@
         console.error('Unable to load the selected timeline interval.', error);
       }
     });
+  };
+
+  const resizeTimelineWindow = ({
+    startTimeMs,
+    endTimeMs,
+    anchor,
+  }: {
+    startTimeMs: number;
+    endTimeMs: number;
+    anchor: 'start' | 'end';
+  }) => {
+    const durationMs = clampTimelineWindowDuration(endTimeMs - startTimeMs);
+    const resizedStartTimeMs =
+      anchor === 'end' ? endTimeMs - durationMs : startTimeMs;
+    timelineWindowControls?.resize(
+      resizedStartTimeMs,
+      resizedStartTimeMs + durationMs,
+      anchor,
+    );
+    void loadTimelineInterval(resizedStartTimeMs, durationMs).catch(
+      (error: unknown) => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.error('Unable to load the resized timeline interval.', error);
+        }
+      },
+    );
   };
 
   const jumpTimelineToBeginning = () => {
@@ -578,6 +609,7 @@
         windowDurationMs={timelineWindowControls?.windowDurationMs}
         windowMode={timelineWindowControls?.mode}
         onWindowMove={moveTimelineWindow}
+        onWindowResize={resizeTimelineWindow}
       />
     {/if}
     {#if displayMode === 'classic'}

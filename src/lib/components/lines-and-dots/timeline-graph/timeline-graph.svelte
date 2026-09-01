@@ -65,8 +65,10 @@
   import type {
     TimelineWindowControls,
     TimelineWindowMode,
+    TimelineWindowResizeAnchor,
   } from './timeline-window-controls';
   import {
+    clampTimelineWindowDuration,
     getTimelineWindowTimeRange,
     getTimelineWindowZoomDuration,
     TIMELINE_WINDOW_DURATIONS_MS,
@@ -297,6 +299,7 @@
   let frozenAnchorTimeMs = $state<number | null>(null);
   let playbackOriginTimeMs = 0;
   let playbackStartedAtMs = 0;
+  let windowLayoutRevision = $state(0);
   let fixedWindowDurationMs = $state(DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS);
   const durationPerViewportMs = $derived(
     displayMode === 'fixed-window'
@@ -405,11 +408,8 @@
   const moveWindowToTime = (startTimeMs: number) => {
     frozenAnchorTimeMs = startTimeMs;
     viewport.moveTo(scale.project(startTimeMs));
-    if (windowMode !== 'paused') {
-      playbackOriginTimeMs = startTimeMs;
-      playbackStartedAtMs = Date.now();
-      windowMode = 'playing';
-    }
+    windowMode = 'paused';
+    windowLayoutRevision += 1;
     resetTimelineMotion();
   };
 
@@ -440,6 +440,36 @@
     }
 
     fixedWindowDurationMs = nextDurationMs;
+    windowLayoutRevision += 1;
+    resetTimelineMotion();
+  };
+
+  const resizeWindow = (
+    startTimeMs: number,
+    endTimeMs: number,
+    anchor: TimelineWindowResizeAnchor,
+  ) => {
+    const nextDurationMs = clampTimelineWindowDuration(endTimeMs - startTimeMs);
+    const keepFollowing = viewport.isFollowing && anchor === 'end';
+
+    if (!keepFollowing) {
+      const requestedStartTimeMs =
+        anchor === 'end' ? endTimeMs - nextDurationMs : startTimeMs;
+      const earliestStartTimeMs = timeline.workflowTimespan.startTimeMs;
+      const latestStartTimeMs = Math.max(
+        earliestStartTimeMs,
+        aggregateEndTimeMs - nextDurationMs,
+      );
+      frozenAnchorTimeMs = Math.min(
+        Math.max(requestedStartTimeMs, earliestStartTimeMs),
+        latestStartTimeMs,
+      );
+      viewport.moveTo(scale.project(frozenAnchorTimeMs));
+      windowMode = 'paused';
+    }
+
+    fixedWindowDurationMs = nextDurationMs;
+    windowLayoutRevision += 1;
     resetTimelineMotion();
   };
 
@@ -464,6 +494,7 @@
       resume: resumeWindow,
       zoomIn: () => zoomWindow('in'),
       zoomOut: () => zoomWindow('out'),
+      resize: resizeWindow,
       jumpToBeginning,
       jumpToCurrent,
       moveToTime: moveWindowToTime,
@@ -944,9 +975,10 @@
       nowMs,
       retain:
         displayMode === 'fixed-window' &&
+        windowMode !== 'paused' &&
         (workflow.isRunning || workflow.isPaused),
       retentionDurationMs: durationPerViewportMs + TIMELINE_ROW_HEIGHT_GRACE_MS,
-      retentionKey: `${rowHeightRetentionScopeId ?? workflow.runId}:${$eventStatusFilter}:${$eventTypeFilter.join(',')}`,
+      retentionKey: `${rowHeightRetentionScopeId ?? workflow.runId}:${$eventStatusFilter}:${$eventTypeFilter.join(',')}:${windowLayoutRevision}`,
     }),
   );
 

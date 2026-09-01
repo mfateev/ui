@@ -1,4 +1,5 @@
 export type TimelineWindowMode = 'following' | 'paused' | 'playing';
+export type TimelineWindowResizeAnchor = 'start' | 'end';
 
 export const TIMELINE_WINDOW_DURATIONS_MS = [
   1_000,
@@ -34,10 +35,26 @@ export function getTimelineWindowZoomDuration(
   );
 }
 
+export function clampTimelineWindowDuration(durationMs: number): number {
+  return Math.min(
+    Math.max(durationMs, TIMELINE_WINDOW_DURATIONS_MS[0]),
+    TIMELINE_WINDOW_DURATIONS_MS.at(-1)!,
+  );
+}
+
 export function formatTimelineWindowDuration(durationMs: number): string {
-  if (durationMs < 60_000) return `${durationMs / 1_000}s`;
-  if (durationMs < 60 * 60_000) return `${durationMs / 60_000}m`;
-  return `${durationMs / (60 * 60_000)}h`;
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1_000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (totalMinutes < 60) {
+    return seconds ? `${totalMinutes}m ${seconds}s` : `${totalMinutes}m`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
 export function getTimelineWindowTimeRange({
@@ -77,6 +94,11 @@ export interface TimelineWindowControls {
   resume: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
+  resize: (
+    startTimeMs: number,
+    endTimeMs: number,
+    anchor: TimelineWindowResizeAnchor,
+  ) => void;
   jumpToBeginning: () => void;
   jumpToCurrent: () => void;
   moveToTime: (startTimeMs: number) => void;

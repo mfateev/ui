@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  clampTimelineWindowDuration,
   formatTimelineWindowDuration,
   getTimelineWindowTimeRange,
   getTimelineWindowZoomDuration,
@@ -18,10 +19,23 @@ describe('getTimelineWindowZoomDuration', () => {
   });
 });
 
+describe('clampTimelineWindowDuration', () => {
+  it('allows continuous durations within the supported zoom range', () => {
+    expect(clampTimelineWindowDuration(42_500)).toBe(42_500);
+  });
+
+  it('clamps durations at both zoom limits', () => {
+    expect(clampTimelineWindowDuration(250)).toBe(1_000);
+    expect(clampTimelineWindowDuration(172_800_000)).toBe(86_400_000);
+  });
+});
+
 describe('formatTimelineWindowDuration', () => {
   it.each([
     [15_000, '15s'],
+    [75_000, '1m 15s'],
     [300_000, '5m'],
+    [5_430_000, '1h 30m'],
     [21_600_000, '6h'],
   ])('formats %i milliseconds as %s', (durationMs, expected) => {
     expect(formatTimelineWindowDuration(durationMs)).toBe(expected);

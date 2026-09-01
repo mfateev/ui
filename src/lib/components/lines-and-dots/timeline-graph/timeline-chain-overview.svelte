@@ -11,6 +11,11 @@
     windowMode?: TimelineWindowMode;
     loading?: boolean;
     onWindowMove?: (startTimeMs: number) => void;
+    onWindowResize?: (range: {
+      startTimeMs: number;
+      endTimeMs: number;
+      anchor: 'start' | 'end';
+    }) => void;
   }
 
   let {
@@ -21,13 +26,20 @@
     windowMode,
     loading = false,
     onWindowMove,
+    onWindowResize,
   }: Props = $props();
+
+  type DragMode = 'move' | 'resize-start' | 'resize-end';
 
   let trackElement = $state<HTMLDivElement>();
   let overviewElement = $state<HTMLDivElement>();
+  let dragMode = $state<DragMode | null>(null);
   let dragLeft = $state<number | null>(null);
+  let dragWidth = $state<number | null>(null);
   let dragOffset = 0;
+  let dragFixedEdge = 0;
   let visualDurationMs = 1;
+  let visualWindowLeft = 0;
   let visualWindowWidth = 0.4;
 
   const chainEndIsLive = $derived(
@@ -54,6 +66,7 @@
   const windowRight = $derived(position(visualWindowEndTimeMs));
   const windowWidth = $derived(Math.max(0.4, windowRight - windowLeft));
   const displayedWindowLeft = $derived(dragLeft ?? windowLeft);
+  const displayedWindowWidth = $derived(dragWidth ?? windowWidth);
   const continuationTicks = $derived(
     runs.filter((run) => run.transitionToNext === 'continue-as-new'),
   );
@@ -115,6 +128,7 @@
               100,
           ),
         );
+        visualWindowLeft = left;
         visualWindowWidth = Math.max(0.4, right - left);
         trackElement?.style.setProperty('--overview-window-left', `${left}%`);
         trackElement?.style.setProperty(
@@ -135,39 +149,132 @@
   const pointerPosition = (event: PointerEvent): number => {
     const bounds = trackElement?.getBoundingClientRect();
     if (!bounds?.width) return 0;
-    return ((event.clientX - bounds.left) / bounds.width) * 100;
+    return Math.min(
+      100,
+      Math.max(0, ((event.clientX - bounds.left) / bounds.width) * 100),
+    );
   };
 
-  const clampDragLeft = (left: number): number =>
-    Math.min(Math.max(0, left), Math.max(0, 100 - visualWindowWidth));
+  const minimumWindowWidth = (): number =>
+    Math.min(100, Math.max(0.4, (1_000 / visualDurationMs) * 100));
 
-  const startDragging = (event: PointerEvent) => {
-    if (!trackElement || !onWindowMove) return;
+  const startDragging = (event: PointerEvent, mode: DragMode) => {
+    if (!trackElement || (mode === 'move' ? !onWindowMove : !onWindowResize)) {
+      return;
+    }
     event.preventDefault();
-    dragOffset = pointerPosition(event) - displayedWindowLeft;
-    dragLeft = displayedWindowLeft;
+    event.stopPropagation();
+    dragMode = mode;
+    dragLeft = visualWindowLeft;
+    dragWidth = visualWindowWidth;
+    dragOffset = pointerPosition(event) - visualWindowLeft;
+    dragFixedEdge =
+      mode === 'resize-start'
+        ? visualWindowLeft + visualWindowWidth
+        : visualWindowLeft;
     trackElement.style.removeProperty('--overview-window-left');
+    trackElement.style.removeProperty('--overview-window-width');
     trackElement.setPointerCapture(event.pointerId);
   };
 
   const dragWindow = (event: PointerEvent) => {
-    if (dragLeft === null) return;
-    dragLeft = clampDragLeft(pointerPosition(event) - dragOffset);
+    if (dragMode === null || dragLeft === null || dragWidth === null) return;
+    const pointer = pointerPosition(event);
+    const minimumWidth = minimumWindowWidth();
+
+    if (dragMode === 'move') {
+      dragLeft = Math.min(
+        Math.max(0, pointer - dragOffset),
+        Math.max(0, 100 - dragWidth),
+      );
+    } else if (dragMode === 'resize-start') {
+      dragLeft = Math.min(
+        Math.max(0, pointer),
+        Math.max(0, dragFixedEdge - minimumWidth),
+      );
+      dragWidth = dragFixedEdge - dragLeft;
+    } else {
+      const right = Math.max(
+        Math.min(100, pointer),
+        Math.min(100, dragFixedEdge + minimumWidth),
+      );
+      dragLeft = dragFixedEdge;
+      dragWidth = right - dragFixedEdge;
+    }
   };
 
   const finishDragging = (event: PointerEvent) => {
-    if (dragLeft === null || startTimeMs === undefined) return;
+    if (
+      dragMode === null ||
+      dragLeft === null ||
+      dragWidth === null ||
+      startTimeMs === undefined
+    ) {
+      return;
+    }
     const selectedStartTimeMs =
       startTimeMs + (dragLeft / 100) * visualDurationMs;
+    const selectedEndTimeMs =
+      selectedStartTimeMs + (dragWidth / 100) * visualDurationMs;
     trackElement?.releasePointerCapture(event.pointerId);
-    onWindowMove?.(selectedStartTimeMs);
+    if (dragMode === 'move') {
+      onWindowMove?.(selectedStartTimeMs);
+    } else {
+      onWindowResize?.({
+        startTimeMs: selectedStartTimeMs,
+        endTimeMs: selectedEndTimeMs,
+        anchor: dragMode === 'resize-start' ? 'end' : 'start',
+      });
+    }
+    dragMode = null;
     dragLeft = null;
+    dragWidth = null;
   };
 
   const cancelDragging = (event: PointerEvent) => {
-    if (dragLeft === null) return;
+    if (dragMode === null) return;
     trackElement?.releasePointerCapture(event.pointerId);
+    dragMode = null;
     dragLeft = null;
+    dragWidth = null;
+  };
+
+  const resizeWithKeyboard = (event: KeyboardEvent, edge: 'start' | 'end') => {
+    if (
+      !onWindowResize ||
+      startTimeMs === undefined ||
+      windowStartTimeMs === undefined ||
+      visualWindowEndTimeMs === undefined ||
+      (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')
+    ) {
+      return;
+    }
+    event.preventDefault();
+    const stepMs = Math.max(1_000, (windowDurationMs ?? 10_000) / 10);
+    const deltaMs = event.key === 'ArrowRight' ? stepMs : -stepMs;
+
+    if (edge === 'start') {
+      onWindowResize({
+        startTimeMs: Math.min(
+          visualWindowEndTimeMs - 1_000,
+          Math.max(startTimeMs, windowStartTimeMs + deltaMs),
+        ),
+        endTimeMs: visualWindowEndTimeMs,
+        anchor: 'end',
+      });
+    } else {
+      onWindowResize({
+        startTimeMs: windowStartTimeMs,
+        endTimeMs: Math.max(
+          windowStartTimeMs + 1_000,
+          Math.min(
+            startTimeMs + visualDurationMs,
+            visualWindowEndTimeMs + deltaMs,
+          ),
+        ),
+        anchor: 'start',
+      });
+    }
   };
 </script>
 
@@ -190,7 +297,7 @@
   <div
     bind:this={trackElement}
     class="relative h-5 rounded border border-subtle bg-subtle"
-    role="img"
+    role="group"
     aria-label={translate('workflows.timeline-chain-overview-description')}
     onpointermove={dragWindow}
     onpointerup={finishDragging}
@@ -210,22 +317,53 @@
           ></span>
         {/each}
       </div>
-      <button
-        type="button"
-        class="absolute -inset-y-1 z-10 box-border touch-none rounded border-[3px] border-interactive bg-transparent p-0 shadow-sm {onWindowMove
-          ? 'cursor-grab active:cursor-grabbing'
-          : 'pointer-events-none'}"
-        style:left={dragLeft === null
+      <div
+        class="absolute -inset-y-1 z-10 box-border touch-none rounded border-[3px] border-interactive bg-transparent shadow-sm"
+        style:left={dragMode === null
           ? `var(--overview-window-left, ${displayedWindowLeft}%)`
           : `${displayedWindowLeft}%`}
-        style:width={`var(--overview-window-width, ${windowWidth}%)`}
+        style:width={dragMode === null
+          ? `var(--overview-window-width, ${displayedWindowWidth}%)`
+          : `${displayedWindowWidth}%`}
         data-testid="timeline-window-position"
         data-window-start-time-ms={windowStartTimeMs}
         data-window-end-time-ms={visualWindowEndTimeMs}
-        aria-label={translate('workflows.timeline-current-window')}
         title={translate('workflows.timeline-current-window')}
-        onpointerdown={startDragging}
-      ></button>
+      >
+        <button
+          type="button"
+          class="absolute inset-0 z-10 touch-none bg-transparent p-0 {onWindowMove
+            ? 'cursor-grab active:cursor-grabbing'
+            : 'pointer-events-none'}"
+          aria-label={translate('workflows.timeline-move-window')}
+          data-testid="timeline-window-move"
+          onpointerdown={(event) => startDragging(event, 'move')}
+        ></button>
+        <button
+          type="button"
+          class="absolute -bottom-1.5 -left-2 -top-1.5 z-20 w-4 cursor-ew-resize touch-none bg-transparent p-0"
+          aria-label={translate('workflows.timeline-resize-window-start')}
+          data-testid="timeline-window-resize-start"
+          onpointerdown={(event) => startDragging(event, 'resize-start')}
+          onkeydown={(event) => resizeWithKeyboard(event, 'start')}
+        >
+          <span
+            class="absolute bottom-1 left-1/2 top-1 w-0.5 -translate-x-1/2 rounded bg-interactive"
+          ></span>
+        </button>
+        <button
+          type="button"
+          class="absolute -bottom-1.5 -right-2 -top-1.5 z-20 w-4 cursor-ew-resize touch-none bg-transparent p-0"
+          aria-label={translate('workflows.timeline-resize-window-end')}
+          data-testid="timeline-window-resize-end"
+          onpointerdown={(event) => startDragging(event, 'resize-end')}
+          onkeydown={(event) => resizeWithKeyboard(event, 'end')}
+        >
+          <span
+            class="absolute bottom-1 left-1/2 top-1 w-0.5 -translate-x-1/2 rounded bg-interactive"
+          ></span>
+        </button>
+      </div>
     {/if}
   </div>
 </div>

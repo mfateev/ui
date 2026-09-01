@@ -391,6 +391,9 @@ export const Strings = {
   'timeline-chain-overview-description':
     'Sliding window position in the complete execution chain',
   'timeline-current-window': 'Current sliding window',
+  'timeline-move-window': 'Move sliding window',
+  'timeline-resize-window-start': 'Resize sliding window from start',
+  'timeline-resize-window-end': 'Resize sliding window from end',
   'timeline-continued-as-new': 'Continued as new',
   'follow-chained-runs': 'Follow chained runs',
   'copy-pinned-run-link': 'Copy pinned run link',

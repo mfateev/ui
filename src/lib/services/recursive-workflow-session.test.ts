@@ -382,6 +382,35 @@ describe('RecursiveWorkflowSession', () => {
     session.dispose();
   });
 
+  it('releases child capacity when the visible root interval changes', async () => {
+    const loader = vi.fn(
+      ({ reference }: Parameters<typeof loadChildWorkflow>[0]) =>
+        Promise.resolve(loaded(reference.workflowId)),
+    );
+    const session = new RecursiveWorkflowSession({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1, 'first')])],
+      limits: { ...DEFAULT_RECURSIVE_TIMELINE_LIMITS, maximumNodes: 2 },
+      loader,
+    });
+    const firstEdge = [...session.snapshot.childrenByGroupKey.values()][0];
+    session.observeEdges([firstEdge.key]);
+    await vi.waitFor(() => expect(firstEdge.load.state).toBe('loaded'));
+
+    session.syncRoot({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(2, 'second')])],
+    });
+    const secondEdge = [...session.snapshot.childrenByGroupKey.values()][0];
+    session.observeEdges([secondEdge.key]);
+
+    await vi.waitFor(() => expect(secondEdge.load.state).toBe('loaded'));
+    expect(loader).toHaveBeenCalledTimes(2);
+    session.dispose();
+  });
+
   it('drops stale Continue-As-New aliases outside run retention', async () => {
     const successorByRun = new Map([
       ['chain-1', 'chain-2'],

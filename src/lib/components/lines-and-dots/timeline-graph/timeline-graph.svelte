@@ -50,6 +50,10 @@
     isTimelineCoordinateRebase,
     TimelineMotion,
   } from './timeline-motion';
+  import {
+    type TimelinePerformanceStats,
+    TimelinePerformanceTracker,
+  } from './timeline-performance';
   import { getRowY, getTotalForY } from './timeline-positioning';
   import {
     getTimelineFrameBoundaryOffset,
@@ -126,6 +130,7 @@
     knownChainStartRunId?: string;
     chainStartTimeMs?: number;
     windowControls?: TimelineWindowControls;
+    performanceStats?: TimelinePerformanceStats;
   }
 
   let {
@@ -148,6 +153,7 @@
     knownChainStartRunId = workflow.runId,
     chainStartTimeMs,
     windowControls = $bindable(),
+    performanceStats = $bindable(),
   }: Props = $props();
 
   let nowMs = $state(Date.now());
@@ -1475,6 +1481,10 @@
     return slots;
   });
 
+  const mountedRowCount = $derived(
+    pool.reduce((count, slot) => count + Number(Boolean(slot)), 0),
+  );
+
   const pooledEdgeKeys = $derived(
     getObservedTimelineEdgeKeys(
       pool.flatMap((slot) => (slot ? [slot.row] : [])),
@@ -1610,6 +1620,42 @@
     });
   });
 
+  const performanceTracker = new TimelinePerformanceTracker();
+  let performanceUpdateStartedAt = 0;
+  let performanceUpdateRevision = '';
+
+  const getPerformanceUpdateRevision = (): string =>
+    [
+      windowStart,
+      windowEnd,
+      layoutRowCount,
+      mountedRowCount,
+      fixedWindowDurationMs,
+      windowLayoutRevision,
+      runFrameLayouts.length,
+      chainFrameLayouts.length,
+    ].join(':');
+
+  $effect.pre(() => {
+    performanceUpdateStartedAt = performance.now();
+    performanceUpdateRevision = getPerformanceUpdateRevision();
+  });
+
+  $effect(() => {
+    const revision = getPerformanceUpdateRevision();
+    const element = containerEl;
+    if (!element || revision !== performanceUpdateRevision) return;
+
+    const updateMs = performance.now() - performanceUpdateStartedAt;
+    performanceStats = performanceTracker.record({
+      logicalRows: layoutRowCount,
+      mountedRows: mountedRowCount,
+      renderedLines: element.querySelectorAll('.tl-line').length,
+      renderedElements: element.querySelectorAll('*').length,
+      updateMs,
+    });
+  });
+
   // Border rails span the full timeline height so they meet the bottom axis.
   const lineTop = 0;
   const lineBottom = $derived(timelineHeight);
@@ -1632,6 +1678,14 @@
   style:height="{shellHeight}px"
   data-segmented-scroll={verticalScrollModel.segmented || undefined}
   data-logical-row-count={layoutRowCount}
+  data-mounted-row-count={performanceStats?.mountedRows}
+  data-rendered-line-count={performanceStats?.renderedLines}
+  data-rendered-element-count={performanceStats?.renderedElements}
+  data-update-ms={performanceStats?.updateMs}
+  data-update-p95-ms={performanceStats?.p95UpdateMs}
+  data-update-sample-count={performanceStats?.sampleCount}
+  data-update-sequence={performanceStats?.sequence}
+  data-window-duration-ms={fixedWindowDurationMs}
   data-logical-origin-row={verticalScrollModel.segmented
     ? logicalOriginRow
     : undefined}

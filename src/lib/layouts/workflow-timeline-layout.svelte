@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext, onDestroy, onMount, untrack } from 'svelte';
+  import { getContext, onDestroy, onMount, tick, untrack } from 'svelte';
 
   import { beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -11,6 +11,7 @@
   import { Timeline as ClassicTimeline } from '$lib/components/lines-and-dots/timeline-graph/classic/timeline.svelte';
   import TimelineChainOverview from '$lib/components/lines-and-dots/timeline-graph/timeline-chain-overview.svelte';
   import TimelineGraph from '$lib/components/lines-and-dots/timeline-graph/timeline-graph.svelte';
+  import type { TimelinePerformanceStats } from '$lib/components/lines-and-dots/timeline-graph/timeline-performance';
   import {
     clampTimelineWindowDuration,
     formatTimelineWindowDuration,
@@ -210,6 +211,7 @@
 
   let timeline = $state<Timeline | ClassicTimeline>();
   let timelineWindowControls = $state<TimelineWindowControls>();
+  let timelinePerformanceStats = $state<TimelinePerformanceStats>();
   let chainOverviewRuns = $state<WorkflowChainOverviewRun[]>([]);
   let chainOverviewLoading = $state(false);
   let legacyFullDurationFitKey = '';
@@ -234,6 +236,7 @@
       return;
     }
     timelineWindowControls.fitToFullDuration();
+    void tick().then(() => loadCurrentTimelineWindow());
     legacyFullDurationFitKey = fitKey;
   });
 
@@ -398,6 +401,39 @@
     );
   };
 
+  const loadCurrentTimelineWindow = async () => {
+    await tick();
+    const controls = timelineWindowControls;
+    if (!controls) return;
+    await loadTimelineInterval(
+      controls.windowStartTimeMs,
+      controls.windowDurationMs,
+    );
+  };
+
+  const runTimelineWindowControl = (action: () => void) => {
+    action();
+    void loadCurrentTimelineWindow().catch((error: unknown) => {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        console.error('Unable to load the selected timeline interval.', error);
+      }
+    });
+  };
+
+  const zoomTimelineWindow = (direction: 'in' | 'out') => {
+    const controls = timelineWindowControls;
+    if (!controls) return;
+    runTimelineWindowControl(
+      direction === 'in' ? controls.zoomIn : controls.zoomOut,
+    );
+  };
+
+  const fitTimelineWindowToFullDuration = () => {
+    const controls = timelineWindowControls;
+    if (!controls) return;
+    runTimelineWindowControl(controls.fitToFullDuration);
+  };
+
   const moveTimelineWindow = (startTimeMs: number) => {
     timelineWindowControls?.moveToTime(startTimeMs);
     void loadTimelineInterval(startTimeMs).catch((error: unknown) => {
@@ -514,7 +550,7 @@
             active={timelineWindowControls.atFullDuration}
             disabled={chainOverviewLoading}
             data-testid="timeline-full-duration"
-            onclick={timelineWindowControls.fitToFullDuration}
+            onclick={fitTimelineWindowToFullDuration}
             size="sm"
           >
             {translate('workflows.timeline-full-duration')}
@@ -525,7 +561,7 @@
             title={translate('workflows.timeline-zoom-out')}
             disabled={!timelineWindowControls.canZoomOut}
             data-testid="timeline-zoom-out"
-            onclick={timelineWindowControls.zoomOut}
+            onclick={() => zoomTimelineWindow('out')}
             size="sm"
           >
             <span class="sr-only"
@@ -536,6 +572,7 @@
             class="border-default flex min-w-12 items-center justify-center border-y px-2 text-xs font-medium tabular-nums text-secondary"
             aria-live="polite"
             aria-label={translate('workflows.timeline-window-duration')}
+            data-testid="timeline-window-duration"
           >
             {formatTimelineWindowDuration(
               timelineWindowControls.windowDurationMs,
@@ -547,7 +584,7 @@
             title={translate('workflows.timeline-zoom-in')}
             disabled={!timelineWindowControls.canZoomIn}
             data-testid="timeline-zoom-in"
-            onclick={timelineWindowControls.zoomIn}
+            onclick={() => zoomTimelineWindow('in')}
             size="sm"
           >
             <span class="sr-only"
@@ -670,6 +707,21 @@
         onWindowMove={moveTimelineWindow}
         onWindowResize={resizeTimelineWindow}
       />
+      <div
+        class="flex flex-wrap items-center gap-x-3 gap-y-1 border-x border-b border-subtle px-3 py-1 text-xs tabular-nums text-secondary"
+        data-testid="timeline-performance-stats"
+      >
+        <span>
+          Rows {timelinePerformanceStats?.mountedRows ?? 0} mounted / {timelinePerformanceStats?.logicalRows ??
+            0} total
+        </span>
+        <span>Lines {timelinePerformanceStats?.renderedLines ?? 0}</span>
+        <span>DOM {timelinePerformanceStats?.renderedElements ?? 0}</span>
+        <span>
+          Update {(timelinePerformanceStats?.updateMs ?? 0).toFixed(1)} ms · p95
+          {(timelinePerformanceStats?.p95UpdateMs ?? 0).toFixed(1)} ms
+        </span>
+      </div>
     {/if}
     {#if displayMode === 'classic'}
       <ClassicTimelineGraph
@@ -702,6 +754,7 @@
         knownChainStartRunId={workflowRunCtx.chainRunId}
         chainStartTimeMs={chainOverviewRuns[0]?.startTimeMs}
         bind:windowControls={timelineWindowControls}
+        bind:performanceStats={timelinePerformanceStats}
         {timelineRuns}
       />
     {/if}

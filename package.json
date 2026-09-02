@@ -40,6 +40,8 @@
     "test": "TZ=UTC vitest",
     "perf:signals": "esno scripts/perf-signals.ts",
     "perf:events": "esno scripts/perf-events.ts",
+    "perf:timeline": "node scripts/benchmark-timeline.mjs",
+    "perf:timeline:breakpoint": "esno scripts/benchmark-timeline-breakpoint.ts",
     "test:ui": "TZ=UTC vitest --ui",
     "test:coverage": "TZ=UTC vitest run --coverage",
     "test:e2e": "PW_MODE=e2e playwright test tests/e2e",

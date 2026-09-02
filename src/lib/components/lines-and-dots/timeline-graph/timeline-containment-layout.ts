@@ -165,9 +165,38 @@ export function getRecursiveTimelineContainmentLayout({
   pendingGroupCount,
   descMinId,
 }: RecursiveContainmentLayoutInput): TimelineContainmentLayout {
-  const visibleByGroup = new Map(
-    visibleEntries.map((entry) => [entry.group, entry]),
-  );
+  const runById = new Map<string, TimelineRun>();
+  const collectRuns = (node: TimelineWorkflowNode): void => {
+    for (const run of node.runs) runById.set(run.runId, run);
+    for (const edge of node.childrenByGroupKey.values()) {
+      if (edge.load.state === 'loaded') collectRuns(edge.load.node);
+    }
+  };
+  collectRuns(root);
+
+  const visibilityByRunId = new Map<string, TimelineVisibilityBitset>();
+  const exceptionalEntryByGroup = new Map<
+    TimelineGroupEntry['group'],
+    TimelineGroupEntry
+  >();
+  let hasLegacyEntries = false;
+  for (const entry of visibleEntries) {
+    const run = runById.get(entry.runId);
+    const ordinal = entry.ordinal;
+    const source = ordinal === undefined ? undefined : run?.groups[ordinal];
+    if (!run || ordinal === undefined || source?.group !== entry.group) {
+      exceptionalEntryByGroup.set(entry.group, entry);
+      hasLegacyEntries = true;
+      continue;
+    }
+    let mask = visibilityByRunId.get(entry.runId);
+    if (!mask) {
+      mask = new TimelineVisibilityBitset(run.groups.length);
+      visibilityByRunId.set(entry.runId, mask);
+    }
+    mask.set(ordinal);
+    if (source !== entry) exceptionalEntryByGroup.set(entry.group, entry);
+  }
   const segments: RowSegment[] = [];
   const groupSegments: GroupRowSegment[] = [];
   const allRunSpans: TimelineRunSpan[] = [];
@@ -264,10 +293,27 @@ export function getRecursiveTimelineContainmentLayout({
         ancestorRunKeys,
       });
 
-      const mask = new TimelineVisibilityBitset(run.groups.length);
-      for (let ordinal = 0; ordinal < run.groups.length; ordinal += 1) {
-        if (visibleByGroup.has(run.groups[ordinal].group)) mask.set(ordinal);
+      const mask =
+        visibilityByRunId.get(run.runId) ??
+        new TimelineVisibilityBitset(run.groups.length);
+      if (hasLegacyEntries) {
+        for (let ordinal = 0; ordinal < run.groups.length; ordinal += 1) {
+          if (exceptionalEntryByGroup.has(run.groups[ordinal].group)) {
+            mask.set(ordinal);
+          }
+        }
       }
+
+      const visibleEntryAt = (
+        ordinal: number,
+      ): TimelineGroupEntry | undefined => {
+        if (!mask.has(ordinal)) return undefined;
+        const timelineGroup = run.groups[ordinal];
+        return (
+          exceptionalEntryByGroup.get(timelineGroup.group) ??
+          (timelineGroup as TimelineGroupEntry)
+        );
+      };
 
       let appended = false;
       let gapInserted = false;
@@ -306,7 +352,7 @@ export function getRecursiveTimelineContainmentLayout({
               return undefined;
             }
             const timelineGroup = run.groups[ordinal];
-            const entry = visibleByGroup.get(timelineGroup.group);
+            const entry = visibleEntryAt(ordinal);
             if (!entry) return undefined;
             const edge = node.childrenByGroupKey.get(timelineGroup.timelineKey);
             return {
@@ -357,7 +403,7 @@ export function getRecursiveTimelineContainmentLayout({
       } else {
         for (let ordinal = start; ordinal !== stop; ordinal += step) {
           const timelineGroup = run.groups[ordinal];
-          const entry = visibleByGroup.get(timelineGroup.group);
+          const entry = visibleEntryAt(ordinal);
           const edge = node.childrenByGroupKey.get(timelineGroup.timelineKey);
 
           if (entry && hasCursorGap && !gapInserted) {

@@ -16,6 +16,7 @@ import type {
   PendingNexusOperation,
   WorkflowEvent,
 } from '$lib/types/events';
+import { formatDate } from '$lib/utilities/format-date';
 import { validTimeToDate } from '$lib/utilities/format-time';
 import {
   isFailedTaskEvent,
@@ -71,6 +72,8 @@ export interface LazyGroup {
    */
   readonly version?: number;
   readonly eventCount: number;
+  readonly startTimeMs?: number;
+  readonly lastTimeMs?: number;
   readonly initialEvent: WorkflowEvent;
   readonly lastEvent: WorkflowEvent;
   readonly category: WorkflowEvent['category'];
@@ -115,7 +118,28 @@ export function isLazyGroup(value: unknown): value is LazyGroup {
   );
 }
 
-export function createGroupedEventBuffer() {
+export type GroupedEventBufferOptions = {
+  formatTimestamps?: boolean;
+};
+
+export function createGroupedEventBuffer({
+  formatTimestamps = true,
+}: GroupedEventBufferOptions = {}) {
+  const eventTimeMs = (event: WorkflowEvent): number => {
+    const value = event.eventTime;
+    if (!value) return 0;
+    if (typeof value === 'string') return Date.parse(value) || 0;
+    if (typeof value === 'number') return value;
+    return validTimeToDate(value).getTime();
+  };
+
+  const prepareForMaterialization = (event: WorkflowEvent): WorkflowEvent => {
+    if (!formatTimestamps && !event.timestamp) {
+      event.timestamp = formatDate(event.eventTime);
+    }
+    return event;
+  };
+
   /**
    * One per group for the lifetime of the run. Holds member slots rather than
    * events, so a LazyGroup costs no allocation — its fields are either stored at
@@ -156,6 +180,8 @@ export function createGroupedEventBuffer() {
     activityStartedTimeMs: number | undefined;
     activityAttempt: number | undefined;
     childWorkflow: LazyChildWorkflowReference | undefined;
+    startTimeMs = 0;
+    lastTimeMs = 0;
     private childNamespace: string | undefined;
 
     constructor(readonly headSlot: number) {
@@ -168,12 +194,14 @@ export function createGroupedEventBuffer() {
       if (slot > this.lastSlot) {
         this.lastSlot = slot;
         this.lastEvent = event;
+        this.lastTimeMs = eventTimeMs(event);
       }
       if (isTerminalActivityEvent(event)) this.hasTerminalActivity = true;
       if (isTerminalNexusEvent(event)) this.hasTerminalNexus = true;
       this.captureTimelineFields(event);
       if (slot === this.headSlot) {
         this.initialEvent = event;
+        this.startTimeMs = eventTimeMs(event);
         this.category = groupCategory(event);
         this.headsGroup = isGroupHeadEvent(event as CommonHistoryEvent);
       }
@@ -252,9 +280,7 @@ export function createGroupedEventBuffer() {
         if (!event) continue;
         points.push({
           eventId: Number(event.id),
-          timeMs: event.eventTime
-            ? validTimeToDate(event.eventTime).getTime()
-            : 0,
+          timeMs: eventTimeMs(event),
           classification: event.classification,
         });
       }
@@ -374,6 +400,7 @@ export function createGroupedEventBuffer() {
     return toEvent(raw, {
       shouldNotAddBillableAction,
       processedWorkflowTaskIds,
+      formatTimestamp: formatTimestamps,
     });
   }
 
@@ -429,15 +456,17 @@ export function createGroupedEventBuffer() {
     if (!head) return null;
 
     const group =
-      createEventGroup(head as CommonHistoryEvent) ??
-      createWorkflowTaskGroup(head as CommonHistoryEvent);
+      createEventGroup(prepareForMaterialization(head) as CommonHistoryEvent) ??
+      createWorkflowTaskGroup(
+        prepareForMaterialization(head) as CommonHistoryEvent,
+      );
     if (!group) return null;
 
     const followers: WorkflowEvent[] = [];
     for (const slot of record.slots) {
       if (slot === record.headSlot) continue;
       const event = events[slot];
-      if (event) followers.push(event);
+      if (event) followers.push(prepareForMaterialization(event));
     }
     followers.sort((a, b) => Number(a.id) - Number(b.id));
 
@@ -663,7 +692,7 @@ export function createGroupedEventBuffer() {
     const result: WorkflowEvent[] = [];
     for (let slot = 0; slot <= maxSlot; slot++) {
       const event = events[slot];
-      if (event) result.push(event);
+      if (event) result.push(prepareForMaterialization(event));
     }
 
     cachedEvents = result;

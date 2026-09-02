@@ -67,7 +67,6 @@
   import {
     filterTimelineGroupEntries,
     filterTimelineGroupEntriesByStatus,
-    getTimelineEntryMaps,
     getTimelineGroupEntries,
   } from './timeline-run-entries';
   import {
@@ -240,19 +239,18 @@
   const renderedGroups = $derived(
     eventTypeFilteredEntries.map((entry) => entry.group) as LazyGroup[],
   );
-  const timelineEntryMaps = $derived(
-    getTimelineEntryMaps(eventTypeFilteredEntries),
-  );
-  const timelineKeys = $derived(timelineEntryMaps.keyByGroup);
-  const timelineEntryByGroup = $derived(timelineEntryMaps.entryByGroup);
+  const retainedPendingEndTimeByGroup = $derived.by(() => {
+    const endTimes = new WeakMap<LazyGroup, number>();
+    for (const entry of eventTypeFilteredEntries) {
+      if (!entry.active && entry.group.isPending) {
+        endTimes.set(entry.group as LazyGroup, entry.runEndTimeMs);
+      }
+    }
+    return endTimes;
+  });
   const getRetainedEndTimeMs = (group: LazyGroup): number | undefined => {
-    const entry = timelineEntryByGroup.get(group);
-    return entry && !entry.active && group.isPending
-      ? entry.runEndTimeMs
-      : undefined;
+    return retainedPendingEndTimeByGroup.get(group);
   };
-  const getTimelineKey = (group: LazyGroup): string =>
-    timelineKeys.get(group) ?? `${workflow.runId}:${group.id}`;
   const timelineLoading = $derived(loading);
 
   // Dot geometry, published as CSS vars on .canvas (consumed by every row's dot).
@@ -751,6 +749,13 @@
   const visibleEntries = $derived.by(() => {
     if (displayMode === 'full-duration') return filteredEntries;
     const timeRange = fixedWindowTimeRange;
+    if (
+      timeRange &&
+      timeRange.startTimeMs <= timeline.workflowTimespan.startTimeMs &&
+      timeRange.endTimeMs >= timeline.workflowTimespan.endTimeMs
+    ) {
+      return filteredEntries;
+    }
     const candidates = timeRange
       ? fixedWindowEntryIndex.query(
           timeRange.startTimeMs,
@@ -769,8 +774,6 @@
       }),
     );
   });
-  const visibleGroups = $derived(visibleEntries.map((entry) => entry.group));
-
   let observedRunId: string | undefined;
 
   $effect.pre(() => {
@@ -795,7 +798,7 @@
         : 0;
     }
     if (!totalExpectedEvents) {
-      return visibleGroups.length === 0 ? 50 : 0;
+      return visibleEntries.length === 0 ? 50 : 0;
     }
     return Math.max(0, totalExpectedEvents - visibleEntries.length);
   });
@@ -851,6 +854,7 @@
   let rowEntryGeneration = 0;
   let rowEntryDeadlineMs: number | null = null;
   let rowEntrySettleTimer: ReturnType<typeof setTimeout> | null = null;
+  let suppressRowEntryMotionUntilMs = 0;
 
   // Live polling can split one server-side event burst across adjacent refreshes.
   // Keep the previous layout painted until that burst has gone quiet, then admit
@@ -905,6 +909,7 @@
       previousKeys === null ||
       timelineLoading ||
       !reverseSort ||
+      performance.now() < suppressRowEntryMotionUntilMs ||
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
     ) {
       finishRowEntry();
@@ -1345,6 +1350,14 @@
   }
 
   function pokeSampler() {
+    suppressRowEntryMotionUntilMs = performance.now() + 250;
+    if (
+      rowEntryOffsets.size > 0 ||
+      rowEntryNewKeys.size > 0 ||
+      rowEntryAnimating
+    ) {
+      finishRowEntry();
+    }
     stableFrames = 0;
     if (bandRafId === undefined) {
       bandRafId = requestAnimationFrame(sampleBand);
@@ -2090,7 +2103,7 @@
             <GroupDetailsRow
               y={panelY}
               group={activeGroup}
-              timelineKey={getTimelineKey(activeGroup)}
+              timelineKey={activeTimelineEntry.timelineKey}
               {canvasWidth}
               endTime={activeTimelineEntry?.active === false
                 ? activeTimelineEntry.runEndTimeMs

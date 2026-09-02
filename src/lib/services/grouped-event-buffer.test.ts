@@ -74,6 +74,19 @@ afterEach(() => {
 });
 
 describe('buffer instances', () => {
+  it('defers display timestamp formatting until a timeline group is materialized', () => {
+    const buffer = createGroupedEventBuffer({ formatTimestamps: false });
+    buffer.reset(3);
+    buffer.ingestHistoryEvent(makeActivityScheduled(1));
+
+    const [lazy] = buffer.getLazyGroups();
+    expect(lazy.initialEvent.timestamp).toBe('');
+    expect(lazy.startTimeMs).toBeGreaterThan(0);
+
+    const group = buffer.materializeGroup(lazy);
+    expect(group.initialEvent.timestamp).not.toBe('');
+  });
+
   it('isolates overlapping event ids and listeners', () => {
     const first = createGroupedEventBuffer();
     const second = createGroupedEventBuffer();

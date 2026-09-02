@@ -10,7 +10,10 @@ import {
   type Route,
 } from '@playwright/test';
 
-import { createTimelineStressFixture } from '../tests/test-utilities/timeline-stress-fixture';
+import {
+  createTimelineStressFixture,
+  type TimelineStressFixture,
+} from '../tests/test-utilities/timeline-stress-fixture';
 
 const numberFromEnvironment = (name: string, fallback: number): number => {
   const value = Number(process.env[name] ?? fallback);
@@ -31,28 +34,31 @@ const baseUrl =
   process.env.TIMELINE_BREAKPOINT_BASE_URL ?? 'http://localhost:3000';
 const preset = process.env.TIMELINE_BREAKPOINT_PRESET ?? 'full';
 const quickPreset = preset === 'quick';
-if (!quickPreset && preset !== 'full') {
-  throw new Error('TIMELINE_BREAKPOINT_PRESET must be "quick" or "full".');
+const massivePreset = preset === 'massive';
+if (!quickPreset && !massivePreset && preset !== 'full') {
+  throw new Error(
+    'TIMELINE_BREAKPOINT_PRESET must be "quick", "full", or "massive".',
+  );
 }
 const runCount = integerFromEnvironment(
   'TIMELINE_BREAKPOINT_RUNS',
-  quickPreset ? 16 : 32,
-  32,
+  massivePreset ? 256 : quickPreset ? 16 : 32,
+  256,
 );
 const maximumRows = integerFromEnvironment(
   'TIMELINE_BREAKPOINT_MAX_ROWS',
-  quickPreset ? 24_000 : 50_000,
-  50_000,
+  massivePreset ? 500_000 : quickPreset ? 24_000 : 50_000,
+  500_000,
 );
 const rowsPerRun = Math.max(1, Math.floor(maximumRows / runCount));
 const maximumZoomLevels = integerFromEnvironment(
   'TIMELINE_BREAKPOINT_MAX_ZOOMS',
-  quickPreset ? 1 : 10,
+  quickPreset || massivePreset ? 1 : 10,
   12,
 );
 const maximumRuntimeMs = numberFromEnvironment(
   'TIMELINE_BREAKPOINT_MAX_RUNTIME_MS',
-  120_000,
+  massivePreset ? 240_000 : 120_000,
 );
 const maximumNodeRssBytes =
   numberFromEnvironment('TIMELINE_BREAKPOINT_MAX_NODE_RSS_MB', 1_500) *
@@ -90,7 +96,9 @@ const outputPath = resolve(
   process.env.TIMELINE_BREAKPOINT_OUTPUT ??
     (quickPreset
       ? '../.agent-artifacts/timeline-breakpoint-quick.json'
-      : '../.agent-artifacts/timeline-breakpoint-benchmark.json'),
+      : massivePreset
+        ? '../.agent-artifacts/timeline-breakpoint-500k.json'
+        : '../.agent-artifacts/timeline-breakpoint-benchmark.json'),
 );
 const cpuProfilePath = process.env.TIMELINE_BREAKPOINT_CPU_PROFILE
   ? resolve(process.env.TIMELINE_BREAKPOINT_CPU_PROFILE)
@@ -102,6 +110,13 @@ const fixture = createTimelineStressFixture({
   rowsPerRun,
   runDurationMs: 60_000,
   startTimeMs: Date.now() - runCount * 60_000,
+});
+const scrollChurnFixture = createTimelineStressFixture({
+  workflowId: 'timeline-scroll-churn-chain',
+  runCount: 24,
+  rowsPerRun: 10,
+  runDurationMs: 60_000,
+  startTimeMs: Date.now() - 24 * 60_000,
 });
 
 type TimelineDomStats = {
@@ -122,6 +137,9 @@ type ScrollStats = {
   p95FrameMs: number;
   maximumFrameMs: number;
   slowFrames: number;
+  blankFrames: number;
+  minimumVisibleRows: number;
+  blankFrameRatios: number[];
 };
 
 type LevelResult = TimelineDomStats &
@@ -223,55 +241,137 @@ const waitForTimelineToSettle = async (
   };
 };
 
-const scrollBrowserWindow = async (page: Page): Promise<ScrollStats> =>
-  page.evaluate(async () => {
-    const container = document.querySelector<HTMLElement>('#content-wrapper');
-    const scrollTarget = container ?? document.scrollingElement;
-    if (!scrollTarget)
-      throw new Error('No browser scroll container was found.');
-    const maximumScroll = Math.max(
-      0,
-      scrollTarget.scrollHeight - scrollTarget.clientHeight,
-    );
-    const frameDurations: number[] = [];
-    const positions = Array.from({ length: 25 }, (_, index) =>
-      Math.round((maximumScroll * index) / 24),
-    );
-    positions.push(...positions.slice(0, -1).reverse());
-    let previousFrameTime = performance.now();
-    for (const position of positions) {
-      scrollTarget.scrollTop = position;
-      await new Promise<void>((resolveFrame) =>
-        requestAnimationFrame((frameTime) => {
-          frameDurations.push(frameTime - previousFrameTime);
-          previousFrameTime = frameTime;
-          resolveFrame();
-        }),
+const scrollBrowserWindow = async (
+  page: Page,
+  { dynamicFrames = 0 }: { dynamicFrames?: number } = {},
+): Promise<ScrollStats> =>
+  page.evaluate(
+    async ({ dynamicFrames }) => {
+      const segmentedTimeline = document.querySelector<HTMLElement>(
+        '#event-history-timeline-graph[data-segmented-scroll]',
       );
-    }
-    const sorted = [...frameDurations].sort((left, right) => left - right);
-    const p95Index = Math.min(
-      sorted.length - 1,
-      Math.ceil(sorted.length * 0.95) - 1,
-    );
-    return {
-      container: container ? '#content-wrapper' : 'document',
-      distancePx: maximumScroll,
-      frames: frameDurations.length,
-      p95FrameMs: sorted[p95Index] ?? 0,
-      maximumFrameMs: Math.max(0, ...frameDurations),
-      slowFrames: frameDurations.filter((duration) => duration > 34).length,
-    };
-  });
+      const container =
+        segmentedTimeline ??
+        document.querySelector<HTMLElement>('#content-wrapper');
+      const scrollTarget = container ?? document.scrollingElement;
+      if (!scrollTarget)
+        throw new Error('No browser scroll container was found.');
+      const initialMaximumScroll = Math.max(
+        0,
+        scrollTarget.scrollHeight - scrollTarget.clientHeight,
+      );
+      const frameDurations: number[] = [];
+      const positions = dynamicFrames
+        ? Array.from({ length: dynamicFrames }, (_, index) => {
+            const phase = (index % 24) / 12;
+            return phase <= 1 ? phase : 2 - phase;
+          })
+        : Array.from({ length: 25 }, (_, index) => index / 24).concat(
+            Array.from({ length: 24 }, (_, index) => (23 - index) / 24),
+          );
+      let blankFrames = 0;
+      const blankFrameRatios: number[] = [];
+      let minimumVisibleRows = Number.POSITIVE_INFINITY;
+      for (const positionRatio of positions) {
+        const maximumScroll = Math.max(
+          0,
+          scrollTarget.scrollHeight - scrollTarget.clientHeight,
+        );
+        scrollTarget.scrollTop = Math.round(maximumScroll * positionRatio);
+        const frameStartedAt = performance.now();
+        await new Promise<void>((resolveFrame) =>
+          requestAnimationFrame((frameTime) => {
+            frameDurations.push(frameTime - frameStartedAt);
+            resolveFrame();
+          }),
+        );
+        await new Promise<void>((resolveFrame) =>
+          requestAnimationFrame(() => resolveFrame()),
+        );
+        const timeline = document.querySelector<HTMLElement>(
+          '#event-history-timeline-graph',
+        );
+        if (!timeline) continue;
+        const timelineRect = timeline.getBoundingClientRect();
+        const viewportRect = segmentedTimeline
+          ? timelineRect
+          : container
+            ? container.getBoundingClientRect()
+            : {
+                top: 0,
+                bottom: window.innerHeight,
+              };
+        const visibleTop = Math.max(timelineRect.top, viewportRect.top);
+        const visibleBottom = Math.min(
+          timelineRect.bottom,
+          viewportRect.bottom,
+        );
+        if (
+          visibleBottom - visibleTop < 24 ||
+          Number(timeline.dataset.logicalRowCount ?? 0) === 0
+        ) {
+          continue;
+        }
+        const visibleRows = Array.from(
+          timeline.querySelectorAll<HTMLElement>(
+            'ul > li[data-timeline-entry-key]',
+          ),
+        ).filter((row) => {
+          const style = getComputedStyle(row);
+          const rect = row.getBoundingClientRect();
+          return (
+            style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            rect.bottom > visibleTop &&
+            rect.top < visibleBottom
+          );
+        }).length;
+        minimumVisibleRows = Math.min(minimumVisibleRows, visibleRows);
+        if (visibleRows === 0) {
+          blankFrames += 1;
+          blankFrameRatios.push(positionRatio);
+        }
+      }
+      const sorted = [...frameDurations].sort((left, right) => left - right);
+      const p95Index = Math.min(
+        sorted.length - 1,
+        Math.ceil(sorted.length * 0.95) - 1,
+      );
+      return {
+        container: segmentedTimeline
+          ? '#event-history-timeline-graph'
+          : container
+            ? '#content-wrapper'
+            : 'document',
+        distancePx: Math.max(
+          initialMaximumScroll,
+          scrollTarget.scrollHeight - scrollTarget.clientHeight,
+        ),
+        frames: frameDurations.length,
+        p95FrameMs: sorted[p95Index] ?? 0,
+        maximumFrameMs: Math.max(0, ...frameDurations),
+        slowFrames: frameDurations.filter((duration) => duration > 34).length,
+        blankFrames,
+        minimumVisibleRows: Number.isFinite(minimumVisibleRows)
+          ? minimumVisibleRows
+          : 0,
+        blankFrameRatios,
+      };
+    },
+    { dynamicFrames },
+  );
 
-const fulfillHistory = async (route: Route): Promise<void> => {
+const fulfillHistory = async (
+  route: Route,
+  targetFixture: TimelineStressFixture,
+): Promise<void> => {
   const url = new URL(route.request().url());
   const runId = url.searchParams.get('execution.runId');
   if (!runId) throw new Error(`History request has no run ID: ${url}`);
   const maximumPageSize = Number(
     url.searchParams.get('maximumPageSize') ?? 1_000,
   );
-  const page = fixture.historyPage(
+  const page = targetFixture.historyPage(
     runId,
     url.pathname.endsWith('/history-reverse') ? 'descending' : 'ascending',
     maximumPageSize,
@@ -285,6 +385,54 @@ const fulfillHistory = async (route: Route): Promise<void> => {
       archived: false,
     },
   });
+};
+
+const installFixtureRoutes = async (
+  page: Page,
+  targetFixture: TimelineStressFixture,
+  delayMs = 0,
+): Promise<void> => {
+  const delay = async (): Promise<void> => {
+    if (delayMs > 0) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs));
+    }
+  };
+  await page.route(
+    new RegExp(
+      `/api/v1/namespaces/[^/]+/workflows/${targetFixture.workflowId}/history(?:-reverse)?\\?`,
+    ),
+    async (route) => {
+      await delay();
+      await fulfillHistory(route, targetFixture);
+    },
+  );
+  await page.route(
+    new RegExp(
+      `/api/v1/namespaces/[^/]+/workflows/${targetFixture.workflowId}/latest-execution(?:\\?.*)?$`,
+    ),
+    async (route) => {
+      await delay();
+      await route.fulfill({
+        json: {
+          workflowId: targetFixture.workflowId,
+          runId: targetFixture.currentRunId,
+          firstExecutionRunId: targetFixture.firstRunId,
+        },
+      });
+    },
+  );
+  await page.route(
+    new RegExp(
+      `/api/v1/namespaces/[^/]+/workflows/${targetFixture.workflowId}(?:\\?.*)?$`,
+    ),
+    async (route) => {
+      await delay();
+      const url = new URL(route.request().url());
+      const runId =
+        url.searchParams.get('execution.runId') ?? targetFixture.currentRunId;
+      await route.fulfill({ json: targetFixture.workflowResponse(runId) });
+    },
+  );
 };
 
 const main = async (): Promise<void> => {
@@ -305,6 +453,11 @@ const main = async (): Promise<void> => {
   let breakpoint: LevelResult | null = null;
   let stoppedByGuard: string | null = null;
   let cpuProfilerRunning = false;
+  let layoutChurnScroll: ScrollStats | null = null;
+  const benchmarkWorkflowIds = [
+    fixture.workflowId,
+    scrollChurnFixture.workflowId,
+  ];
 
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
@@ -316,12 +469,24 @@ const main = async (): Promise<void> => {
     }
   });
   page.on('request', (request) => {
-    if (!request.url().includes(`/workflows/${fixture.workflowId}`)) return;
+    if (
+      !benchmarkWorkflowIds.some((workflowId) =>
+        request.url().includes(`/workflows/${workflowId}`),
+      )
+    ) {
+      return;
+    }
     activeApiRequests += 1;
     peakApiRequests = Math.max(peakApiRequests, activeApiRequests);
   });
   const finishRequest = (url: string) => {
-    if (!url.includes(`/workflows/${fixture.workflowId}`)) return;
+    if (
+      !benchmarkWorkflowIds.some((workflowId) =>
+        url.includes(`/workflows/${workflowId}`),
+      )
+    ) {
+      return;
+    }
     activeApiRequests = Math.max(0, activeApiRequests - 1);
   };
   page.on('requestfinished', (request) => finishRequest(request.url()));
@@ -333,37 +498,8 @@ const main = async (): Promise<void> => {
         json: { server_time: new Date().toISOString(), items: [] },
       });
     });
-    await page.route(
-      new RegExp(
-        `/api/v1/namespaces/[^/]+/workflows/${fixture.workflowId}/history(?:-reverse)?\\?`,
-      ),
-      fulfillHistory,
-    );
-    await page.route(
-      new RegExp(
-        `/api/v1/namespaces/[^/]+/workflows/${fixture.workflowId}/latest-execution(?:\\?.*)?$`,
-      ),
-      async (route) => {
-        await route.fulfill({
-          json: {
-            workflowId: fixture.workflowId,
-            runId: fixture.currentRunId,
-            firstExecutionRunId: fixture.firstRunId,
-          },
-        });
-      },
-    );
-    await page.route(
-      new RegExp(
-        `/api/v1/namespaces/[^/]+/workflows/${fixture.workflowId}(?:\\?.*)?$`,
-      ),
-      async (route) => {
-        const url = new URL(route.request().url());
-        const runId =
-          url.searchParams.get('execution.runId') ?? fixture.currentRunId;
-        await route.fulfill({ json: fixture.workflowResponse(runId) });
-      },
-    );
+    await installFixtureRoutes(page, fixture);
+    await installFixtureRoutes(page, scrollChurnFixture, 20);
     await page.addInitScript(() => {
       const longTasks: number[] = [];
       Object.defineProperty(window, '__timelineBreakpointLongTasks', {
@@ -378,6 +514,32 @@ const main = async (): Promise<void> => {
     const session = await context.newCDPSession(page);
     await session.send('Performance.enable');
     await session.send('HeapProfiler.enable');
+    const scrollChurnUrl = `${baseUrl}/namespaces/default/workflows/${scrollChurnFixture.workflowId}/${scrollChurnFixture.firstRunId}/timeline?follow_continues=on`;
+    await page.goto(scrollChurnUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 20_000,
+    });
+    await page
+      .getByRole('region', { name: 'Timeline' })
+      .waitFor({ timeout: 20_000 });
+    const scrollChurnFullDuration = page.getByTestId('timeline-full-duration');
+    await scrollChurnFullDuration.waitFor({
+      state: 'visible',
+      timeout: 20_000,
+    });
+    await waitForButtonEnabled(scrollChurnFullDuration, 20_000);
+    await scrollChurnFullDuration.click();
+    await page
+      .locator('#event-history-timeline-graph ul > li[data-timeline-entry-key]')
+      .first()
+      .waitFor({ state: 'visible', timeout: 20_000 });
+    layoutChurnScroll = await scrollBrowserWindow(page, {
+      dynamicFrames: 90,
+    });
+    console.log(
+      `live layout scroll | p95 ${layoutChurnScroll.p95FrameMs.toFixed(1)} ms | blank frames ${layoutChurnScroll.blankFrames}`,
+    );
+
     const timelineUrl = `${baseUrl}/namespaces/default/workflows/${fixture.workflowId}/${fixture.firstRunId}/timeline?follow_continues=on`;
     await page.goto(timelineUrl, {
       waitUntil: 'domcontentloaded',
@@ -386,13 +548,9 @@ const main = async (): Promise<void> => {
     await page
       .getByRole('region', { name: 'Timeline' })
       .waitFor({ timeout: 20_000 });
-    await page
-      .getByTestId('timeline-full-duration')
-      .waitFor({ state: 'visible', timeout: 20_000 });
-    await waitForButtonEnabled(
-      page.getByTestId('timeline-full-duration'),
-      20_000,
-    );
+    const fullDuration = page.getByTestId('timeline-full-duration');
+    await fullDuration.waitFor({ state: 'visible', timeout: 20_000 });
+    await waitForButtonEnabled(fullDuration, 20_000);
 
     const zoomIn = page.getByTestId('timeline-zoom-in');
     for (
@@ -411,7 +569,10 @@ const main = async (): Promise<void> => {
 
     const zoomOut = page.getByTestId('timeline-zoom-out');
     const durationLabel = page.getByTestId('timeline-window-duration');
-    if (quickPreset) {
+    if (massivePreset) {
+      await fullDuration.click();
+      await page.waitForTimeout(25);
+    } else if (quickPreset) {
       const timeline = page.getByRole('region', { name: 'Timeline' });
       for (let attempt = 0; attempt < 12; attempt += 1) {
         const durationMs = Number(
@@ -452,6 +613,9 @@ const main = async (): Promise<void> => {
             p95FrameMs: 0,
             maximumFrameMs: 0,
             slowFrames: 0,
+            blankFrames: 0,
+            minimumVisibleRows: 0,
+            blankFrameRatios: [],
           }
         : await scrollBrowserWindow(page);
       const longestTaskMs = await page.evaluate(() =>
@@ -495,6 +659,9 @@ const main = async (): Promise<void> => {
         breakpointReasons.push(
           `scroll frame p95 ${scroll.p95FrameMs.toFixed(1)} ms`,
         );
+      }
+      if (scroll.blankFrames > 0) {
+        breakpointReasons.push(`${scroll.blankFrames} blank scroll frames`);
       }
       if (longestTaskMs >= hardLongTaskLimitMs) {
         breakpointReasons.push(`long task ${longestTaskMs.toFixed(1)} ms`);
@@ -568,6 +735,11 @@ const main = async (): Promise<void> => {
         hardLongTaskLimitMs,
       },
       peakApiRequests,
+      layoutChurnScroll,
+      layoutChurnBreakpoint:
+        layoutChurnScroll && layoutChurnScroll.blankFrames > 0
+          ? `${layoutChurnScroll.blankFrames} blank scroll frames`
+          : null,
       firstDegraded,
       breakpoint,
       stoppedByGuard,

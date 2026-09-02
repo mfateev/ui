@@ -6,6 +6,23 @@ import type { TimelineGroupEntry } from './timeline-run-entries';
 const time = (value: EventGroup['initialEvent']['eventTime']): number =>
   value ? validTimeToDate(value).getTime() : 0;
 
+const groupTimes = (
+  group: TimelineGroupEntry['group'],
+): { startTimeMs: number; lastTimeMs: number } => {
+  if (
+    'startTimeMs' in group &&
+    'lastTimeMs' in group &&
+    typeof group.startTimeMs === 'number' &&
+    typeof group.lastTimeMs === 'number'
+  ) {
+    return { startTimeMs: group.startTimeMs, lastTimeMs: group.lastTimeMs };
+  }
+  const points = 'eventPoints' in group ? group.eventPoints : undefined;
+  const startTimeMs = points?.[0]?.timeMs ?? time(group.initialEvent.eventTime);
+  const lastTimeMs = points?.at(-1)?.timeMs ?? time(group.lastEvent.eventTime);
+  return { startTimeMs, lastTimeMs: lastTimeMs || startTimeMs };
+};
+
 type PendingInterval = {
   ordinal: number;
   startTimeMs: number;
@@ -32,8 +49,7 @@ export class TimelineEntryWindowIndex {
     for (let ordinal = 0; ordinal < entries.length; ordinal += 1) {
       const entry = entries[ordinal];
       const group = entry.group;
-      const startTimeMs = time(group.initialEvent.eventTime);
-      const lastTimeMs = time(group.lastEvent.eventTime) || startTimeMs;
+      const { startTimeMs, lastTimeMs } = groupTimes(group);
       const groupIsPending = group.isPending;
       if (entry.active && groupIsPending) {
         pending.push({ ordinal, startTimeMs, lastTimeMs });
@@ -84,10 +100,16 @@ export class TimelineEntryWindowIndex {
   } {
     const endIndex = this.firstStartAfter(endTimeMs);
     const startIndex = this.firstPrefixEndAtOrAfter(startTimeMs, endIndex);
+    const matchingEntries: TimelineGroupEntry[] = [];
     const matchingOrdinals: number[] = [];
     for (let index = startIndex; index < endIndex; index += 1) {
       if (this.endTimes[index] >= startTimeMs) {
-        matchingOrdinals.push(this.ordinals[index]);
+        const ordinal = this.ordinals[index];
+        if (this.preservesInputOrder) {
+          matchingEntries.push(this.entries[ordinal]);
+        } else {
+          matchingOrdinals.push(ordinal);
+        }
       }
     }
     for (const interval of this.pending) {
@@ -100,9 +122,12 @@ export class TimelineEntryWindowIndex {
     }
     if (!this.preservesInputOrder) {
       matchingOrdinals.sort((left, right) => left - right);
+      for (const ordinal of matchingOrdinals) {
+        matchingEntries.push(this.entries[ordinal]);
+      }
     }
     return {
-      entries: matchingOrdinals.map((ordinal) => this.entries[ordinal]),
+      entries: matchingEntries,
       visitedNodes: Math.max(0, endIndex - startIndex),
       pendingVisited: this.pending.length,
     };

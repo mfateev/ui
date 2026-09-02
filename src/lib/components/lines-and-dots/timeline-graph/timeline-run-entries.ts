@@ -1,10 +1,8 @@
-import type { EventGroup } from '$lib/models/event-groups/event-groups';
 import { allEventTypeOptions } from '$lib/models/event-history/get-event-categorization';
 import type {
   TimelineGroup,
   TimelineRun,
 } from '$lib/services/chain-workflow-session';
-import type { LazyGroup } from '$lib/services/grouped-event-buffer';
 import type { EventTypeCategory } from '$lib/types/events';
 import { getFailedOrPendingGroups } from '$lib/utilities/get-failed-or-pending';
 
@@ -60,20 +58,4 @@ export function filterTimelineGroupEntriesByStatus(
     ),
   );
   return entries.filter((entry) => matchingGroups.has(entry.group));
-}
-
-export function getTimelineEntryMaps(entries: TimelineGroupEntry[]): {
-  entryByGroup: Map<EventGroup | LazyGroup, TimelineGroupEntry>;
-  keyByGroup: Map<EventGroup | LazyGroup, string>;
-} {
-  const entryByGroup = new Map<EventGroup | LazyGroup, TimelineGroupEntry>();
-  const keyByGroup = new Map<EventGroup | LazyGroup, string>();
-  for (const entry of entries) {
-    entryByGroup.set(entry.group, entry);
-    keyByGroup.set(entry.group, entry.timelineKey);
-  }
-  return {
-    entryByGroup,
-    keyByGroup,
-  };
 }

@@ -271,7 +271,7 @@ export class TimelineIntervalLoader {
             publishState(runState);
             return;
           }
-          const buffer = createGroupedEventBuffer();
+          const buffer = createGroupedEventBuffer({ formatTimestamps: false });
           buffer.reset(Number(workflow.historyEvents) || 0);
           for (const event of ascending) buffer.ingestHistoryEvent(event);
           for (const event of descending) buffer.ingestHistoryEvent(event);

@@ -303,6 +303,7 @@ export class BufferTimelineRunModel implements TimelineRunModel {
   }
 
   get statistics(): TimelineRunModelStatistics {
+    const runtimeStringBytes = (value: string): number => value.length * 2;
     let eventCount = 0;
     let estimatedBytes = 0;
     for (const group of this.lazyGroups()) {
@@ -311,15 +312,15 @@ export class BufferTimelineRunModel implements TimelineRunModel {
       // not build TimelineGroupSummary objects just to measure their strings.
       estimatedBytes +=
         64 +
-        estimateStringBytes(group.id) +
-        estimateStringBytes(group.initialEvent.eventType) * 2 +
-        (group.eventPoints?.length ?? 1) * 24;
+        runtimeStringBytes(group.id) +
+        runtimeStringBytes(group.initialEvent.eventType) * 2 +
+        group.eventCount * 24;
       if (group.childWorkflow) {
-        estimatedBytes += estimateStringBytes(
+        estimatedBytes += runtimeStringBytes(
           group.childWorkflow.namespace ?? this.namespace,
         );
-        estimatedBytes += estimateStringBytes(group.childWorkflow.workflowId);
-        estimatedBytes += estimateStringBytes(group.childWorkflow.runId);
+        estimatedBytes += runtimeStringBytes(group.childWorkflow.workflowId);
+        estimatedBytes += runtimeStringBytes(group.childWorkflow.runId);
       }
     }
     return { eventCount, estimatedBytes };

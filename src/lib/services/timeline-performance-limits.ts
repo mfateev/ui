@@ -15,12 +15,12 @@ export const DEFAULT_TIMELINE_PERFORMANCE_LIMITS: TimelinePerformanceLimits = {
   successorDiscoveryRuns: 10_000,
   intervalRunJobs: 4,
   intervalHttpRequests: 8,
-  intervalRuns: 200,
-  intervalGroups: 100_000,
-  intervalEvents: 250_000,
-  intervalBytes: 32 * 1024 * 1024,
-  intervalCacheRuns: 32,
-  intervalCacheBytes: 64 * 1024 * 1024,
+  intervalRuns: 256,
+  intervalGroups: 550_000,
+  intervalEvents: 650_000,
+  intervalBytes: 128 * 1024 * 1024,
+  intervalCacheRuns: 256,
+  intervalCacheBytes: 128 * 1024 * 1024,
   detailCacheBytes: 16 * 1024 * 1024,
 };
 

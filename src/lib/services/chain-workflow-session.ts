@@ -13,6 +13,7 @@ export type ChainTransition = 'continue-as-new' | 'retry' | 'reset' | 'cron';
 export type TimelineGroup = {
   timelineKey: string;
   runId: string;
+  ordinal?: number;
   group: EventGroup | LazyGroup;
   materialize?: (group: EventGroup | LazyGroup) => EventGroup;
   active?: boolean;
@@ -131,9 +132,10 @@ export const toTimelineGroups = (
   materialize: (group: EventGroup | LazyGroup) => EventGroup = materializeGroup,
   context?: { active: boolean; runEndTimeMs: number },
 ): TimelineGroup[] =>
-  groups.map((group) => ({
+  groups.map((group, ordinal) => ({
     timelineKey: timelineKey(runId, group.id),
     runId,
+    ordinal,
     group,
     materialize,
     ...context,

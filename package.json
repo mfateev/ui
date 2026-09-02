@@ -42,6 +42,7 @@
     "perf:events": "esno scripts/perf-events.ts",
     "perf:timeline": "node scripts/benchmark-timeline.mjs",
     "perf:timeline:breakpoint": "esno scripts/benchmark-timeline-breakpoint.ts",
+    "perf:timeline:500k": "TIMELINE_BREAKPOINT_PRESET=massive esno scripts/benchmark-timeline-breakpoint.ts",
     "perf:timeline:quick": "TIMELINE_BREAKPOINT_PRESET=quick esno scripts/benchmark-timeline-breakpoint.ts",
     "test:ui": "TZ=UTC vitest --ui",
     "test:coverage": "TZ=UTC vitest run --coverage",

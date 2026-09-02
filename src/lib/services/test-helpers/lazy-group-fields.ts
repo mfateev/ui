@@ -21,6 +21,8 @@ export const SHARED_WITH_EVENT_GROUP = {
   pendingActivity: true,
   pendingNexusOperation: true,
   eventPoints: false,
+  startTimeMs: false,
+  lastTimeMs: false,
   activityStartedTimeMs: false,
   activityAttempt: false,
   childWorkflow: false,

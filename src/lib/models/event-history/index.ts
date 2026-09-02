@@ -64,11 +64,15 @@ export const toEvent = (
   options: {
     shouldNotAddBillableAction?: (event: WorkflowEvent) => boolean;
     processedWorkflowTaskIds?: Set<string>;
+    formatTimestamp?: boolean;
   } = {},
 ): WorkflowEvent => {
   const id = String(historyEvent.eventId);
   const eventType = toEventNameReadable(historyEvent.eventType);
-  const timestamp = formatDate(String(historyEvent.eventTime));
+  const timestamp =
+    options.formatTimestamp === false
+      ? ''
+      : formatDate(String(historyEvent.eventTime));
   const classification = getEventClassification(eventType);
   const category = getEventCategory(eventType);
 

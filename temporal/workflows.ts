@@ -216,6 +216,58 @@ export async function BatchedContinueAsNewWorkflow(
   );
 }
 
+export interface ThousandActivitiesContinueAsNewResult {
+  activityExecutions: number;
+  continueAsNewCalls: number;
+  runs: number;
+}
+
+export async function ThousandActivitiesContinueAsNewWorkflow(
+  activitiesPerRun = 1_000,
+  remainingContinueAsNewCalls = 10,
+  runNumber = 1,
+  batchSize = 100,
+): Promise<ThousandActivitiesContinueAsNewResult> {
+  const activityCount = Math.max(0, Math.floor(activitiesPerRun));
+  const activityBatchSize = Math.max(1, Math.floor(batchSize));
+
+  for (
+    let batchStart = 0;
+    batchStart < activityCount;
+    batchStart += activityBatchSize
+  ) {
+    const batchEnd = Math.min(batchStart + activityBatchSize, activityCount);
+    await Promise.all(
+      Array.from({ length: batchEnd - batchStart }, (_, offset) => {
+        const activityNumber = batchStart + offset + 1;
+        return double.executeWithOptions(
+          {
+            summary: `Run ${runNumber}: activity ${activityNumber} of ${activityCount}`,
+          },
+          [activityNumber],
+        );
+      }),
+    );
+  }
+
+  if (remainingContinueAsNewCalls > 0) {
+    return await workflow.continueAsNew<
+      typeof ThousandActivitiesContinueAsNewWorkflow
+    >(
+      activityCount,
+      remainingContinueAsNewCalls - 1,
+      runNumber + 1,
+      activityBatchSize,
+    );
+  }
+
+  return {
+    activityExecutions: activityCount * runNumber,
+    continueAsNewCalls: runNumber - 1,
+    runs: runNumber,
+  };
+}
+
 const runThreeDemoActivities = async (label: string): Promise<number> => {
   let result = 2;
   for (let activity = 1; activity <= 3; activity++) {

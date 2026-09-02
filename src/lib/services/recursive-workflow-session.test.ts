@@ -457,7 +457,7 @@ describe('RecursiveWorkflowSession', () => {
     session.dispose();
   });
 
-  it('evicts an off-screen child before truncating a visible child', async () => {
+  it('keeps a resolved child and publishes a stable limit row for the next child', async () => {
     const loader = vi.fn(
       ({ reference }: Parameters<typeof loadChildWorkflow>[0]) =>
         Promise.resolve(loaded(reference.workflowId)),
@@ -475,15 +475,13 @@ describe('RecursiveWorkflowSession', () => {
     session.observeEdges([firstEdge.key]);
     await vi.waitFor(() => expect(firstEdge.load.state).toBe('loaded'));
 
-    session.observeEdges([secondEdge.key]);
-
-    await vi.waitFor(() => expect(secondEdge.load.state).toBe('loaded'));
-    expect(firstEdge.load.state).toBe('evicted');
-    expect(loader).toHaveBeenCalledTimes(2);
+    expect(secondEdge.load.state).toBe('truncated');
+    expect(firstEdge.load.state).toBe('loaded');
+    expect(loader).toHaveBeenCalledTimes(1);
     session.dispose();
   });
 
-  it('cancels an off-screen load before reserving its replacement', async () => {
+  it('does not cancel topology work when another edge becomes visible', async () => {
     const loader = vi.fn(
       ({ reference, signal }: Parameters<typeof loadChildWorkflow>[0]) =>
         new Promise<LoadedChildWorkflow>((resolve, reject) => {
@@ -520,9 +518,9 @@ describe('RecursiveWorkflowSession', () => {
 
     session.observeEdges([secondEdge.key]);
 
-    await vi.waitFor(() => expect(secondEdge.load.state).toBe('loaded'));
-    expect(firstEdge.load.state).toBe('idle');
-    expect(loader).toHaveBeenCalledTimes(2);
+    expect(secondEdge.load.state).toBe('truncated');
+    expect(firstEdge.load.state).toBe('loading');
+    expect(loader).toHaveBeenCalledTimes(1);
     session.dispose();
   });
 

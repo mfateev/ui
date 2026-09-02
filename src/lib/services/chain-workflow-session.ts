@@ -26,8 +26,23 @@ export type TimelineRun = {
   startTimeMs: number;
   endTimeMs: number;
   groups: TimelineGroup[];
+  /** Number of rendered event points represented by this run's groups. */
+  pointCount?: number;
+  /**
+   * Precompiled subset used by recursive topology discovery. Sealed histories
+   * provide this so publishing a scene never has to rescan every timeline row.
+   * Mutable/legacy runs may omit it and retain the conservative full scan.
+   */
+  topologyGroups?: readonly TimelineGroup[];
+  /** Merged non-zero group intervals used by the collapsed-time scale. */
+  activeTimeRanges?: readonly TimelineActiveTimeRange[];
   active: boolean;
   successorRunId?: string;
+};
+
+export type TimelineActiveTimeRange = {
+  startTimeMs: number;
+  endTimeMs: number;
 };
 
 export const getRenderableTimelineRuns = ({

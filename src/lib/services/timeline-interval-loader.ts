@@ -1,7 +1,12 @@
+import { toEventHistory } from '$lib/models/event-history';
 import type { HistoryEvent } from '$lib/types/events';
 import type { WorkflowExecution } from '$lib/types/workflows';
 
-import { fetchPartialRawEventsOrThrow } from './events-service';
+import { getClosureFromEvents } from './chain-workflow-session';
+import {
+  type CompleteRawHistory,
+  fetchCompleteRawHistoryOrThrow,
+} from './events-service';
 import { createGroupedEventBuffer } from './grouped-event-buffer';
 import {
   DEFAULT_TIMELINE_PERFORMANCE_LIMITS,
@@ -10,7 +15,10 @@ import {
 } from './timeline-performance-limits';
 import {
   BufferTimelineRunModel,
+  type CompleteHistoryIdentity,
   estimateTimelineModelBytes,
+  getTimelineModelSession,
+  SealedTimelineRunModel,
   TimelineDetailCache,
   type TimelineRunModel,
   TimelineRunModelCache,
@@ -48,6 +56,110 @@ type FetchEdge = (
   sort: 'ascending' | 'descending',
   signal: AbortSignal,
 ) => Promise<HistoryEvent[]>;
+type FetchHistory = (
+  runId: string,
+  signal: AbortSignal,
+  onPage?: (loadedEventIds: number, pages: number) => void,
+) => Promise<CompleteRawHistory>;
+
+export type TimelineHistoryLoadCounters = {
+  historyPages: number;
+  loadedEventIds: number;
+  gaps: number;
+  completenessChecks: number;
+  rejectedSealAttempts: number;
+  sealedRunCompilations: number;
+  sealedModelCacheHits: number;
+  sealedModelCacheMisses: number;
+};
+
+const createCounters = (): TimelineHistoryLoadCounters => ({
+  historyPages: 0,
+  loadedEventIds: 0,
+  gaps: 0,
+  completenessChecks: 0,
+  rejectedSealAttempts: 0,
+  sealedRunCompilations: 0,
+  sealedModelCacheHits: 0,
+  sealedModelCacheMisses: 0,
+});
+
+const closeTimeMs = (workflow: WorkflowExecution): number =>
+  Date.parse(workflow.endTime);
+
+const isClosed = (workflow: WorkflowExecution): boolean =>
+  workflow.status !== null &&
+  workflow.status !== 'Running' &&
+  workflow.status !== 'Paused';
+
+export const completeHistoryIdentity = ({
+  namespace,
+  workflowId,
+  workflow,
+}: {
+  namespace: string;
+  workflowId: string;
+  workflow: WorkflowExecution;
+}): CompleteHistoryIdentity | undefined => {
+  const historyLength = Number(workflow.historyEvents);
+  const authoritativeCloseTimeMs = closeTimeMs(workflow);
+  if (
+    !isClosed(workflow) ||
+    !Number.isSafeInteger(historyLength) ||
+    historyLength < 1 ||
+    !Number.isFinite(authoritativeCloseTimeMs)
+  ) {
+    return undefined;
+  }
+  return {
+    namespace,
+    workflowId,
+    runId: workflow.runId,
+    closeTimeMs: authoritativeCloseTimeMs,
+    historyLength,
+  };
+};
+
+export const verifyCompleteClosedHistory = ({
+  initial,
+  final,
+  history,
+}: {
+  initial: WorkflowExecution;
+  final: WorkflowExecution;
+  history: CompleteRawHistory;
+}): { complete: boolean; gaps: number; reason?: string } => {
+  const expected = Number(initial.historyEvents);
+  if (
+    initial.runId !== final.runId ||
+    initial.status !== final.status ||
+    initial.historyEvents !== final.historyEvents ||
+    closeTimeMs(initial) !== closeTimeMs(final)
+  ) {
+    return { complete: false, gaps: 0, reason: 'snapshot-changed' };
+  }
+  if (!isClosed(final)) {
+    return { complete: false, gaps: 0, reason: 'run-is-live' };
+  }
+  const ids = history.events.map((event) => Number(event.eventId));
+  const idSet = new Set(ids);
+  let gaps = 0;
+  for (let expectedId = 1; expectedId <= expected; expectedId += 1) {
+    if (!idSet.has(expectedId)) gaps += 1;
+  }
+  if (history.kind !== 'complete' || ids.length !== expected || gaps > 0) {
+    return { complete: false, gaps, reason: 'incomplete-history' };
+  }
+  const closure = getClosureFromEvents(toEventHistory(history.events));
+  if (
+    !closure ||
+    closure.status !== final.status ||
+    closure.endTimeMs !== closeTimeMs(final)
+  ) {
+    return { complete: false, gaps, reason: 'close-event-mismatch' };
+  }
+  return { complete: true, gaps };
+};
 
 export const selectTimelineIntervalRuns = ({
   runs,
@@ -113,27 +225,37 @@ export class TimelineIntervalLoader {
   readonly modelCache: TimelineRunModelCache;
   private generation = 0;
   private controller: AbortController | null = null;
+  private activeModelReleases: (() => void)[] = [];
+  readonly counters: TimelineHistoryLoadCounters = createCounters();
 
   constructor(
     private readonly limits: TimelinePerformanceLimits = DEFAULT_TIMELINE_PERFORMANCE_LIMITS,
+    session?: {
+      detailCache: TimelineDetailCache;
+      modelCache: TimelineRunModelCache;
+    },
   ) {
-    this.detailCache = new TimelineDetailCache(limits.detailCacheBytes);
-    this.modelCache = new TimelineRunModelCache(
-      limits.intervalCacheRuns,
-      limits.intervalCacheBytes,
-    );
+    const resolvedSession =
+      session ??
+      getTimelineModelSession({
+        maximumEntries: limits.intervalCacheRuns,
+        maximumModelBytes: limits.intervalCacheBytes,
+        maximumDetailBytes: limits.detailCacheBytes,
+      });
+    this.detailCache = resolvedSession.detailCache;
+    this.modelCache = resolvedSession.modelCache;
   }
 
   abort(): void {
     this.generation += 1;
     this.controller?.abort();
     this.controller = null;
+    for (const release of this.activeModelReleases) release();
+    this.activeModelReleases = [];
   }
 
   dispose(): void {
     this.abort();
-    this.modelCache.clear();
-    this.detailCache.clear();
   }
 
   async load({
@@ -146,6 +268,7 @@ export class TimelineIntervalLoader {
     onModel,
     describeRun,
     fetchEdge,
+    fetchHistory,
   }: {
     namespace: string;
     workflowId: string;
@@ -156,6 +279,7 @@ export class TimelineIntervalLoader {
     onModel?: (model: TimelineRunModel, generation: number) => void;
     describeRun?: DescribeRun;
     fetchEdge?: FetchEdge;
+    fetchHistory?: FetchHistory;
   }): Promise<TimelineIntervalLoadResult> {
     this.abort();
     const generation = this.generation;
@@ -177,17 +301,37 @@ export class TimelineIntervalLoader {
         if (!workflow) throw new Error('The workflow run was not found.');
         return workflow;
       });
-    const edge: FetchEdge =
-      fetchEdge ??
-      ((runId, sort, signal) =>
-        fetchPartialRawEventsOrThrow({
-          namespace,
-          workflowId,
-          runId,
-          sort,
-          maximumPageSize: '1000',
-          signal,
-        }));
+    const history: FetchHistory =
+      fetchHistory ??
+      (fetchEdge
+        ? async (runId, signal) => {
+            const [ascending, descending] = await Promise.all([
+              fetchEdge(runId, 'ascending', signal),
+              fetchEdge(runId, 'descending', signal),
+            ]);
+            const byId = new Map<number, HistoryEvent>();
+            for (const event of [...ascending, ...descending]) {
+              byId.set(Number(event.eventId), event);
+            }
+            return {
+              kind: 'complete',
+              events: [...byId]
+                .sort(([left], [right]) => left - right)
+                .map(([, event]) => event),
+              pages: 2,
+              duplicateEventIds:
+                ascending.length + descending.length - byId.size,
+            };
+          }
+        : (runId, signal, onPage) =>
+            fetchCompleteRawHistoryOrThrow({
+              namespace,
+              workflowId,
+              runId,
+              maximumPageSize: '1000',
+              signal,
+              onPage,
+            }));
 
     const selection = selectTimelineIntervalRuns({
       runs,
@@ -227,64 +371,90 @@ export class TimelineIntervalLoader {
         if (!isCurrent()) return;
         runState.state = 'loading';
         publishState(runState);
-        const baseCacheKey = `${namespace}:${workflowId}:${runState.run.runId}`;
-        const overviewIsClosed =
-          runState.run.status !== 'Running' && runState.run.status !== 'Paused';
-        const cached = overviewIsClosed
-          ? this.modelCache.get(baseCacheKey)
-          : undefined;
-        if (cached) {
-          runState.state = 'ready';
-          if (isCurrent()) {
-            models.push(cached);
-            onModel?.(cached, generation);
-            publishState(runState);
-          }
-          return;
-        }
-
         try {
-          const [workflow, ascending, descending] = await Promise.all([
-            http.run(
-              () => describe(runState.run.runId, controller.signal),
-              controller.signal,
-            ),
-            http.run(
-              () => edge(runState.run.runId, 'ascending', controller.signal),
-              controller.signal,
-            ),
-            http.run(
-              () => edge(runState.run.runId, 'descending', controller.signal),
-              controller.signal,
-            ),
-          ]);
+          const initialWorkflow = await http.run(
+            () => describe(runState.run.runId, controller.signal),
+            controller.signal,
+          );
           if (!isCurrent()) return;
-          const resolvedCacheKey =
-            workflow.status === 'Running' || workflow.status === 'Paused'
-              ? `${baseCacheKey}:${workflow.historyEvents ?? '0'}`
-              : baseCacheKey;
-          const resolvedCached = this.modelCache.get(resolvedCacheKey);
+          const identity = completeHistoryIdentity({
+            namespace,
+            workflowId,
+            workflow: initialWorkflow,
+          });
+          if (identity) this.modelCache.invalidateRunSnapshot(identity);
+          const resolvedCached = identity
+            ? this.modelCache.get(identity)
+            : undefined;
           if (resolvedCached) {
+            this.counters.sealedModelCacheHits += 1;
             runState.state = 'ready';
+            this.activeModelReleases.push(resolvedCached.retain());
             models.push(resolvedCached);
             onModel?.(resolvedCached, generation);
             publishState(runState);
             return;
           }
+          if (identity) this.counters.sealedModelCacheMisses += 1;
+          const loadedHistory = await http.run(
+            () => history(runState.run.runId, controller.signal),
+            controller.signal,
+          );
+          const finalWorkflow = await http.run(
+            () => describe(runState.run.runId, controller.signal),
+            controller.signal,
+          );
+          if (!isCurrent()) return;
+          this.counters.historyPages += loadedHistory.pages;
+          this.counters.loadedEventIds += loadedHistory.events.length;
           const buffer = createGroupedEventBuffer({ formatTimestamps: false });
-          buffer.reset(Number(workflow.historyEvents) || 0);
-          for (const event of ascending) buffer.ingestHistoryEvent(event);
-          for (const event of descending) buffer.ingestHistoryEvent(event);
-          const model = new BufferTimelineRunModel(
-            {
-              ...runState.run,
-              status: workflow.status,
-            },
+          buffer.reset(Number(finalWorkflow.historyEvents) || 0);
+          for (const event of loadedHistory.events) {
+            buffer.ingestHistoryEvent(event);
+          }
+          const resolvedRun = {
+            ...runState.run,
+            status: finalWorkflow.status,
+          };
+          let model: TimelineRunModel;
+          const finalIdentity = completeHistoryIdentity({
             namespace,
             workflowId,
-            buffer,
-            this.detailCache,
-          );
+            workflow: finalWorkflow,
+          });
+          if (identity && finalIdentity) {
+            this.counters.completenessChecks += 1;
+            const verification = verifyCompleteClosedHistory({
+              initial: initialWorkflow,
+              final: finalWorkflow,
+              history: loadedHistory,
+            });
+            this.counters.gaps += verification.gaps;
+            if (!verification.complete) {
+              this.counters.rejectedSealAttempts += 1;
+              buffer.reset(0);
+              throw new Error(
+                `Closed workflow history could not be sealed: ${verification.reason}.`,
+              );
+            }
+            model = await SealedTimelineRunModel.fromBufferCooperatively({
+              identity: finalIdentity,
+              run: resolvedRun,
+              namespace,
+              buffer,
+              detailCache: this.detailCache,
+              signal: controller.signal,
+            });
+            this.counters.sealedRunCompilations += 1;
+          } else {
+            model = new BufferTimelineRunModel(
+              resolvedRun,
+              namespace,
+              workflowId,
+              buffer,
+              this.detailCache,
+            );
+          }
           const modelGroups = model.groupCount;
           const statistics = model.statistics;
           let modelEvents = statistics?.eventCount ?? 0;
@@ -324,7 +494,10 @@ export class TimelineIntervalLoader {
           groups += modelGroups;
           events += modelEvents;
           bytes += modelBytes;
-          this.modelCache.set(resolvedCacheKey, model, modelBytes);
+          if (model instanceof SealedTimelineRunModel && finalIdentity) {
+            this.modelCache.set(finalIdentity, model, modelBytes);
+          }
+          this.activeModelReleases.push(model.retain());
           runState.state = 'ready';
           if (isCurrent()) {
             models.push(model);

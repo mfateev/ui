@@ -48,9 +48,14 @@ const model = (summaries: TimelineGroupSummary[]): TimelineRunModel => ({
     endTimeMs: 1,
   },
   revision: 1,
+  sealed: false,
   groupCount: summaries.length,
   groupAt: (ordinal) => summaries[ordinal],
   groups: (start, end) => summaries.slice(start, end),
+  presentationGroups: () => [],
+  materializePresentationGroup: () => {
+    throw new Error('not used');
+  },
   loadDetails: async () => {
     throw new Error('not used');
   },
@@ -98,6 +103,14 @@ describe('TimelineIntervalIndex', () => {
 });
 
 describe('TimelineVisibilityBitset', () => {
+  it('constructs a full mask without exposing trailing bits', () => {
+    const all = TimelineVisibilityBitset.all(65);
+    expect(all.count).toBe(65);
+    expect(all.rank(65)).toBe(65);
+    expect(all.select(64)).toBe(64);
+    expect(all.select(65)).toBeUndefined();
+  });
+
   it('supports word-wise intersection, rank, and select', () => {
     const left = new TimelineVisibilityBitset(200);
     const right = new TimelineVisibilityBitset(200);

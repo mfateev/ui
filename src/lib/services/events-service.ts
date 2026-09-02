@@ -218,6 +218,81 @@ export const fetchPartialRawEventsOrThrow = async ({
   return response?.history?.events ?? [];
 };
 
+export type CompleteRawHistory = {
+  kind: 'complete';
+  events: HistoryEvent[];
+  pages: number;
+  duplicateEventIds: number;
+};
+
+export type EdgeRawHistoryPreview = {
+  kind: 'edge-preview';
+  events: HistoryEvent[];
+  pages: number;
+};
+
+export const fetchCompleteRawHistoryOrThrow = async ({
+  namespace,
+  workflowId,
+  runId,
+  maximumPageSize = '1000',
+  signal,
+  request = fetch,
+  onPage,
+}: FetchEventsParameters & {
+  request?: typeof fetch;
+  onPage?: (loadedEventIds: number, pages: number) => void;
+}): Promise<CompleteRawHistory> => {
+  const route = routeForApi('events.ascending', { namespace, workflowId });
+  const eventsById = new Map<number, HistoryEvent>();
+  let token: string | undefined;
+  let pages = 0;
+  let duplicateEventIds = 0;
+  const seenTokens = new Set<string>();
+
+  do {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const response = await requestFromAPI<GetWorkflowExecutionHistoryResponse>(
+      route,
+      {
+        token: token as string,
+        request,
+        params: {
+          maximumPageSize,
+          'execution.runId': runId,
+          waitNewEvent: 'false',
+        },
+        options: { signal },
+      },
+    );
+    pages += 1;
+    for (const event of response?.history?.events ?? []) {
+      const eventId = Number(event.eventId);
+      if (!Number.isSafeInteger(eventId) || eventId < 1) continue;
+      if (eventsById.has(eventId)) duplicateEventIds += 1;
+      else eventsById.set(eventId, event);
+    }
+    onPage?.(eventsById.size, pages);
+    const nextToken = response?.nextPageToken as unknown as string | undefined;
+    if (nextToken && seenTokens.has(nextToken)) {
+      throw new Error(
+        'History pagination repeated a page token before reaching a terminal page.',
+      );
+    }
+    if (nextToken) seenTokens.add(nextToken);
+    token = nextToken;
+  } while (token);
+
+  return {
+    kind: 'complete',
+    events: [...eventsById]
+      .sort(([left], [right]) => left - right)
+      .map(([, event]) => event),
+    pages,
+    duplicateEventIds,
+  };
+};
+
 type PaginatedEventParams = {
   namespace: string;
   workflowId: string;

@@ -88,6 +88,12 @@
   const isLivePending = $derived(active && group.isPending);
   const pendingActivity = $derived(active ? group?.pendingActivity : undefined);
   const materializedGroup = $derived('eventList' in group ? group : undefined);
+  const compiledDisplayName = $derived(
+    'timelineDisplayName' in group ? group.timelineDisplayName : undefined,
+  );
+  const compiledTimelineCategory = $derived(
+    'timelineCategory' in group ? group.timelineCategory : undefined,
+  );
   const lazyEventPoints = $derived(
     'eventPoints' in group ? group.eventPoints : undefined,
   );
@@ -95,7 +101,8 @@
     'activityAttempt' in group ? group.activityAttempt : undefined,
   );
   const displayName = $derived(
-    materializedGroup?.displayName ??
+    compiledDisplayName ??
+      materializedGroup?.displayName ??
       getEventGroupDisplayName(group.initialEvent as never),
   );
 
@@ -116,6 +123,15 @@
   let decodedLocalActivity: SummaryAttribute | undefined =
     $state.raw(undefined);
   let labelWidth = $state(0);
+  const measureLabel = (element: HTMLElement) => {
+    const observer = new ResizeObserver(([entry]) => {
+      const width =
+        entry.borderBoxSize[0]?.inlineSize ?? entry.contentRect.width;
+      labelWidth = Math.round(width);
+    });
+    observer.observe(element);
+    return { destroy: () => observer.disconnect() };
+  };
 
   // Keyed on group (not onMount) so it re-runs on pooled re-point; reuses a
   // value already decoded onto the group, otherwise decodes once.
@@ -249,7 +265,8 @@
   const retried = $derived(retryAttempt > 1);
 
   const effectiveCategory = $derived(
-    resolveSystemNexusEvent(group.initialEvent)?.timelineCategory ??
+    compiledTimelineCategory ??
+      resolveSystemNexusEvent(group.initialEvent)?.timelineCategory ??
       group.category,
   );
 
@@ -342,6 +359,57 @@
   </div>
 {/snippet}
 
+{#snippet label(decodedValue: string, spanLeft: number)}
+  {@const iconName =
+    (pendingActivity && !pendingActivity.paused) || retried
+      ? 'retry'
+      : undefined}
+  {@const clampedLabelMaxWidth = Math.max(
+    0,
+    canvasWidth - 2 * (GUTTER + 1.5 * RADIUS),
+  )}
+  {@const clampedLabelLeft = `clamp(calc(${GUTTER + 1.5 * RADIUS - spanLeft}px + var(--timeline-frame-offset, 0px)), ${labelTextPositionX - spanLeft - (textAnchor === 'end' ? labelWidth : 0)}px, calc(${canvasWidth - GUTTER - 1.5 * RADIUS - labelWidth - spanLeft}px + var(--timeline-frame-offset, 0px)))`}
+  <div
+    class="pointer-events-auto absolute z-10 flex select-none items-center gap-1 whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none {textAnchor ===
+    'end'
+      ? `${shouldClampLabel ? '' : '-translate-x-full'} -translate-y-1/2 flex-row-reverse`
+      : '-translate-y-1/2'}"
+    class:timeline-running-label={hasVisiblePendingConnector}
+    class:timeline-clamped-label={shouldClampLabel}
+    class:overflow-hidden={shouldClampLabel}
+    style:left={shouldClampLabel
+      ? clampedLabelLeft
+      : `${labelTextPositionX - spanLeft}px`}
+    style:top="{spanCy}px"
+    style:max-width={shouldClampLabel ? `${clampedLabelMaxWidth}px` : undefined}
+    use:measureLabel
+  >
+    {#if iconName}
+      <svg
+        class="h-[var(--dot)] w-[var(--dot)] shrink-0 rounded-full p-[3px] text-current"
+        viewBox="0 0 16 16"
+      >
+        <use href="#ti-{iconName}" />
+      </svg>
+    {/if}
+    <span
+      class="inline-flex min-h-[var(--dot)] min-w-0 items-center overflow-hidden text-ellipsis rounded-full text-current"
+    >
+      {#if pendingActivity}
+        {translate('workflows.attempt')}
+        {pendingActivity.attempt} / {pendingActivity.maximumAttempts || '∞'}
+        •&nbsp;{decodedValue}
+      {:else if retried}
+        {retryAttempt} • {decodedValue}
+      {:else if decodedLocalActivity}
+        {decodedLocalActivity.value}
+      {:else}
+        {decodedValue}
+      {/if}
+    </span>
+  </div>
+{/snippet}
+
 <div class="absolute inset-0">
   {#if rowGeometry.hitRange}
     {@const spanLeft = rowGeometry.hitRange.startPx}
@@ -422,69 +490,23 @@
       <!-- Inside the button so hovering/clicking the label hits the same target;
          positioned button-local (offset by spanLeft), may overflow the box. -->
       {#if labelVisible}
-        <PayloadSummary
-          value={materializedGroup?.userMetadata?.summary}
-          prefix={isActivityTaskScheduledEvent(group.initialEvent)
-            ? displayName
-            : ''}
-          fallback={decodedLocalActivity
-            ? translate('events.category.local-activity')
-            : displayName}
-        >
-          {#snippet children(decodedValue)}
-            {@const iconName =
-              (pendingActivity && !pendingActivity.paused) || retried
-                ? 'retry'
-                : undefined}
-            {@const clampedLabelMaxWidth = Math.max(
-              0,
-              canvasWidth - 2 * (GUTTER + 1.5 * RADIUS),
-            )}
-            {@const clampedLabelLeft = `clamp(calc(${GUTTER + 1.5 * RADIUS - spanLeft}px + var(--timeline-frame-offset, 0px)), ${labelTextPositionX - spanLeft - (textAnchor === 'end' ? labelWidth : 0)}px, calc(${canvasWidth - GUTTER - 1.5 * RADIUS - labelWidth - spanLeft}px + var(--timeline-frame-offset, 0px)))`}
-            <div
-              class="pointer-events-auto absolute z-10 flex select-none items-center gap-1 whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none {textAnchor ===
-              'end'
-                ? `${shouldClampLabel ? '' : '-translate-x-full'} -translate-y-1/2 flex-row-reverse`
-                : '-translate-y-1/2'}"
-              class:timeline-running-label={hasVisiblePendingConnector}
-              class:timeline-clamped-label={shouldClampLabel}
-              class:overflow-hidden={shouldClampLabel}
-              style:left={shouldClampLabel
-                ? clampedLabelLeft
-                : `${labelTextPositionX - spanLeft}px`}
-              style:top="{spanCy}px"
-              style:max-width={shouldClampLabel
-                ? `${clampedLabelMaxWidth}px`
-                : undefined}
-              bind:clientWidth={labelWidth}
-            >
-              {#if iconName}
-                <svg
-                  class="h-[var(--dot)] w-[var(--dot)] shrink-0 rounded-full p-[3px] text-current"
-                  viewBox="0 0 16 16"
-                >
-                  <use href="#ti-{iconName}" />
-                </svg>
-              {/if}
-              <span
-                class="inline-flex min-h-[var(--dot)] min-w-0 items-center overflow-hidden text-ellipsis rounded-full text-current"
-              >
-                {#if pendingActivity}
-                  {translate('workflows.attempt')}
-                  {pendingActivity.attempt} / {pendingActivity.maximumAttempts ||
-                    '∞'}
-                  •&nbsp;{decodedValue}
-                {:else if retried}
-                  {retryAttempt} • {decodedValue}
-                {:else if decodedLocalActivity}
-                  {decodedLocalActivity.value}
-                {:else}
-                  {decodedValue}
-                {/if}
-              </span>
-            </div>
-          {/snippet}
-        </PayloadSummary>
+        {#if materializedGroup?.userMetadata?.summary}
+          <PayloadSummary
+            value={materializedGroup.userMetadata.summary}
+            prefix={isActivityTaskScheduledEvent(group.initialEvent)
+              ? displayName
+              : ''}
+            fallback={decodedLocalActivity
+              ? translate('events.category.local-activity')
+              : displayName}
+          >
+            {#snippet children(decodedValue)}
+              {@render label(decodedValue, spanLeft)}
+            {/snippet}
+          </PayloadSummary>
+        {:else}
+          {@render label(displayName, spanLeft)}
+        {/if}
       {/if}
     </button>
   {/if}

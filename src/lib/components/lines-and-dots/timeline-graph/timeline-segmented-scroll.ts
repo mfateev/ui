@@ -1,5 +1,8 @@
 export const TIMELINE_NORMAL_SCROLL_LIMIT_PX = 4_000_000;
-export const TIMELINE_SEGMENTED_SCROLL_HEIGHT_PX = 8_000_000;
+// Keep the physical scroll world comfortably below engine-specific giant-layer
+// thresholds. Logical rebasing supplies the 500k-row range without asking the
+// browser to lay out or invalidate a multi-million-pixel SVG in one task.
+export const TIMELINE_SEGMENTED_SCROLL_HEIGHT_PX = 1_000_000;
 
 export type TimelineSegmentedScrollModel = {
   segmented: boolean;

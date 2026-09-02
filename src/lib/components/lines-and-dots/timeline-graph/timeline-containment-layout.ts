@@ -108,7 +108,8 @@ export type TimelineContainmentLayout = LogicalTimelineLayout;
 
 export type RecursiveContainmentLayoutInput = {
   root: TimelineWorkflowNode;
-  visibleEntries: TimelineGroupEntry[];
+  /** null means every group in every participating run is visible. */
+  visibleEntries: TimelineGroupEntry[] | null;
   participatingRunKeys: ReadonlySet<string>;
   reverseSort: boolean;
   pendingGroupCount: number;
@@ -180,7 +181,7 @@ export function getRecursiveTimelineContainmentLayout({
     TimelineGroupEntry
   >();
   let hasLegacyEntries = false;
-  for (const entry of visibleEntries) {
+  for (const entry of visibleEntries ?? []) {
     const run = runById.get(entry.runId);
     const ordinal = entry.ordinal;
     const source = ordinal === undefined ? undefined : run?.groups[ordinal];
@@ -295,7 +296,9 @@ export function getRecursiveTimelineContainmentLayout({
 
       const mask =
         visibilityByRunId.get(run.runId) ??
-        new TimelineVisibilityBitset(run.groups.length);
+        (visibleEntries === null
+          ? TimelineVisibilityBitset.all(run.groups.length)
+          : new TimelineVisibilityBitset(run.groups.length));
       if (hasLegacyEntries) {
         for (let ordinal = 0; ordinal < run.groups.length; ordinal += 1) {
           if (exceptionalEntryByGroup.has(run.groups[ordinal].group)) {

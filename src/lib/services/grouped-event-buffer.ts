@@ -11,6 +11,7 @@ import { getGroupId } from '$lib/models/event-groups/get-group-id';
 import { toEvent } from '$lib/models/event-history';
 import type {
   CommonHistoryEvent,
+  EventTypeCategory,
   HistoryEvent,
   PendingActivity,
   PendingNexusOperation,
@@ -86,6 +87,9 @@ export interface LazyGroup {
   readonly activityStartedTimeMs?: number;
   readonly activityAttempt?: number;
   readonly childWorkflow?: LazyChildWorkflowReference;
+  readonly timelineDisplayName?: string;
+  readonly timelinePrefix?: string;
+  readonly timelineCategory?: EventTypeCategory;
 }
 
 export type LazyTimelineEventPoint = {
@@ -447,26 +451,34 @@ export function createGroupedEventBuffer({
    * Memoized on the record's version — callers may rely on an unchanged record
    * returning the identical object.
    */
-  function materializeEventGroup(record: GroupRecord): EventGroup | null {
-    if (record.cachedVersion === record.version) return record.cached;
-    record.cachedVersion = record.version;
-    record.cached = null;
+  function materializeEventGroup(
+    record: GroupRecord,
+    formatForDisplay = true,
+  ): EventGroup | null {
+    if (formatForDisplay && record.cachedVersion === record.version) {
+      return record.cached;
+    }
+    if (formatForDisplay) {
+      record.cachedVersion = record.version;
+      record.cached = null;
+    }
 
     const head = events[record.headSlot];
     if (!head) return null;
+    const prepare = formatForDisplay
+      ? prepareForMaterialization
+      : (event: WorkflowEvent) => event;
 
     const group =
-      createEventGroup(prepareForMaterialization(head) as CommonHistoryEvent) ??
-      createWorkflowTaskGroup(
-        prepareForMaterialization(head) as CommonHistoryEvent,
-      );
+      createEventGroup(prepare(head) as CommonHistoryEvent) ??
+      createWorkflowTaskGroup(prepare(head) as CommonHistoryEvent);
     if (!group) return null;
 
     const followers: WorkflowEvent[] = [];
     for (const slot of record.slots) {
       if (slot === record.headSlot) continue;
       const event = events[slot];
-      if (event) followers.push(prepareForMaterialization(event));
+      if (event) followers.push(prepare(event));
     }
     followers.sort((a, b) => Number(a.id) - Number(b.id));
 
@@ -478,7 +490,7 @@ export function createGroupedEventBuffer({
 
     applyPendingMetadata(group, record);
 
-    record.cached = group;
+    if (formatForDisplay) record.cached = group;
     return group;
   }
 
@@ -659,6 +671,18 @@ export function createGroupedEventBuffer({
   }
 
   /**
+   * Builds an uncached immutable-model snapshot without formatting display
+   * timestamps. Sealing may touch hundreds of thousands of groups; timestamp
+   * strings are added lazily when details are actually opened.
+   */
+  function snapshotGroup(lazy: LazyGroup): EventGroup {
+    if (lazy instanceof GroupRecord) {
+      return materializeEventGroup(lazy, false) as EventGroup;
+    }
+    return lazy as unknown as EventGroup;
+  }
+
+  /**
    * Sorted EventGroup[] in ascending event-id order — materializes every group.
    * Prefer getLazyGroups + materializeGroup so only rendered groups are built.
    */
@@ -755,6 +779,7 @@ export function createGroupedEventBuffer({
     reset,
     setFailedEvent,
     setPendingMetadata,
+    snapshotGroup,
   };
 }
 

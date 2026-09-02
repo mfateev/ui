@@ -26,6 +26,9 @@ export const SHARED_WITH_EVENT_GROUP = {
   activityStartedTimeMs: false,
   activityAttempt: false,
   childWorkflow: false,
+  timelineDisplayName: false,
+  timelinePrefix: false,
+  timelineCategory: false,
   // Buffer bookkeeping — an EventGroup has no counterpart.
   version: false,
 } satisfies Record<keyof LazyGroup, boolean>;

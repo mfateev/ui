@@ -60,7 +60,7 @@ describe('getRecursiveTimelineContainmentLayout', () => {
     } as TimelineWorkflowNode;
     const layout = getRecursiveTimelineContainmentLayout({
       root,
-      visibleEntries: entries,
+      visibleEntries: null,
       participatingRunKeys: new Set([timelineRunKey('root', 'large-run')]),
       reverseSort: false,
       pendingGroupCount: 0,

@@ -5,6 +5,11 @@ import { isNullish } from '$lib/utilities/type-predicates';
 import { Timespan } from './timespan';
 import type { TimeSegment } from './types';
 
+export type TimelineActiveTimeRange = {
+  startTimeMs: number;
+  endTimeMs: number;
+};
+
 /** Satisfied by both EventGroup and LazyGroup, so neither needs building. */
 type GroupForSegments = {
   initialEvent: WorkflowEvent;
@@ -45,10 +50,10 @@ export function buildTimeSegments<T extends GroupForSegments>({
   getEventGroupEndMs,
 }: {
   workflowTimespan: Timespan;
-  lazyGroups: T[];
+  lazyGroups: Iterable<T>;
   getEventGroupEndMs?: (group: T) => number | undefined;
 }): TimeSegment[] {
-  const groupTimespans: Timespan[] = [];
+  const groupTimespans: TimelineActiveTimeRange[] = [];
 
   let isSorted = true;
   let prevStartTimeMs = -Infinity;
@@ -73,7 +78,7 @@ export function buildTimeSegments<T extends GroupForSegments>({
     }
 
     if (endMs > startMs) {
-      groupTimespans.push(new Timespan(startMs, endMs));
+      groupTimespans.push({ startTimeMs: startMs, endTimeMs: endMs });
     }
 
     prevStartTimeMs = startMs;
@@ -83,6 +88,16 @@ export function buildTimeSegments<T extends GroupForSegments>({
     groupTimespans.sort((a, b) => a.startTimeMs - b.startTimeMs);
   }
 
+  return buildTimeSegmentsFromRanges({ workflowTimespan, groupTimespans });
+}
+
+export function buildTimeSegmentsFromRanges({
+  workflowTimespan,
+  groupTimespans,
+}: {
+  workflowTimespan: Timespan;
+  groupTimespans: Iterable<TimelineActiveTimeRange>;
+}): TimeSegment[] {
   const timeSegments: TimeSegment[] = [];
 
   let cursorMs: number = workflowTimespan.startTimeMs;

@@ -86,6 +86,15 @@
     ),
   );
   let labelWidth = $state(0);
+  const measureLabel = (element: HTMLElement) => {
+    const observer = new ResizeObserver(([entry]) => {
+      const width =
+        entry.borderBoxSize[0]?.inlineSize ?? entry.contentRect.width;
+      labelWidth = Math.round(width);
+    });
+    observer.observe(element);
+    return { destroy: () => observer.disconnect() };
+  };
   const labelSafeInset = GUTTER + 1.5 * RADIUS;
   const labelIconGap = $derived(kind === 'chain' ? 12 : 0);
   const labelAttachedLeft = $derived(geometry.labelStartPx + labelIconGap);
@@ -244,7 +253,7 @@
             style:--workflow-label-end-attached-left="{labelEndAttachedLeft}px"
             style:--frame-color={color}
             title={displayLabel}
-            bind:clientWidth={labelWidth}
+            use:measureLabel
           >
             {#if onToggle}
               <Button

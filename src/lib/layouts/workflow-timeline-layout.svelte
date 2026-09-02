@@ -48,12 +48,13 @@
   } from '$lib/io/icon';
   import {
     getRenderableTimelineRuns,
+    type TimelineGroup,
     type TimelineRun,
     toTimelineGroups,
   } from '$lib/services/chain-workflow-session';
   import { eventBuffer } from '$lib/services/grouped-event-buffer.svelte';
   import { TimelineIntervalLoader } from '$lib/services/timeline-interval-loader';
-  import { BufferTimelineRunModel } from '$lib/services/timeline-run-model';
+  import type { TimelineRunModel } from '$lib/services/timeline-run-model';
   import {
     loadWorkflowChainOverview,
     mergeWorkflowChainOverviewRuns,
@@ -108,6 +109,9 @@
   const disableTimelineVirtualization = $derived(
     page.url.searchParams.get('timeline_virtualization') === 'off',
   );
+  const instrumentTimelinePerformance = $derived(
+    page.url.searchParams.get('timeline_instrumentation') === 'on',
+  );
   const requestedDisplayMode = $derived(urlParams.timelineDisplayMode);
   const displayMode = $derived(
     requestedDisplayMode === 'full-duration'
@@ -115,6 +119,7 @@
       : requestedDisplayMode,
   );
   let intervalTimelineRuns = $state.raw<TimelineRun[]>([]);
+  let intervalSceneGeneration = $state.raw<object>({});
 
   const bufferGroups = $derived.by(() => {
     // The buffer owns its run identity. Never infer that identity from the
@@ -142,6 +147,10 @@
       startTimeMs: Date.parse(workflow.startTime),
       endTimeMs: workflow.endTime ? Date.parse(workflow.endTime) : Date.now(),
       groups: toTimelineGroups(workflow.runId, bufferGroups),
+      pointCount: bufferGroups.reduce(
+        (count, group) => count + group.eventCount,
+        0,
+      ),
       active: true,
     };
     const renderable = getRenderableTimelineRuns({
@@ -149,11 +158,18 @@
       activeRun: active,
       activeHistoryReady: historyCtx.fetchComplete,
     });
+    const hasSealedCurrent =
+      workflow.status !== 'Running' &&
+      workflow.status !== 'Paused' &&
+      intervalTimelineRuns.some(({ runId }) => runId === workflow.runId);
+    const localRuns = hasSealedCurrent
+      ? renderable.filter(({ runId }) => runId !== workflow.runId)
+      : renderable;
     return [
       ...intervalTimelineRuns.filter(
-        (run) => !renderable.some(({ runId }) => runId === run.runId),
+        (run) => !localRuns.some(({ runId }) => runId === run.runId),
       ),
-      ...renderable,
+      ...localRuns,
     ].sort((a, b) => a.startTimeMs - b.startTimeMs);
   });
 
@@ -218,8 +234,10 @@
   let chainLoadGeneration = 0;
   const intervalLoader = new TimelineIntervalLoader();
   let intervalLoadGeneration = 0;
+  let intervalLoading = $state(false);
   let intervalModelReleases: (() => void)[] = [];
   let intervalTruncated = $state(false);
+  let initialClosedWindowLoadKey = '';
 
   $effect(() => {
     if (requestedDisplayMode !== 'full-duration') {
@@ -240,6 +258,28 @@
     legacyFullDurationFitKey = fitKey;
   });
 
+  $effect(() => {
+    if (
+      displayMode !== 'fixed-window' ||
+      !workflow ||
+      workflow.status === 'Running' ||
+      workflow.status === 'Paused' ||
+      !timelineWindowControls ||
+      chainOverviewLoading ||
+      chainOverviewRuns.length === 0
+    ) {
+      return;
+    }
+    const key = `${namespace}:${workflow.id}:${workflow.runId}:${workflow.endTime}:${workflow.historyEvents}`;
+    if (key === initialClosedWindowLoadKey) return;
+    initialClosedWindowLoadKey = key;
+    void loadCurrentTimelineWindow().catch((error: unknown) => {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        console.error('Unable to seal the closed timeline window.', error);
+      }
+    });
+  });
+
   const releaseIntervalModels = () => {
     for (const release of intervalModelReleases) release();
     intervalModelReleases = [];
@@ -258,6 +298,7 @@
       chainOverviewRuns = [];
       intervalTimelineRuns = [];
       intervalTruncated = false;
+      intervalLoading = false;
       chainOverviewLoading = false;
       return;
     }
@@ -348,9 +389,7 @@
     if (!workflowId || !timelineWindowControls) return;
     const generation = ++intervalLoadGeneration;
     intervalLoader.abort();
-    releaseIntervalModels();
-    intervalTimelineRuns = [];
-    intervalTruncated = false;
+    intervalLoading = true;
 
     const endTimeMs = startTimeMs + (durationMs ?? 0);
     const firstIndex = chainOverviewRuns.findIndex(
@@ -365,41 +404,136 @@
       Math.min(chainOverviewRuns.length, Math.max(firstIndex, lastIndex) + 2),
     );
 
-    const toTimelineRun = (model: BufferTimelineRunModel) => {
+    const toTimelineGroupCollection = (
+      model: TimelineRunModel,
+      runEndTimeMs: number,
+    ): TimelineGroup[] => {
+      const target = new Array<TimelineGroup>(model.groupCount);
+      // Materialization is an internal bounded LRU, not UI state.
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity
+      const cache = new Map<number, TimelineGroup>();
+      const groupAt = (ordinal: number): TimelineGroup | undefined => {
+        if (ordinal < 0 || ordinal >= model.groupCount) return undefined;
+        const cached = cache.get(ordinal);
+        if (cached) {
+          cache.delete(ordinal);
+          cache.set(ordinal, cached);
+          return cached;
+        }
+        const group = model.presentationGroups()[ordinal];
+        if (!group) return undefined;
+        const entry: TimelineGroup = Object.freeze({
+          timelineKey: `${model.run.runId}:${group.id}`,
+          runId: model.run.runId,
+          ordinal,
+          group,
+          materialize: (value) =>
+            model.materializePresentationGroup(value as typeof group),
+          active: false,
+          runEndTimeMs,
+        });
+        cache.set(ordinal, entry);
+        if (cache.size > 4_096) cache.delete(cache.keys().next().value!);
+        return entry;
+      };
+      const ordinalFor = (property: PropertyKey): number | undefined => {
+        if (typeof property !== 'string' || !/^\d+$/.test(property)) {
+          return undefined;
+        }
+        const ordinal = Number(property);
+        return Number.isSafeInteger(ordinal) ? ordinal : undefined;
+      };
+      return new Proxy(target, {
+        get(array, property, receiver) {
+          const ordinal = ordinalFor(property);
+          return ordinal === undefined
+            ? Reflect.get(array, property, receiver)
+            : groupAt(ordinal);
+        },
+        has(array, property) {
+          const ordinal = ordinalFor(property);
+          return ordinal === undefined
+            ? Reflect.has(array, property)
+            : ordinal >= 0 && ordinal < model.groupCount;
+        },
+      });
+    };
+
+    const toTimelineRun = (model: TimelineRunModel) => {
       const run = model.run;
+      const groups = toTimelineGroupCollection(model, run.endTimeMs);
       return {
         runId: run.runId,
         status: run.status,
         startTimeMs: run.startTimeMs,
         endTimeMs: run.endTimeMs,
-        groups: toTimelineGroups(
-          run.runId,
-          model.sourceGroups,
-          (group) => model.materializeSource(group),
-          { active: false, runEndTimeMs: run.endTimeMs },
+        groups,
+        pointCount:
+          model.statistics?.eventCount ??
+          groups.reduce((count, entry) => count + entry.group.eventCount, 0),
+        topologyGroups: model.topologyOrdinals?.map(
+          (ordinal) => groups[ordinal],
         ),
+        activeTimeRanges: model.activeTimeRanges,
         active: false,
         successorRunId: run.nextRunId,
       };
     };
 
-    const result = await intervalLoader.load({
-      namespace,
-      workflowId,
-      runs: requestedRuns,
-      startTimeMs,
-      endTimeMs,
-    });
-    if (generation !== intervalLoadGeneration) return;
-    const models = result.models.filter(
-      (model): model is BufferTimelineRunModel =>
-        model instanceof BufferTimelineRunModel,
-    );
-    intervalModelReleases = models.map((model) => model.retain());
-    intervalTimelineRuns = models.map(toTimelineRun);
-    intervalTruncated = result.truncation.some(
-      ({ affectsSelectedWindow }) => affectsSelectedWindow,
-    );
+    try {
+      const result = await intervalLoader.load({
+        namespace,
+        workflowId,
+        runs: requestedRuns,
+        startTimeMs,
+        endTimeMs,
+      });
+      if (generation !== intervalLoadGeneration) return;
+      const models = [...result.models].sort(
+        (left, right) =>
+          left.run.startTimeMs - right.run.startTimeMs ||
+          left.run.runId.localeCompare(right.run.runId),
+      );
+      const nextTimelineRuns: TimelineRun[] = [];
+      const previousTimelineRuns = untrack(() => intervalTimelineRuns);
+      let generationChecked = false;
+      let initialBlockPublished = false;
+      const publishProgress = () => {
+        if (!generationChecked) {
+          const previousIsStablePrefix = previousTimelineRuns.every(
+            ({ runId }, index) => models[index]?.run.runId === runId,
+          );
+          if (!previousIsStablePrefix) {
+            intervalSceneGeneration = {};
+          }
+          generationChecked = true;
+        }
+        intervalTimelineRuns = [...nextTimelineRuns];
+      };
+      let sliceStartedAt = performance.now();
+      for (const model of models) {
+        nextTimelineRuns.push(toTimelineRun(model));
+        if (!initialBlockPublished) {
+          publishProgress();
+          initialBlockPublished = true;
+        }
+        if (performance.now() - sliceStartedAt < 8) continue;
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => resolve()),
+        );
+        if (generation !== intervalLoadGeneration) return;
+        sliceStartedAt = performance.now();
+      }
+      const previousReleases = intervalModelReleases;
+      intervalModelReleases = models.map((model) => model.retain());
+      intervalTimelineRuns = nextTimelineRuns;
+      intervalTruncated = result.truncation.some(
+        ({ affectsSelectedWindow }) => affectsSelectedWindow,
+      );
+      for (const release of previousReleases) release();
+    } finally {
+      if (generation === intervalLoadGeneration) intervalLoading = false;
+    }
   };
 
   const loadCurrentTimelineWindow = async () => {
@@ -708,21 +842,23 @@
         onWindowMove={moveTimelineWindow}
         onWindowResize={resizeTimelineWindow}
       />
-      <div
-        class="flex flex-wrap items-center gap-x-3 gap-y-1 border-x border-b border-subtle px-3 py-1 text-xs tabular-nums text-secondary"
-        data-testid="timeline-performance-stats"
-      >
-        <span>
-          Rows {timelinePerformanceStats?.mountedRows ?? 0} mounted / {timelinePerformanceStats?.logicalRows ??
-            0} total
-        </span>
-        <span>Lines {timelinePerformanceStats?.renderedLines ?? 0}</span>
-        <span>DOM {timelinePerformanceStats?.renderedElements ?? 0}</span>
-        <span>
-          Update {(timelinePerformanceStats?.updateMs ?? 0).toFixed(1)} ms · p95
-          {(timelinePerformanceStats?.p95UpdateMs ?? 0).toFixed(1)} ms
-        </span>
-      </div>
+      {#if instrumentTimelinePerformance}
+        <div
+          class="flex flex-wrap items-center gap-x-3 gap-y-1 border-x border-b border-subtle px-3 py-1 text-xs tabular-nums text-secondary"
+          data-testid="timeline-performance-stats"
+        >
+          <span>
+            Rows {timelinePerformanceStats?.mountedRows ?? 0} mounted / {timelinePerformanceStats?.logicalRows ??
+              0} total
+          </span>
+          <span>Lines {timelinePerformanceStats?.renderedLines ?? 0}</span>
+          <span>DOM {timelinePerformanceStats?.renderedElements ?? 0}</span>
+          <span>
+            Update {(timelinePerformanceStats?.updateMs ?? 0).toFixed(1)} ms · p95
+            {(timelinePerformanceStats?.p95UpdateMs ?? 0).toFixed(1)} ms
+          </span>
+        </div>
+      {/if}
     {/if}
     {#if displayMode === 'classic'}
       <ClassicTimelineGraph
@@ -743,6 +879,9 @@
         groups={bufferGroups}
         {reverseSort}
         disableVirtualization={disableTimelineVirtualization}
+        instrumentPerformance={instrumentTimelinePerformance}
+        modelLoading={intervalLoading}
+        sceneGeneration={intervalSceneGeneration}
         loading={!historyCtx.fetchComplete}
         totalExpectedEvents={estimatedTotalGroups}
         descMinId={historyCtx.descMinId}

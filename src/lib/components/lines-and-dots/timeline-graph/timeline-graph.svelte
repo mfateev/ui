@@ -6,6 +6,7 @@
 
   import { timestamp } from '$lib/components/timestamp.svelte';
   import { translate } from '$lib/i18n/translate';
+  import { allEventTypeOptions } from '$lib/models/event-history/get-event-categorization';
   import {
     type ChainRetentionWindow,
     getChainRetentionWindow,
@@ -33,7 +34,6 @@
     timelineRunKey,
   } from './recursive-timeline-model';
   import {
-    getObservedTimelineEdgeKeys,
     getRecursiveTimelineContainmentLayout,
     type TimelineLayoutRow,
   } from './timeline-containment-layout';
@@ -56,6 +56,10 @@
   } from './timeline-performance';
   import { getRowY, getTotalForY } from './timeline-positioning';
   import {
+    TimelinePresentationController,
+    TimelineSceneBlockCache,
+  } from './timeline-presentation-chunks';
+  import {
     initialTimelinePaintRows,
     nextTimelinePaintRows,
     shouldBatchTimelineRows,
@@ -73,6 +77,7 @@
     filterTimelineGroupEntries,
     filterTimelineGroupEntriesByStatus,
     getTimelineGroupEntries,
+    type TimelineGroupEntry,
   } from './timeline-run-entries';
   import {
     getTimelineSegmentedScrollModel,
@@ -111,6 +116,7 @@
     DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS,
     TimelineScale,
   } from './timeline-scale.svelte';
+  import TimelineStaticMarkerRow from './timeline-static-marker-row.svelte';
   import { Timeline } from './timeline.svelte';
   import { Viewport } from './viewport.svelte';
   import WorkflowFrame from './workflow-frame.svelte';
@@ -136,6 +142,9 @@
     chainStartTimeMs?: number;
     windowControls?: TimelineWindowControls;
     performanceStats?: TimelinePerformanceStats;
+    instrumentPerformance?: boolean;
+    modelLoading?: boolean;
+    sceneGeneration?: object;
     disableVirtualization?: boolean;
   }
 
@@ -160,6 +169,9 @@
     chainStartTimeMs,
     windowControls = $bindable(),
     performanceStats = $bindable(),
+    instrumentPerformance = false,
+    modelLoading = false,
+    sceneGeneration,
     disableVirtualization = false,
   }: Props = $props();
 
@@ -237,21 +249,62 @@
   const timelineGroupEntries = $derived(
     workflowNodes.flatMap((node) => getTimelineGroupEntries(node.runs)),
   );
-  const eventTypeFilteredEntries = $derived(
-    filterTimelineGroupEntries({
-      entries: timelineGroupEntries,
-      eventTypes: $eventTypeFilter,
-      failedOrPending: false,
-    }),
+  const allEventTypesSelected = $derived.by(() => {
+    const selected = new Set($eventTypeFilter);
+    return (
+      selected.size === allEventTypeOptions.length &&
+      allEventTypeOptions.every(({ value }) => selected.has(value))
+    );
+  });
+  const filtersAreInactive = $derived(
+    allEventTypesSelected && !$eventStatusFilter,
   );
-  const renderedGroups = $derived(
-    eventTypeFilteredEntries.map((entry) => entry.group) as LazyGroup[],
+  const eventTypeFilteredEntries = $derived.by(() =>
+    allEventTypesSelected
+      ? timelineGroupEntries
+      : filterTimelineGroupEntries({
+          entries: timelineGroupEntries,
+          eventTypes: $eventTypeFilter,
+          failedOrPending: false,
+        }),
   );
+  const renderedGroups = $derived.by<Iterable<LazyGroup>>(() => {
+    const nodes = workflowNodes;
+    return {
+      *[Symbol.iterator]() {
+        for (const node of nodes) {
+          for (const run of node.runs) {
+            for (const entry of run.groups) {
+              yield entry.group as LazyGroup;
+            }
+          }
+        }
+      },
+    };
+  });
+  const precompiledActiveTimeRanges = $derived.by(() => {
+    // Loaded child workflows have their own time order. Until the scene
+    // compiler merges those subscenes, retain the general group-based path.
+    if (workflowNodes.length !== 1) return undefined;
+    const ranges = [] as { startTimeMs: number; endTimeMs: number }[];
+    for (const node of workflowNodes) {
+      for (const run of node.runs) {
+        if (!run.activeTimeRanges) return undefined;
+        ranges.push(...run.activeTimeRanges);
+      }
+    }
+    return ranges;
+  });
   const retainedPendingEndTimeByGroup = $derived.by(() => {
     const endTimes = new WeakMap<LazyGroup, number>();
-    for (const entry of eventTypeFilteredEntries) {
-      if (!entry.active && entry.group.isPending) {
-        endTimes.set(entry.group as LazyGroup, entry.runEndTimeMs);
+    for (const node of workflowNodes) {
+      for (const run of node.runs) {
+        if (run.active) continue;
+        for (const entry of run.groups) {
+          if (entry.group.isPending) {
+            endTimes.set(entry.group as LazyGroup, run.endTimeMs);
+          }
+        }
       }
     }
     return endTimes;
@@ -308,6 +361,7 @@
     getFirstEventTime: () => firstEventTime,
     getWorkflow: () => workflow,
     getLazyGroups: () => renderedGroups,
+    getPrecompiledActiveRanges: () => precompiledActiveTimeRanges,
     getLazyGroupEndMs: (group) => getRetainedEndTimeMs(group),
     getCurrentTimeMs: () => nowMs,
     getLoading: () => timelineLoading,
@@ -743,18 +797,20 @@
     }
   };
 
-  const filteredEntries = $derived(
-    filterTimelineGroupEntriesByStatus(
-      eventTypeFilteredEntries,
-      $eventStatusFilter,
-    ),
+  const filteredEntries = $derived.by<TimelineGroupEntry[] | null>(() =>
+    filtersAreInactive
+      ? null
+      : filterTimelineGroupEntriesByStatus(
+          eventTypeFilteredEntries,
+          $eventStatusFilter,
+        ),
   );
 
   const fixedWindowEntryIndex = $derived(
-    new TimelineEntryWindowIndex(filteredEntries),
+    new TimelineEntryWindowIndex(filteredEntries ?? timelineGroupEntries),
   );
 
-  const visibleEntries = $derived.by(() => {
+  const visibleEntries = $derived.by<TimelineGroupEntry[] | null>(() => {
     if (displayMode === 'full-duration') return filteredEntries;
     const timeRange = fixedWindowTimeRange;
     if (
@@ -770,7 +826,7 @@
           timeRange.endTimeMs,
           nowMs,
         ).entries
-      : filteredEntries;
+      : (filteredEntries ?? timelineGroupEntries);
     return candidates.filter((entry) =>
       timelineGroupIntersectsViewport({
         group: entry.group,
@@ -782,6 +838,33 @@
       }),
     );
   });
+  const totalTimelineGroupCount = $derived.by(() => {
+    let count = 0;
+    for (const node of workflowNodes) {
+      for (const run of node.runs) count += run.groups.length;
+    }
+    return count;
+  });
+  const totalTimelinePointCount = $derived.by(() => {
+    let count = 0;
+    for (const node of workflowNodes) {
+      for (const run of node.runs) {
+        count +=
+          run.pointCount ??
+          run.groups.reduce(
+            (runCount, entry) => runCount + entry.group.eventCount,
+            0,
+          );
+      }
+    }
+    return count;
+  });
+  const filteredEntryCount = $derived(
+    filteredEntries?.length ?? totalTimelineGroupCount,
+  );
+  const visibleEntryCount = $derived(
+    visibleEntries?.length ?? totalTimelineGroupCount,
+  );
   let observedRunId: string | undefined;
 
   $effect.pre(() => {
@@ -801,14 +884,14 @@
   const pendingGroupCount = $derived.by(() => {
     if (!timelineLoading) return 0;
     if (displayMode === 'fixed-window') {
-      return visibleEntries.length === 0 && filteredEntries.length === 0
+      return visibleEntryCount === 0 && filteredEntryCount === 0
         ? Math.min(totalExpectedEvents || 50, 50)
         : 0;
     }
     if (!totalExpectedEvents) {
-      return visibleEntries.length === 0 ? 50 : 0;
+      return visibleEntryCount === 0 ? 50 : 0;
     }
-    return Math.max(0, totalExpectedEvents - visibleEntries.length);
+    return Math.max(0, totalExpectedEvents - visibleEntryCount);
   });
 
   const frameCandidates = $derived(
@@ -907,6 +990,39 @@
   const layoutRowCount = $derived(
     Math.min(availableLayoutRowCount, presentedLayoutRowCount),
   );
+  const sceneIdentityScopes = new WeakMap<object, Map<string, object>>();
+  const topologyScope = $derived.by(() => {
+    const parts: string[] = [];
+    for (const node of workflowNodes) {
+      for (const edge of node.childrenByGroupKey.values()) {
+        parts.push(`${edge.key}:${edge.expansion}:${edge.load.state}`);
+      }
+    }
+    return parts.join('|');
+  });
+  const presentationSceneIdentity = $derived.by(() => {
+    const base = sceneGeneration ?? containmentLayout;
+    const scope = [
+      reverseSort,
+      $eventStatusFilter,
+      $eventTypeFilter.join(','),
+      topologyScope,
+    ].join(':');
+    let identities = sceneIdentityScopes.get(base);
+    if (!identities) {
+      // This identity cache is deliberately non-reactive; derived inputs drive
+      // invalidation and cached values must not create additional dependencies.
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity
+      identities = new Map();
+      sceneIdentityScopes.set(base, identities);
+    }
+    let identity = identities.get(scope);
+    if (!identity) {
+      identity = {};
+      identities.set(scope, identity);
+    }
+    return identity;
+  });
   const rowPresentationComplete = $derived(
     layoutRowCount >= availableLayoutRowCount,
   );
@@ -928,7 +1044,7 @@
   // ingestion cannot starve the sliding window of visible rows.
   const animationLayoutRows = $derived(
     shouldAnimateTimelineRowEntries({
-      totalGroupCount: filteredEntries.length,
+      totalGroupCount: filteredEntryCount,
       layoutRowCount,
     })
       ? containmentLayout.rows(0, layoutRowCount)
@@ -946,7 +1062,6 @@
   let rowEntryGeneration = 0;
   let rowEntryDeadlineMs: number | null = null;
   let rowEntrySettleTimer: ReturnType<typeof setTimeout> | null = null;
-  let suppressRowEntryMotionUntilMs = 0;
   let previousRowPresentationScope = '';
   let previousRowPresentationWasBatching = false;
 
@@ -1009,8 +1124,8 @@
       previousKeys === null ||
       initialRowPresentation ||
       timelineLoading ||
+      recursiveSession.requestCount > 0 ||
       !reverseSort ||
-      performance.now() < suppressRowEntryMotionUntilMs ||
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
     ) {
       finishRowEntry();
@@ -1193,8 +1308,12 @@
   // ahead of the next main-thread sample without exposing an empty band. At a
   // 24 px row height, 32 rows cover 768 px in either direction while keeping
   // the pool bounded to roughly two viewportfuls on a laptop-sized display.
-  const OVERSCAN = 32;
+  const OVERSCAN = 0;
   const RETAINED_DOM_ROW_LIMIT = 512;
+  // Single-row presentation slices keep even connector-heavy boundary installs
+  // inside one frame in the DOM renderer; immutable scene blocks remain
+  // independently reusable and the live/parked chunk count stays bounded.
+  const PRESENTATION_CHUNK_SIZE = 1;
   const virtualizeRows = $derived(
     !disableVirtualization && availableLayoutRowCount > RETAINED_DOM_ROW_LIMIT,
   );
@@ -1441,7 +1560,16 @@
       lastTop = top;
       lastHeight = viewHeight;
       stableFrames = 0;
-      visibleBand = [top, top + viewHeight];
+      const chunkHeight = PRESENTATION_CHUNK_SIZE * ROW_HEIGHT;
+      const bandTop = virtualizeRows
+        ? Math.floor(top / chunkHeight) * chunkHeight
+        : top;
+      const bandBottom = virtualizeRows
+        ? Math.ceil((top + viewHeight) / chunkHeight) * chunkHeight
+        : top + viewHeight;
+      if (visibleBand?.[0] !== bandTop || visibleBand?.[1] !== bandBottom) {
+        visibleBand = [bandTop, bandBottom];
+      }
     } else {
       stableFrames++;
     }
@@ -1458,14 +1586,6 @@
   }
 
   function prepareForVerticalMovement() {
-    suppressRowEntryMotionUntilMs = performance.now() + 250;
-    if (
-      rowEntryOffsets.size > 0 ||
-      rowEntryNewKeys.size > 0 ||
-      rowEntryAnimating
-    ) {
-      finishRowEntry();
-    }
     stableFrames = 0;
   }
 
@@ -1522,6 +1642,12 @@
 
   $effect(() => {
     if (!containerEl) return;
+    if (!virtualizeRows && !verticalScrollModel.segmented) {
+      scroller = null;
+      visibleBand = null;
+      logicalOriginRow = 0;
+      return;
+    }
     scroller = verticalScrollModel.segmented
       ? containerEl
       : findScrollParent(containerEl);
@@ -1582,59 +1708,85 @@
     virtualizeRows ? windowEnd : layoutRowCount,
   );
 
-  // ── Row pool ────────────────────────────────────────────────────────────────
-  // Fixed-size set of slots reused across scroll (vs a keyed each that creates/
-  // destroys rows as the window slides). Slots keep their DOM + instance and just
-  // re-point to a new group — avoids the mount churn that caused major-GC pauses.
-  const POOL_SLACK = 4;
-  const poolSize = $derived.by(() => {
-    if (!virtualizeRows) return layoutRowCount;
-    const band = visibleBand;
-    const bandHeight = band ? band[1] - band[0] : Math.min(svgHeight, 1000);
-    return Math.ceil(bandHeight / ROW_HEIGHT) + 2 * windowOverscan + POOL_SLACK;
+  const presentationController = new TimelinePresentationController(
+    PRESENTATION_CHUNK_SIZE,
+    8,
+  );
+  const sceneBlockCache = new TimelineSceneBlockCache<{
+    index: number;
+    row: TimelineLayoutRow;
+    chunkKey: string;
+  }>();
+  let presentationChunks = $state.raw(
+    presentationController.update({
+      sceneIdentity: untrack(() => presentationSceneIdentity),
+      totalRows: 0,
+      windowStart: 0,
+      windowEnd: 0,
+    }),
+  );
+  let focusedGroupId = $state<string | null>(null);
+  let focusedSlotIndex = $state<number | null>(null);
+  const focusedRowIndex = $derived(
+    focusedGroupId
+      ? (containmentLayout.indexOfGroup(focusedGroupId) ?? -1)
+      : -1,
+  );
+
+  $effect(() => {
+    const next = presentationController.update({
+      sceneIdentity: presentationSceneIdentity,
+      totalRows: layoutRowCount,
+      windowStart: renderedWindowStart,
+      windowEnd: renderedWindowEnd,
+      pinnedRows: [activeIdx, focusedRowIndex],
+      retainAll: !virtualizeRows,
+    });
+    if (next !== untrack(() => presentationChunks)) {
+      presentationChunks = next;
+    }
   });
 
-  // Slot i%poolSize always holds group i (keyed by slot index below, so the DOM
-  // stays put; span capped at poolSize so slots never collide). Reuse the prior
-  // slot object when unchanged — a fresh object each pass would change the {#each}
-  // item and re-run the row derived for rows that didn't move.
-  let prevSlots: ({ index: number; row: TimelineLayoutRow } | null)[] = [];
-  const pool = $derived.by(() => {
-    const total = layoutRowCount;
-    const slots: ({ index: number; row: TimelineLayoutRow } | null)[] =
-      new Array(poolSize).fill(null);
-    const end = Math.min(
-      renderedWindowEnd,
-      total,
-      renderedWindowStart + poolSize,
-    );
-    for (let index = renderedWindowStart; index < end; index++) {
-      const slot = index % poolSize;
-      const row = containmentLayout.rowAt(index);
-      if (!row) continue;
-      const prev = prevSlots[slot];
-      if (prev && prev.index === index && prev.row === row) {
-        slots[slot] = prev;
-      } else {
-        slots[slot] = { index, row };
-      }
-    }
-    prevSlots = slots;
-    return slots;
-  });
+  onDestroy(() => presentationController.clear());
+
+  const activePresentationChunkKeys = $derived(
+    new Set(
+      presentationChunks.filter(({ active }) => active).map(({ key }) => key),
+    ),
+  );
+  const presentationRows = $derived(
+    presentationChunks.flatMap(
+      (chunk) =>
+        sceneBlockCache.get(
+          presentationSceneIdentity,
+          chunk,
+          (rowStart, rowEnd) =>
+            containmentLayout.rows(rowStart, rowEnd).map((row) =>
+              Object.freeze({
+                index: row.rowIndex,
+                row: Object.freeze(row),
+                chunkKey: chunk.key,
+              }),
+            ),
+          [
+            chunk.rowStart,
+            chunk.rowEnd,
+            containmentLayout.rowAt(chunk.rowStart)?.key,
+            containmentLayout.rowAt(chunk.rowEnd - 1)?.key,
+          ].join(':'),
+        ).rows,
+    ),
+  );
+  const pool = $derived(
+    presentationRows.filter(({ chunkKey }) =>
+      activePresentationChunkKeys.has(chunkKey),
+    ),
+  );
 
   const mountedRowCount = $derived(
     pool.reduce((count, slot) => count + Number(Boolean(slot)), 0),
   );
 
-  const pooledEdgeKeys = $derived(
-    getObservedTimelineEdgeKeys(
-      virtualizeRows
-        ? pool.flatMap((slot) => (slot ? [slot.row] : []))
-        : containmentLayout.rows(windowStart, windowEnd),
-      incomingEdgeByWorkflowKey,
-    ),
-  );
   const pooledGroupIds = $derived(
     new Set(
       pool.flatMap((slot) =>
@@ -1642,14 +1794,6 @@
       ),
     ),
   );
-
-  $effect(() => {
-    const edgeKeys = pooledEdgeKeys;
-    untrack(() => recursiveSession.observeEdges(edgeKeys));
-  });
-
-  let focusedGroupId = $state<string | null>(null);
-  let focusedSlotIndex = $state<number | null>(null);
 
   $effect.pre(() => {
     const moveFocus = shouldMoveFocusToTimeline({
@@ -1688,7 +1832,7 @@
 
   const layoutRunSpans = $derived(
     containmentLayout
-      .runSpans(renderedWindowStart, renderedWindowEnd)
+      .runSpans(0, layoutRowCount)
       .map((span) => ({
         ...span,
         rowEnd: Math.min(span.rowEnd, presentedPhysicalRowCount),
@@ -1697,7 +1841,7 @@
   );
   const layoutWorkflowSpans = $derived(
     containmentLayout
-      .workflowSpans(renderedWindowStart, renderedWindowEnd)
+      .workflowSpans(0, layoutRowCount)
       .map((span) => ({
         ...span,
         rowEnd: Math.min(span.rowEnd, presentedPhysicalRowCount),
@@ -1779,39 +1923,101 @@
       ];
     });
   });
+  const frameIntersectsBand = (frame: {
+    geometry: { topPx: number; bottomPx: number };
+  }): boolean =>
+    frame.geometry.bottomPx >= frameBandTop &&
+    frame.geometry.topPx <= frameBandTop + frameBandHeight;
+  const presentedRunFrameLayouts = $derived(
+    virtualizeRows
+      ? runFrameLayouts.filter(frameIntersectsBand)
+      : runFrameLayouts,
+  );
+  const presentedChainFrameLayouts = $derived(
+    virtualizeRows
+      ? chainFrameLayouts.filter(frameIntersectsBand)
+      : chainFrameLayouts,
+  );
+
+  let sceneRevision = $state(0);
+  let projectionRevision = $state(0);
+  let observedSceneIdentity: object | null = null;
+  let observedProjectionKey = '';
+
+  $effect(() => {
+    const identity = presentationSceneIdentity;
+    if (identity === observedSceneIdentity) return;
+    observedSceneIdentity = identity;
+    sceneRevision += 1;
+  });
+
+  $effect(() => {
+    const key = [
+      canvasWidth,
+      viewport.offsetPx,
+      displayMode,
+      collapsedSegmentCount,
+      windowLayoutRevision,
+    ].join(':');
+    if (key === observedProjectionKey) return;
+    observedProjectionKey = key;
+    projectionRevision += 1;
+  });
 
   const performanceTracker = new TimelinePerformanceTracker();
   let performanceUpdateStartedAt = 0;
   let performanceUpdateRevision = '';
+  let lastRecordedPerformanceRevision = '';
 
   const getPerformanceUpdateRevision = (): string =>
     [
-      windowStart,
-      windowEnd,
+      virtualizeRows ? windowStart : 0,
+      virtualizeRows ? windowEnd : layoutRowCount,
       layoutRowCount,
       mountedRowCount,
       fixedWindowDurationMs,
       windowLayoutRevision,
-      runFrameLayouts.length,
-      chainFrameLayouts.length,
+      presentedRunFrameLayouts.length,
+      presentedChainFrameLayouts.length,
     ].join(':');
 
   $effect.pre(() => {
+    if (!instrumentPerformance) return;
     performanceUpdateStartedAt = performance.now();
     performanceUpdateRevision = getPerformanceUpdateRevision();
   });
 
   $effect(() => {
+    if (!instrumentPerformance) return;
     const revision = getPerformanceUpdateRevision();
     const element = containerEl;
-    if (!element || revision !== performanceUpdateRevision) return;
+    if (
+      !element ||
+      revision !== performanceUpdateRevision ||
+      revision === lastRecordedPerformanceRevision
+    ) {
+      return;
+    }
+    lastRecordedPerformanceRevision = revision;
 
     const updateMs = performance.now() - performanceUpdateStartedAt;
     performanceStats = performanceTracker.record({
       logicalRows: layoutRowCount,
       mountedRows: mountedRowCount,
-      renderedLines: element.querySelectorAll('.tl-line').length,
-      renderedElements: element.querySelectorAll('*').length,
+      renderedLines: pool.reduce(
+        (count, slot) =>
+          count +
+          (slot?.row.kind === 'group'
+            ? Math.max(
+                0,
+                (('eventPoints' in slot.row.entry.group
+                  ? slot.row.entry.group.eventPoints?.length
+                  : undefined) ?? slot.row.entry.group.eventCount) - 1,
+              )
+            : 0),
+        0,
+      ),
+      renderedElements: mountedRowCount,
       updateMs,
     });
   });
@@ -1839,8 +2045,16 @@
   data-segmented-scroll={verticalScrollModel.segmented || undefined}
   data-virtualized-rows={virtualizeRows || undefined}
   data-logical-row-count={layoutRowCount}
+  data-logical-point-count={totalTimelinePointCount}
   data-available-row-count={availableLayoutRowCount}
   data-row-presentation-complete={rowPresentationComplete}
+  data-scene-revision={sceneRevision}
+  data-projection-revision={projectionRevision}
+  data-presentation-revision={presentationController.counters.updates}
+  data-scene-ready={rowPresentationComplete &&
+    recursiveSession.requestCount === 0 &&
+    !modelLoading}
+  data-model-ready={!modelLoading}
   aria-busy={!rowPresentationComplete || undefined}
   data-mounted-row-count={performanceStats?.mountedRows}
   data-rendered-line-count={performanceStats?.renderedLines}
@@ -1910,16 +2124,16 @@
         <div
           class="timeline-height-rail pointer-events-none absolute z-10 bg-current"
           style:left="{GUTTER - RADIUS / 4}px"
-          style:top="{lineTop}px"
+          style:top="{virtualizeRows ? layerBandTop : lineTop}px"
           style:width="{RADIUS / 2}px"
-          style:height="{lineBottom}px"
+          style:height="{virtualizeRows ? layerBandHeight : lineBottom}px"
         ></div>
         <div
           class="timeline-height-rail pointer-events-none absolute z-10 bg-current"
           style:left="{canvasWidth - GUTTER - RADIUS / 4}px"
-          style:top="{lineTop}px"
+          style:top="{virtualizeRows ? layerBandTop : lineTop}px"
           style:width="{RADIUS / 2}px"
-          style:height="{lineBottom}px"
+          style:height="{virtualizeRows ? layerBandHeight : lineBottom}px"
         ></div>
 
         <div class="timeline-viewport-clip absolute inset-0">
@@ -1928,6 +2142,8 @@
             x2={canvasWidth - GUTTER + RADIUS / 4}
             gutter={GUTTER}
             {timelineHeight}
+            bandTop={virtualizeRows ? layerBandTop : 0}
+            bandHeight={virtualizeRows ? layerBandHeight : timelineHeight}
             {startTime}
             {scale}
             viewportOffsetPx={viewport.offsetPx}
@@ -1935,7 +2151,7 @@
           <div
             class="timeline-motion-layer pointer-events-none absolute inset-0"
           >
-            {#each chainFrameLayouts as frame (frame.candidate.key)}
+            {#each presentedChainFrameLayouts as frame (frame.candidate.key)}
               <WorkflowFrame
                 geometry={frame.geometry}
                 label={frame.candidate.label}
@@ -1962,7 +2178,7 @@
                 )}
               />
             {/each}
-            {#each runFrameLayouts as frame (frame.candidate.key)}
+            {#each presentedRunFrameLayouts as frame (frame.candidate.key)}
               <WorkflowFrame
                 geometry={frame.geometry}
                 label={frame.candidate.label}
@@ -2031,7 +2247,7 @@
           <div
             class="timeline-motion-layer pointer-events-none absolute inset-0 z-20"
           >
-            {#each chainFrameLayouts as frame (frame.candidate.key)}
+            {#each presentedChainFrameLayouts as frame (frame.candidate.key)}
               {@const incomingEdge = frame.candidate.workflowKey
                 ? incomingEdgeByWorkflowKey.get(frame.candidate.workflowKey)
                 : undefined}
@@ -2067,7 +2283,7 @@
                   : undefined}
               />
             {/each}
-            {#each runFrameLayouts as frame (frame.candidate.key)}
+            {#each presentedRunFrameLayouts as frame (frame.candidate.key)}
               <WorkflowFrame
                 geometry={frame.geometry}
                 label={frame.candidate.label}
@@ -2122,17 +2338,20 @@
             {/each}
           </div>
 
-          <!-- Keyed by slot index so Svelte reuses the <li>s in place; the <li>
-             persists when its slot is null, only the inner row toggles.
-             pointer-events-none so clicks fall through to the collapse toggles;
-             event buttons opt back in with pointer-events:auto. -->
+          <!-- Keyed by immutable scene row identity so returning to a retained
+             chunk reuses its <li> and component subtree. pointer-events-none
+             lets clicks fall through to the collapse toggles; event buttons
+             opt back in with pointer-events:auto. -->
           <ul
             class="pointer-events-none absolute inset-0 m-0 list-none p-0"
             class:timeline-rows-entering={rowEntryOffsets.size > 0}
             class:timeline-rows-animating={rowEntryAnimating}
             bind:this={rowStackEl}
           >
-            {#each pool as slot, slotIndex (slotIndex)}
+            {#each presentationRows as slot, slotIndex (slot.row.key)}
+              {@const slotActive = activePresentationChunkKeys.has(
+                slot.chunkKey,
+              )}
               {@const rowKey = slot ? layoutRowKey(slot.row) : ''}
               {@const entryOffsetPx = rowEntryOffsets.get(rowKey) ?? 0}
               <li
@@ -2144,7 +2363,11 @@
                 data-timeline-key={rowKey || undefined}
                 data-timeline-entry-offset={entryOffsetPx || undefined}
                 data-timeline-entry-key={rowKey || undefined}
-                style:display={slot ? 'block' : 'none'}
+                aria-hidden={!slotActive || undefined}
+                aria-posinset={slot.index + 1}
+                aria-setsize={layoutRowCount}
+                inert={!slotActive || undefined}
+                style:display={slotActive ? 'block' : 'none'}
                 style:height="{ROW_HEIGHT}px"
                 style:contain="layout"
                 style:--timeline-row-entry-offset={`${entryOffsetPx}px`}
@@ -2179,32 +2402,42 @@
                         )
                     : undefined}
                   <div class="timeline-motion-layer absolute inset-0">
-                    <TimelineGraphRow
-                      group={timelineEntry.group}
-                      timelineKey={timelineEntry.timelineKey}
-                      eventCount={timelineEntry.group.eventCount}
-                      {canvasWidth}
-                      project={projectX}
-                      {readOnly}
-                      active={timelineEntry?.active ?? true}
-                      retainedEndTimeMs={timelineEntry?.active
-                        ? undefined
-                        : timelineEntry?.runEndTimeMs}
-                      pendingEndTimeMs={timelineEntry?.active
-                        ? timeline.workflowTimespan.endTimeMs
-                        : undefined}
-                      viewportEndOverscanPx={displayMode === 'fixed-window'
-                        ? TIMELINE_MOTION_OVERSCAN_PX
-                        : 0}
-                      labelLeadingOffsetPx={slot.row.childEdge &&
-                      childControlFitsAfter
-                        ? 34
-                        : 0}
-                      labelTrailingOffsetPx={slot.row.childEdge &&
-                      !childControlFitsAfter
-                        ? 34
-                        : 0}
-                    />
+                    {#if !('eventList' in timelineEntry.group) && timelineEntry.group.eventCount === 1 && !timelineEntry.group.isPending && timelineEntry.active === false}
+                      <TimelineStaticMarkerRow
+                        group={timelineEntry.group}
+                        timelineKey={timelineEntry.timelineKey}
+                        {canvasWidth}
+                        project={projectX}
+                        {readOnly}
+                      />
+                    {:else}
+                      <TimelineGraphRow
+                        group={timelineEntry.group}
+                        timelineKey={timelineEntry.timelineKey}
+                        eventCount={timelineEntry.group.eventCount}
+                        {canvasWidth}
+                        project={projectX}
+                        {readOnly}
+                        active={timelineEntry?.active ?? true}
+                        retainedEndTimeMs={timelineEntry?.active
+                          ? undefined
+                          : timelineEntry?.runEndTimeMs}
+                        pendingEndTimeMs={timelineEntry?.active
+                          ? timeline.workflowTimespan.endTimeMs
+                          : undefined}
+                        viewportEndOverscanPx={displayMode === 'fixed-window'
+                          ? TIMELINE_MOTION_OVERSCAN_PX
+                          : 0}
+                        labelLeadingOffsetPx={slot.row.childEdge &&
+                        childControlFitsAfter
+                          ? 34
+                          : 0}
+                        labelTrailingOffsetPx={slot.row.childEdge &&
+                        !childControlFitsAfter
+                          ? 34
+                          : 0}
+                      />
+                    {/if}
                     {#if slot.row.childEdge}
                       <TimelineChildEdgeRow
                         edge={slot.row.childEdge}

@@ -25,6 +25,16 @@ export class TimelineVisibilityBitset {
     this.words = words ?? new Uint32Array(Math.ceil(length / WORD_BITS));
   }
 
+  static all(length: number): TimelineVisibilityBitset {
+    const words = new Uint32Array(Math.ceil(length / WORD_BITS));
+    words.fill(0xffffffff);
+    const trailingBits = length & (WORD_BITS - 1);
+    if (trailingBits && words.length > 0) {
+      words[words.length - 1] = 0xffffffff >>> (WORD_BITS - trailingBits);
+    }
+    return new TimelineVisibilityBitset(length, words);
+  }
+
   set(ordinal: number, visible = true): void {
     if (ordinal < 0 || ordinal >= this.length) return;
     const word = ordinal >>> 5;

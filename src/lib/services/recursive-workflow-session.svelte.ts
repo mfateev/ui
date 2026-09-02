@@ -78,6 +78,12 @@ export class RecursiveWorkflowSession {
     string,
     { controller: AbortController; edges: Set<TimelineChildEdge> }
   >();
+  readonly counters = {
+    topologyRequests: 0,
+    topologyResolutions: 0,
+    topologyTruncations: 0,
+    scrollAttributedRequests: 0,
+  };
 
   constructor({
     namespace,
@@ -98,6 +104,7 @@ export class RecursiveWorkflowSession {
     this.loader = loader;
     this.livePoller = livePoller;
     this.rootNode = this.createNode({ namespace, workflow, runs, depth: 0 });
+    this.resolveTopology();
   }
 
   get snapshot(): TimelineWorkflowNode {
@@ -134,6 +141,7 @@ export class RecursiveWorkflowSession {
     this.discoverEdges(this.rootNode);
     this.rebuildLoadedIndex();
     this.pruneUnreachableTasks();
+    this.resolveTopology();
     this.changed();
     this.drain();
   }
@@ -145,7 +153,6 @@ export class RecursiveWorkflowSession {
     const keys = [...edgeKeys];
     this.visibleEdgeKeys.clear();
     for (const key of keys) this.visibleEdgeKeys.add(key);
-    if (this.pruneInvisibleTasks()) changed = true;
     for (const key of keys) {
       const found = this.findEdge(key);
       if (!found) continue;
@@ -163,6 +170,26 @@ export class RecursiveWorkflowSession {
       this.changed();
       this.drain();
     }
+  }
+
+  resolveTopology(): void {
+    if (this.disposed) return;
+    const visit = (node: TimelineWorkflowNode, ancestry: string[]): void => {
+      const nextAncestry = [...ancestry, node.key];
+      for (const edge of node.childrenByGroupKey.values()) {
+        if (
+          edge.expansion === 'expanded' &&
+          (edge.load.state === 'idle' || edge.load.state === 'evicted')
+        ) {
+          this.enqueue(edge, nextAncestry);
+        }
+        if (edge.load.state === 'loaded') {
+          visit(edge.load.node, nextAncestry);
+        }
+      }
+    };
+    visit(this.rootNode, []);
+    this.drain();
   }
 
   toggle(edgeKey: string): void {
@@ -259,7 +286,7 @@ export class RecursiveWorkflowSession {
     const previous = node.childrenByGroupKey;
     const next = new SvelteMap<string, TimelineChildEdge>();
     for (const run of node.runs) {
-      for (const entry of run.groups) {
+      for (const entry of run.topologyGroups ?? run.groups) {
         // Event groups from the application are categorized. Keep accepting
         // uncategorized groups for lightweight callers and test fixtures.
         if (
@@ -319,6 +346,7 @@ export class RecursiveWorkflowSession {
     const targetKey = childExecutionKey(edge.reference);
     if (ancestry.includes(targetKey)) {
       edge.load = { state: 'truncated', truncation: { reason: 'cycle' } };
+      this.counters.topologyTruncations += 1;
       return;
     }
     if (edge.depth > this.limits.maximumDepth) {
@@ -326,6 +354,7 @@ export class RecursiveWorkflowSession {
         state: 'truncated',
         truncation: { reason: 'depth-limit' },
       };
+      this.counters.topologyTruncations += 1;
       return;
     }
     const loaded = this.loadedByExecutionKey.get(targetKey);
@@ -340,7 +369,7 @@ export class RecursiveWorkflowSession {
       return;
     }
 
-    let reservation = this.reserveWithEviction(ancestry);
+    let reservation = this.reserve();
     const canWaitForCapacity =
       !reservation &&
       this.activeRequests >= this.limits.maximumConcurrentRequests &&
@@ -353,6 +382,7 @@ export class RecursiveWorkflowSession {
         state: 'truncated',
         truncation: { reason: this.limitReason() },
       };
+      this.counters.topologyTruncations += 1;
       return;
     }
     reservation ??= emptyReservation();
@@ -372,6 +402,7 @@ export class RecursiveWorkflowSession {
     edge.load = { state: 'loading', requestKey: targetKey };
     this.tasksByExecutionKey.set(targetKey, task);
     this.queued.push(task);
+    this.counters.topologyRequests += 1;
     this.drain();
   }
 
@@ -411,39 +442,6 @@ export class RecursiveWorkflowSession {
     };
     this.add(this.reserved, reservation);
     return reservation;
-  }
-
-  private reserveWithEviction(ancestry: string[]): Reservation | null {
-    let reservation = this.reserve();
-    if (reservation) return reservation;
-
-    const protectedNodeKeys = new SvelteSet(ancestry);
-    const candidates: TimelineChildEdge[] = [];
-    const visited = new SvelteSet<TimelineWorkflowNode>();
-    const visit = (node: TimelineWorkflowNode): void => {
-      if (visited.has(node)) return;
-      visited.add(node);
-      for (const edge of node.childrenByGroupKey.values()) {
-        if (edge.load.state !== 'loaded') continue;
-        if (
-          !this.visibleEdgeKeys.has(edge.key) &&
-          !protectedNodeKeys.has(edge.load.node.key)
-        ) {
-          candidates.push(edge);
-        }
-        visit(edge.load.node);
-      }
-    };
-    visit(this.rootNode);
-    candidates.sort((left, right) => left.lastVisibleAt - right.lastVisibleAt);
-
-    for (const candidate of candidates) {
-      candidate.load = { state: 'evicted' };
-      this.rebuildLoadedIndex();
-      reservation = this.reserve();
-      if (reservation) return reservation;
-    }
-    return null;
   }
 
   private limitReason():
@@ -507,6 +505,7 @@ export class RecursiveWorkflowSession {
       });
       if (this.disposed || task.controller.signal.aborted) return;
       this.commitLoaded(task, result);
+      this.counters.topologyResolutions += 1;
       committed = true;
     } catch (error) {
       if (this.disposed || task.controller.signal.aborted) return;
@@ -536,6 +535,7 @@ export class RecursiveWorkflowSession {
       }
       this.activeRequests -= 1;
       if (committed) this.enqueueKnownSuccessors(task);
+      if (committed) this.resolveTopology();
       this.changed();
       this.drain();
     }
@@ -634,21 +634,6 @@ export class RecursiveWorkflowSession {
       if (task.edges.size) continue;
       this.cancelTask(task);
     }
-  }
-
-  private pruneInvisibleTasks(): boolean {
-    let changed = false;
-    for (const task of [...this.tasksByExecutionKey.values()]) {
-      if (task.refresh) continue;
-      for (const edge of [...task.edges]) {
-        if (this.visibleEdgeKeys.has(edge.key)) continue;
-        task.edges.delete(edge);
-        if (edge.load.state === 'loading') edge.load = { state: 'idle' };
-        changed = true;
-      }
-      if (!task.edges.size) this.cancelTask(task);
-    }
-    return changed;
   }
 
   private cancelTask(task: QueueTask): void {

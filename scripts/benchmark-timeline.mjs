@@ -29,7 +29,9 @@ await page.addInitScript(() => {
 });
 
 try {
-  const url = new URL(timelinePath, baseUrl).href;
+  const timelineUrl = new URL(timelinePath, baseUrl);
+  timelineUrl.searchParams.set('timeline_instrumentation', 'on');
+  const url = timelineUrl.href;
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   const timeline = page.locator('#event-history-timeline-graph');
   await timeline.waitFor({ state: 'visible', timeout: 60_000 });

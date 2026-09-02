@@ -26,7 +26,7 @@ describe('timeline segmented scrolling', () => {
     });
     expect(model.segmented).toBe(true);
     expect(model.physicalHeightPx).toBe(TIMELINE_SEGMENTED_SCROLL_HEIGHT_PX);
-    expect(model.physicalHeightPx).toBeGreaterThan(
+    expect(model.physicalHeightPx).toBeLessThan(
       TIMELINE_NORMAL_SCROLL_LIMIT_PX,
     );
   });
@@ -46,7 +46,7 @@ describe('timeline segmented scrolling', () => {
       totalRows: 1_000_000,
       rowHeightPx: 44,
     });
-    const before = { originRow: 0, scrollTop: 6_500_000 };
+    const before = { originRow: 0, scrollTop: 800_000 };
     const anchor = before.originRow + (before.scrollTop + 400) / 44;
     const next = rebaseTimelineScroll({
       model,

@@ -2,8 +2,19 @@ import { describe, expect, it } from 'vitest';
 
 import type { WorkflowExecution } from '$lib/types/workflows';
 
-import { TimelineIntervalLoader } from './timeline-interval-loader';
+import {
+  makeWorkflowCompleted,
+  makeWorkflowStarted,
+} from './test-helpers/synthetic-events';
+import {
+  TimelineIntervalLoader,
+  verifyCompleteClosedHistory,
+} from './timeline-interval-loader';
 import { DEFAULT_TIMELINE_PERFORMANCE_LIMITS } from './timeline-performance-limits';
+import {
+  TimelineDetailCache,
+  TimelineRunModelCache,
+} from './timeline-run-model';
 
 const runs = (count: number) =>
   Array.from({ length: count }, (_, index) => ({
@@ -131,5 +142,79 @@ describe('TimelineIntervalLoader', () => {
     await Promise.all([first, second]);
     expect(published).toEqual(['current']);
     loader.dispose();
+  });
+
+  it('rejects a missing middle event and a changing Describe snapshot', () => {
+    const initial = {
+      ...workflow('run'),
+      endTime: '2024-01-01T00:00:00Z',
+      historyEvents: '3',
+    };
+    const incomplete = verifyCompleteClosedHistory({
+      initial,
+      final: initial,
+      history: {
+        kind: 'complete',
+        events: [makeWorkflowStarted(1), makeWorkflowCompleted(3)],
+        pages: 2,
+        duplicateEventIds: 0,
+      },
+    });
+    expect(incomplete).toMatchObject({
+      complete: false,
+      gaps: 1,
+      reason: 'incomplete-history',
+    });
+    const raced = verifyCompleteClosedHistory({
+      initial,
+      final: { ...initial, historyEvents: '4' },
+      history: {
+        kind: 'complete',
+        events: [makeWorkflowStarted(1), makeWorkflowCompleted(2)],
+        pages: 1,
+        duplicateEventIds: 0,
+      },
+    });
+    expect(raced.reason).toBe('snapshot-changed');
+  });
+
+  it('seals and reuses a complete closed run by authoritative identity', async () => {
+    const session = {
+      detailCache: new TimelineDetailCache(1024 * 1024),
+      modelCache: new TimelineRunModelCache(4, 1024 * 1024),
+    };
+    const loader = new TimelineIntervalLoader(
+      DEFAULT_TIMELINE_PERFORMANCE_LIMITS,
+      session,
+    );
+    const closed = {
+      ...workflow('run-0'),
+      endTime: '2024-01-01T00:00:00Z',
+      historyEvents: '2',
+    };
+    const load = () =>
+      loader.load({
+        namespace: 'default',
+        workflowId: 'workflow',
+        runs: runs(1),
+        startTimeMs: 0,
+        endTimeMs: 10,
+        describeRun: async () => closed,
+        fetchHistory: async () => ({
+          kind: 'complete',
+          events: [makeWorkflowStarted(1), makeWorkflowCompleted(2)],
+          pages: 1,
+          duplicateEventIds: 0,
+        }),
+      });
+
+    const first = await load();
+    expect(first.models[0].sealed).toBe(true);
+    const second = await load();
+    expect(second.models[0]).toBe(first.models[0]);
+    expect(loader.counters.sealedRunCompilations).toBe(1);
+    expect(loader.counters.sealedModelCacheHits).toBe(1);
+    loader.dispose();
+    session.modelCache.clear();
   });
 });

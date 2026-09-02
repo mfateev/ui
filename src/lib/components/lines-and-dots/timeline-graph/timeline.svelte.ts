@@ -5,7 +5,11 @@ import type { WorkflowExecution } from '$lib/types/workflows';
 import { isWorkflowDelayed } from '$lib/utilities/delayed-workflows';
 import { validTimeToDate } from '$lib/utilities/format-time';
 
-import { buildTimeSegments } from './build-time-segments';
+import {
+  buildTimeSegments,
+  buildTimeSegmentsFromRanges,
+  type TimelineActiveTimeRange,
+} from './build-time-segments';
 import { Timespan } from './timespan';
 import type { TimeSegment, TimeSegmentKey } from './types';
 
@@ -14,7 +18,10 @@ const DEFAULT_DURATION_THRESHOLD_RATIO = 0.1;
 interface TimelineInit {
   getFirstEventTime?: () => string | undefined;
   getWorkflow: () => WorkflowExecution;
-  getLazyGroups: () => LazyGroup[];
+  getLazyGroups: () => Iterable<LazyGroup>;
+  getPrecompiledActiveRanges?: () =>
+    | Iterable<TimelineActiveTimeRange>
+    | undefined;
   getLazyGroupEndMs?: (group: LazyGroup) => number | undefined;
   getCurrentTimeMs: () => number;
   getDurationThresholdRatio?: () => number;
@@ -31,7 +38,10 @@ export class Timeline {
 
   private _getWorkflow: () => WorkflowExecution;
   private _getFirstEventTime: () => string | undefined;
-  private _getLazyGroups: () => LazyGroup[];
+  private _getLazyGroups: () => Iterable<LazyGroup>;
+  private _getPrecompiledActiveRanges?: () =>
+    | Iterable<TimelineActiveTimeRange>
+    | undefined;
   private _getLazyGroupEndMs?: (group: LazyGroup) => number | undefined;
   private _getCurrentTimeMs: () => number;
   private _getDurationThresholdRatio: () => number;
@@ -45,6 +55,7 @@ export class Timeline {
     getFirstEventTime,
     getWorkflow,
     getLazyGroups,
+    getPrecompiledActiveRanges,
     getLazyGroupEndMs,
     getCurrentTimeMs,
     getDurationThresholdRatio,
@@ -57,6 +68,7 @@ export class Timeline {
     this._getFirstEventTime = getFirstEventTime ?? (() => undefined);
     this._getWorkflow = getWorkflow;
     this._getLazyGroups = getLazyGroups;
+    this._getPrecompiledActiveRanges = getPrecompiledActiveRanges;
     this._getLazyGroupEndMs = getLazyGroupEndMs;
     this._getCurrentTimeMs = getCurrentTimeMs;
     this._getDurationThresholdRatio =
@@ -138,6 +150,13 @@ export class Timeline {
     // then build the real segmented scale once (one reflow instead of ~1/page).
     if (this._getLoading()) {
       return [{ kind: 'active', timespan: this.workflowTimespan }];
+    }
+    const precompiled = this._getPrecompiledActiveRanges?.();
+    if (precompiled) {
+      return buildTimeSegmentsFromRanges({
+        workflowTimespan: this.workflowTimespan,
+        groupTimespans: precompiled,
+      });
     }
     return buildTimeSegments({
       workflowTimespan: this.workflowTimespan,

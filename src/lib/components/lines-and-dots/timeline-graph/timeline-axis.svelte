@@ -19,6 +19,8 @@
     x2: number;
     gutter: number;
     timelineHeight: number;
+    bandTop?: number;
+    bandHeight?: number;
     startTime: string | Timestamp;
     scale: TimelineScale;
     viewportOffsetPx: number;
@@ -28,6 +30,8 @@
     x2 = 1000,
     gutter = 0,
     timelineHeight = 1000,
+    bandTop = 0,
+    bandHeight = timelineHeight,
     startTime,
     scale,
     viewportOffsetPx = 0,
@@ -92,7 +96,8 @@
       class="grid-line top-0"
       data-timeline-axis-world-px={tick.worldPx}
       style:left="{tick.screenPx}px"
-      style:height="{timelineHeight}px"
+      style:top="{bandTop}px"
+      style:height="{bandHeight}px"
     ></div>
     <div
       class="tick-label"

@@ -63,6 +63,7 @@
     timelineKey?: string;
     active?: boolean;
     retainedEndTimeMs?: number;
+    pendingEndTimeMs?: number;
     labelLeadingOffsetPx?: number;
     labelTrailingOffsetPx?: number;
     viewportEndOverscanPx?: number;
@@ -77,6 +78,7 @@
     timelineKey = group.id,
     active = true,
     retainedEndTimeMs,
+    pendingEndTimeMs,
     labelLeadingOffsetPx = 0,
     labelTrailingOffsetPx = 0,
     viewportEndOverscanPx = 0,
@@ -194,6 +196,10 @@
       points,
       viewportStartPx: GUTTER,
       viewportEndPx: canvasWidth - GUTTER + viewportEndOverscanPx,
+      pendingEndPx:
+        isLivePending && pendingEndTimeMs !== undefined
+          ? Math.round(project(new Date(pendingEndTimeMs).toISOString()))
+          : undefined,
       isPending: isLivePending,
       hasPauseTime: Boolean(pauseTime),
       haloPx: HALO,

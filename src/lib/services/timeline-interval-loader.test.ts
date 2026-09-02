@@ -24,6 +24,26 @@ const workflow = (runId: string): WorkflowExecution =>
   }) as WorkflowExecution;
 
 describe('TimelineIntervalLoader', () => {
+  it('loads each run once when the overview temporarily contains duplicates', async () => {
+    const loader = new TimelineIntervalLoader();
+    const published: string[] = [];
+
+    const result = await loader.load({
+      namespace: 'default',
+      workflowId: 'workflow',
+      runs: [runs(1)[0], runs(1)[0]],
+      startTimeMs: 0,
+      endTimeMs: 10,
+      describeRun: async (runId) => workflow(runId),
+      fetchEdge: async () => [],
+      onModel: ({ run }) => published.push(run.runId),
+    });
+
+    expect(result.models).toHaveLength(1);
+    expect(published).toEqual(['run-0']);
+    loader.dispose();
+  });
+
   it('bounds run jobs and HTTP requests while publishing progressively', async () => {
     const loader = new TimelineIntervalLoader({
       ...DEFAULT_TIMELINE_PERFORMANCE_LIMITS,

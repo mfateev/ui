@@ -62,10 +62,16 @@ export const selectTimelineIntervalRuns = ({
 }): { selected: WorkflowChainOverviewRun[]; omitted: number } => {
   const center = startTimeMs + (endTimeMs - startTimeMs) / 2;
   const intersecting: { run: WorkflowChainOverviewRun; index: number }[] = [];
+  const intersectingRunIds = new Set<string>();
   for (let index = 0; index < runs.length; index += 1) {
     const run = runs[index];
-    if (run.endTimeMs >= startTimeMs && run.startTimeMs <= endTimeMs) {
+    if (
+      !intersectingRunIds.has(run.runId) &&
+      run.endTimeMs >= startTimeMs &&
+      run.startTimeMs <= endTimeMs
+    ) {
       intersecting.push({ run, index });
+      intersectingRunIds.add(run.runId);
     }
   }
   if (intersecting.length === 0) return { selected: [], omitted: 0 };

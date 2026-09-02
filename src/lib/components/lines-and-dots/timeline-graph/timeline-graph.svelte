@@ -33,6 +33,7 @@
     timelineRunKey,
   } from './recursive-timeline-model';
   import {
+    getObservedTimelineEdgeKeys,
     getRecursiveTimelineContainmentLayout,
     type TimelineLayoutRow,
   } from './timeline-containment-layout';
@@ -1475,15 +1476,9 @@
   });
 
   const pooledEdgeKeys = $derived(
-    new Set(
-      pool.flatMap((slot) => {
-        const row = slot?.row;
-        if (!row) return [];
-        if (row.kind === 'group' && row.childEdge) {
-          return [row.childEdge.key];
-        }
-        return [];
-      }),
+    getObservedTimelineEdgeKeys(
+      pool.flatMap((slot) => (slot ? [slot.row] : [])),
+      incomingEdgeByWorkflowKey,
     ),
   );
   const pooledGroupIds = $derived(
@@ -1977,6 +1972,9 @@
                       retainedEndTimeMs={timelineEntry?.active
                         ? undefined
                         : timelineEntry?.runEndTimeMs}
+                      pendingEndTimeMs={timelineEntry?.active
+                        ? timeline.workflowTimespan.endTimeMs
+                        : undefined}
                       viewportEndOverscanPx={displayMode === 'fixed-window'
                         ? TIMELINE_MOTION_OVERSCAN_PX
                         : 0}

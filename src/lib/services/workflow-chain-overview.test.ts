@@ -7,6 +7,7 @@ import { DEFAULT_TIMELINE_PERFORMANCE_LIMITS } from './timeline-performance-limi
 import {
   loadWorkflowChainOverview,
   mergeWorkflowChainOverviewRuns,
+  reconcileWorkflowChainOverviewProgress,
   WorkflowChainOverviewAccumulator,
 } from './workflow-chain-overview';
 
@@ -233,5 +234,41 @@ describe('mergeWorkflowChainOverviewRuns', () => {
     }
     expect(accumulator.runs).toHaveLength(10_000);
     expect(accumulator.indexOf('run-9999')).toBe(9999);
+  });
+});
+
+describe('reconcileWorkflowChainOverviewProgress', () => {
+  it('inserts discovered runs ahead of an already-published live tail', () => {
+    const timelineRun = (
+      runId: string,
+      startTimeMs: number,
+      endTimeMs: number,
+    ) => ({
+      runId,
+      status: 'Running' as const,
+      startTimeMs,
+      endTimeMs,
+    });
+    const current = [timelineRun('run-3', 300, 400)];
+
+    reconcileWorkflowChainOverviewProgress(current, {
+      run: timelineRun('run-1', 100, 200),
+      index: 0,
+    });
+    reconcileWorkflowChainOverviewProgress(current, {
+      run: timelineRun('run-2', 200, 300),
+      index: 1,
+    });
+    reconcileWorkflowChainOverviewProgress(current, {
+      run: timelineRun('run-3', 300, 450),
+      index: 2,
+    });
+
+    expect(current.map(({ runId }) => runId)).toEqual([
+      'run-1',
+      'run-2',
+      'run-3',
+    ]);
+    expect(current[2].endTimeMs).toBe(450);
   });
 });

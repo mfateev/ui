@@ -130,6 +130,24 @@ describe('getTimelineRowGeometry', () => {
     });
   });
 
+  it('caps a pending bar at its owning run boundary', () => {
+    expect(
+      getTimelineRowGeometry({
+        points: [40],
+        viewportStartPx: 20,
+        viewportEndPx: 120,
+        pendingEndPx: 90,
+        isPending: true,
+        hasPauseTime: false,
+        haloPx: 6,
+      }),
+    ).toEqual({
+      connectors: [{ startPx: 40, endPx: 90, index: 0, pending: true }],
+      dots: [{ xPx: 40, index: 0 }],
+      hitRange: { startPx: 34, endPx: 96 },
+    });
+  });
+
   it('does not extend paused rows to the right edge', () => {
     expect(
       getTimelineRowGeometry({

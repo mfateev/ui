@@ -285,6 +285,52 @@ describe('RecursiveWorkflowSession', () => {
     session.dispose();
   });
 
+  it('commits a live refresh after its child leaves the visible rows', async () => {
+    const pollOptions: LivePollOptions[] = [];
+    const livePoller = vi.fn(
+      (options: LivePollOptions) =>
+        new Promise<string>((resolve) => {
+          pollOptions.push(options);
+          options.signal.addEventListener('abort', () => resolve(''), {
+            once: true,
+          });
+        }),
+    );
+    let finishRefresh: (() => void) | undefined;
+    const loader = vi.fn(
+      ({ reference }: Parameters<typeof loadChildWorkflow>[0]) => {
+        if (loader.mock.calls.length === 1) {
+          return Promise.resolve(running(reference.workflowId));
+        }
+        return new Promise<LoadedChildWorkflow>((resolve) => {
+          finishRefresh = () => resolve(loaded(reference.workflowId));
+        });
+      },
+    );
+    const session = new RecursiveWorkflowSession({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1)])],
+      loader,
+      livePoller,
+    });
+    const edge = [...session.snapshot.childrenByGroupKey.values()][0];
+
+    session.observeEdges([edge.key]);
+    await vi.waitFor(() => expect(pollOptions).toHaveLength(1));
+    pollOptions[0].onNewEvents?.();
+    await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
+    session.observeEdges([]);
+    finishRefresh?.();
+    await vi.waitFor(() => expect(session.requestCount).toBe(0));
+
+    expect(edge.load.state).toBe('loaded');
+    if (edge.load.state === 'loaded') {
+      expect(edge.load.node.runs[0].status).toBe('Completed');
+    }
+    session.dispose();
+  });
+
   it('preserves loaded descendant state when a parent refreshes', async () => {
     const pollOptions: LivePollOptions[] = [];
     const livePoller = vi.fn(

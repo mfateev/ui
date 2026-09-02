@@ -74,6 +74,7 @@ interface TimelineRowGeometryOptions {
   points: number[];
   viewportStartPx: number;
   viewportEndPx: number;
+  pendingEndPx?: number;
   isPending: boolean;
   hasPauseTime: boolean;
   haloPx: number;
@@ -83,6 +84,7 @@ export function getTimelineRowGeometry({
   points,
   viewportStartPx,
   viewportEndPx,
+  pendingEndPx,
   isPending,
   hasPauseTime,
   haloPx,
@@ -105,7 +107,13 @@ export function getTimelineRowGeometry({
 
   if (isPending && !hasPauseTime && points.length > 0) {
     const clipped = intersectPixelRanges(
-      { startPx: points[points.length - 1], endPx: viewportEndPx },
+      {
+        startPx: points[points.length - 1],
+        endPx: Math.max(
+          points[points.length - 1],
+          pendingEndPx ?? viewportEndPx,
+        ),
+      },
       visibleRange,
     );
     if (clipped) {

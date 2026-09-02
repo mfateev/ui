@@ -54,6 +54,21 @@ export const mergeWorkflowChainOverviewRuns = (
   return accumulator.snapshot();
 };
 
+export const reconcileWorkflowChainOverviewProgress = (
+  current: WorkflowChainOverviewRun[],
+  progress: Pick<WorkflowChainOverviewProgress, 'run' | 'index'>,
+): void => {
+  const existingIndex = current.findIndex(
+    ({ runId }) => runId === progress.run.runId,
+  );
+  const existing =
+    existingIndex < 0 ? undefined : current.splice(existingIndex, 1)[0];
+  const run = existing
+    ? mergeWorkflowChainOverviewRuns([existing], [progress.run])[0]
+    : progress.run;
+  current.splice(Math.min(progress.index, current.length), 0, run);
+};
+
 interface LoadWorkflowChainOverviewOptions {
   namespace: string;
   workflowId: string;

@@ -10,6 +10,7 @@ import {
   type TimelineWorkflowNode,
 } from './recursive-timeline-model';
 import {
+  getObservedTimelineEdgeKeys,
   getRecursiveTimelineContainmentLayout,
   type TimelineContainmentLayout,
 } from './timeline-containment-layout';
@@ -217,6 +218,15 @@ describe('getRecursiveTimelineContainmentLayout', () => {
     expect(followingParentRow?.rowIndex).toBe(
       (trailingPadding?.rowIndex ?? 0) + 1,
     );
+    const visibleChildRow = rows.find(
+      (row) => row.kind === 'group' && row.entry === childAction,
+    );
+    expect(
+      getObservedTimelineEdgeKeys(
+        visibleChildRow ? [visibleChildRow] : [],
+        new Map([['child', edge]]),
+      ),
+    ).toEqual(new Set(['root-edge']));
   });
 
   it('omits a relationship row when its event is filtered out', () => {

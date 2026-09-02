@@ -115,6 +115,22 @@ export type RecursiveContainmentLayoutInput = {
   descMinId: number;
 };
 
+export const getObservedTimelineEdgeKeys = (
+  rows: Iterable<TimelineLayoutRow>,
+  incomingEdgeByWorkflowKey: ReadonlyMap<string, TimelineChildEdge>,
+): Set<string> => {
+  const keys = new Set<string>();
+  for (const row of rows) {
+    const incomingEdge = incomingEdgeByWorkflowKey.get(row.workflowKey);
+    if (incomingEdge) keys.add(incomingEdge.key);
+    if (row.kind === 'group' && row.childEdge) {
+      keys.add(row.childEdge.key);
+    }
+    if (row.kind === 'child-state') keys.add(row.edge.key);
+  }
+  return keys;
+};
+
 type WithoutRowIndex<Row> = Row extends unknown ? Omit<Row, 'rowIndex'> : never;
 type RowWithoutIndex = WithoutRowIndex<TimelineLayoutRow>;
 type RowSegment = {

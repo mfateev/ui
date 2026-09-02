@@ -631,6 +631,7 @@ export class RecursiveWorkflowSession {
   private pruneInvisibleTasks(): boolean {
     let changed = false;
     for (const task of [...this.tasksByExecutionKey.values()]) {
+      if (task.refresh) continue;
       for (const edge of [...task.edges]) {
         if (this.visibleEdgeKeys.has(edge.key)) continue;
         task.edges.delete(edge);

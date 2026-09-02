@@ -59,6 +59,7 @@
   import {
     loadWorkflowChainOverview,
     mergeWorkflowChainOverviewRuns,
+    reconcileWorkflowChainOverviewProgress,
     type WorkflowChainOverviewRun,
   } from '$lib/services/workflow-chain-overview';
   import { clearActives } from '$lib/stores/active-events';
@@ -283,11 +284,7 @@
             ) {
               return;
             }
-            if (progress.mutation === 'append') {
-              chainOverviewRuns.push(progress.run);
-            } else {
-              chainOverviewRuns[progress.index] = progress.run;
-            }
+            reconcileWorkflowChainOverviewProgress(chainOverviewRuns, progress);
           },
         });
         if (controller.signal.aborted || generation !== chainLoadGeneration) {
@@ -370,7 +367,7 @@
       if (!(model instanceof BufferTimelineRunModel)) return;
       intervalModelReleases.push(model.retain());
       const run = model.run;
-      intervalTimelineRuns.push({
+      const timelineRun = {
         runId: run.runId,
         status: run.status,
         startTimeMs: run.startTimeMs,
@@ -380,7 +377,11 @@
         ),
         active: false,
         successorRunId: run.nextRunId,
-      });
+      };
+      intervalTimelineRuns = [
+        ...intervalTimelineRuns.filter(({ runId }) => runId !== run.runId),
+        timelineRun,
+      ];
     };
 
     const result = await intervalLoader.load({

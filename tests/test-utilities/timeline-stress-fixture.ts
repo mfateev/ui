@@ -12,6 +12,7 @@ export type TimelineStressRun = {
   endTimeMs: number;
   rowCount: number;
   eventCount: number;
+  rowType: 'marker' | 'activity';
   nextRunId?: string;
 };
 
@@ -41,6 +42,7 @@ export type TimelineStressFixtureOptions = {
   rowsPerRun: number;
   runDurationMs?: number;
   startTimeMs?: number;
+  rowType?: 'marker' | 'activity';
 };
 
 const timestamp = (milliseconds: number): string =>
@@ -95,12 +97,49 @@ const eventAt = (run: TimelineStressRun, eventIndex: number): HistoryEvent => {
     } as unknown as HistoryEvent;
   }
 
-  const rowIndex = eventIndex - 1;
+  const eventOffset = eventIndex - 1;
+  const rowIndex =
+    run.rowType === 'activity' ? Math.floor(eventOffset / 3) : eventOffset;
+  const eventInRow = run.rowType === 'activity' ? eventOffset % 3 : 0;
+  const rowSlotMs = (run.endTimeMs - run.startTimeMs) / (run.rowCount + 1);
   const eventTimeMs =
-    run.startTimeMs +
-    Math.floor(
-      ((rowIndex + 1) * (run.endTimeMs - run.startTimeMs)) / (run.rowCount + 1),
-    );
+    run.startTimeMs + Math.floor((rowIndex + 1 + eventInRow / 4) * rowSlotMs);
+  if (run.rowType === 'activity') {
+    const scheduledEventId = 2 + rowIndex * 3;
+    if (eventInRow === 0) {
+      return {
+        ...baseEvent(eventId, eventTimeMs, 'ActivityTaskScheduled'),
+        activityTaskScheduledEventAttributes: {
+          activityId: `stress-activity-${rowIndex + 1}`,
+          activityType: { name: 'TimelineStressActivity' },
+          taskQueue: { name: 'timeline-stress', kind: 'Normal' },
+          input: null,
+          workflowTaskCompletedEventId: '1',
+        },
+      } as unknown as HistoryEvent;
+    }
+    if (eventInRow === 1) {
+      return {
+        ...baseEvent(eventId, eventTimeMs, 'ActivityTaskStarted'),
+        activityTaskStartedEventAttributes: {
+          scheduledEventId: String(scheduledEventId),
+          identity: 'timeline-stress-worker',
+          requestId: `stress-request-${rowIndex + 1}`,
+          attempt: 1,
+          lastFailure: null,
+        },
+      } as unknown as HistoryEvent;
+    }
+    return {
+      ...baseEvent(eventId, eventTimeMs, 'ActivityTaskCompleted'),
+      activityTaskCompletedEventAttributes: {
+        result: null,
+        scheduledEventId: String(scheduledEventId),
+        startedEventId: String(scheduledEventId + 1),
+        identity: 'timeline-stress-worker',
+      },
+    } as unknown as HistoryEvent;
+  }
   return {
     ...baseEvent(eventId, eventTimeMs, 'MarkerRecorded'),
     markerRecordedEventAttributes: {
@@ -124,6 +163,7 @@ export const createTimelineStressFixture = ({
   rowsPerRun: requestedRowsPerRun,
   runDurationMs = 60_000,
   startTimeMs = DEFAULT_START_TIME_MS,
+  rowType = 'marker',
 }: TimelineStressFixtureOptions): TimelineStressFixture => {
   const runCount = boundedInteger(requestedRunCount, 'runCount');
   const rowsPerRun = boundedInteger(requestedRowsPerRun, 'rowsPerRun');
@@ -139,7 +179,8 @@ export const createTimelineStressFixture = ({
       startTimeMs: startTimeMs + index * runDurationMs,
       endTimeMs: startTimeMs + (index + 1) * runDurationMs,
       rowCount: rowsPerRun,
-      eventCount: rowsPerRun + 2,
+      eventCount: rowsPerRun * (rowType === 'activity' ? 3 : 1) + 2,
+      rowType,
       nextRunId: runIds[index + 1],
     };
   });

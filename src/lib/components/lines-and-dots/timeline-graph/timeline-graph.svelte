@@ -56,6 +56,11 @@
   } from './timeline-performance';
   import { getRowY, getTotalForY } from './timeline-positioning';
   import {
+    initialTimelinePaintRows,
+    nextTimelinePaintRows,
+    shouldBatchTimelineRows,
+  } from './timeline-progressive-rows';
+  import {
     getTimelineFrameBoundaryOffset,
     getTimelineRowEntryOffsets,
     shouldAnimateTimelineRowEntries,
@@ -74,6 +79,7 @@
     physicalYForLogicalRow,
     rebaseTimelineScroll,
     revealTimelineLogicalRow,
+    TIMELINE_NORMAL_SCROLL_LIMIT_PX,
   } from './timeline-segmented-scroll';
   import type {
     TimelineWindowControls,
@@ -130,6 +136,7 @@
     chainStartTimeMs?: number;
     windowControls?: TimelineWindowControls;
     performanceStats?: TimelinePerformanceStats;
+    disableVirtualization?: boolean;
   }
 
   let {
@@ -153,6 +160,7 @@
     chainStartTimeMs,
     windowControls = $bindable(),
     performanceStats = $bindable(),
+    disableVirtualization = false,
   }: Props = $props();
 
   let nowMs = $state(Date.now());
@@ -830,7 +838,91 @@
       descMinId,
     }),
   );
-  const layoutRowCount = $derived(containmentLayout.rowCount);
+  const availableLayoutRowCount = $derived(containmentLayout.rowCount);
+  const rowPresentationScope = $derived(
+    [
+      rowHeightRetentionScopeId ?? workflow.runId,
+      displayMode,
+      reverseSort,
+      $eventStatusFilter,
+      $eventTypeFilter.join(','),
+    ].join(':'),
+  );
+  let presentedLayoutRowCount = $state(0);
+  let rowPresentationBatching = $state(false);
+  let observedRowPresentationScope = '';
+
+  $effect(() => {
+    const availableRows = availableLayoutRowCount;
+    const scope = rowPresentationScope;
+    if (scope !== observedRowPresentationScope) {
+      observedRowPresentationScope = scope;
+      presentedLayoutRowCount = initialTimelinePaintRows(availableRows);
+      rowPresentationBatching = presentedLayoutRowCount < availableRows;
+    } else if (presentedLayoutRowCount > availableRows) {
+      presentedLayoutRowCount = availableRows;
+      rowPresentationBatching = false;
+    } else if (
+      !rowPresentationBatching &&
+      shouldBatchTimelineRows({
+        availableRows,
+        presentedRows: presentedLayoutRowCount,
+      })
+    ) {
+      rowPresentationBatching = true;
+    } else if (
+      !rowPresentationBatching &&
+      presentedLayoutRowCount < availableRows
+    ) {
+      presentedLayoutRowCount = availableRows;
+    }
+
+    if (
+      !containerEl ||
+      !rowPresentationBatching ||
+      presentedLayoutRowCount >= availableRows
+    ) {
+      if (rowPresentationBatching && presentedLayoutRowCount >= availableRows) {
+        rowPresentationBatching = false;
+      }
+      return;
+    }
+
+    let paintFrame = 0;
+    const prepareNextBatch = requestAnimationFrame(() => {
+      paintFrame = requestAnimationFrame(() => {
+        if (scope !== observedRowPresentationScope) return;
+        presentedLayoutRowCount = nextTimelinePaintRows({
+          availableRows,
+          presentedRows: presentedLayoutRowCount,
+        });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(prepareNextBatch);
+      cancelAnimationFrame(paintFrame);
+    };
+  });
+
+  const layoutRowCount = $derived(
+    Math.min(availableLayoutRowCount, presentedLayoutRowCount),
+  );
+  const rowPresentationComplete = $derived(
+    layoutRowCount >= availableLayoutRowCount,
+  );
+  const presentedPendingGap = $derived.by(() => {
+    const gap = containmentLayout.pendingGap;
+    if (!gap) return null;
+    return rowPresentationComplete || gap.insertionIndex < layoutRowCount
+      ? gap
+      : null;
+  });
+  const presentedPhysicalRowCount = $derived.by(() => {
+    if (rowPresentationComplete) return containmentLayout.totalRowCount;
+    if (layoutRowCount <= 0) return 0;
+    const lastPresentedRow = containmentLayout.rowAt(layoutRowCount - 1);
+    return lastPresentedRow ? lastPresentedRow.rowIndex + 1 : layoutRowCount;
+  });
   // Entry animations compare complete key lists and hide new rows until a live
   // burst settles. Large histories bypass that presentation step so sustained
   // ingestion cannot starve the sliding window of visible rows.
@@ -855,6 +947,8 @@
   let rowEntryDeadlineMs: number | null = null;
   let rowEntrySettleTimer: ReturnType<typeof setTimeout> | null = null;
   let suppressRowEntryMotionUntilMs = 0;
+  let previousRowPresentationScope = '';
+  let previousRowPresentationWasBatching = false;
 
   // Live polling can split one server-side event burst across adjacent refreshes.
   // Keep the previous layout painted until that burst has gone quiet, then admit
@@ -904,9 +998,16 @@
     const currentKeys = animationLayoutRows.map(layoutRowKey);
     const previousKeys = previousLayoutKeys;
     previousLayoutKeys = currentKeys;
+    const initialRowPresentation =
+      rowPresentationScope !== previousRowPresentationScope ||
+      rowPresentationBatching ||
+      previousRowPresentationWasBatching;
+    previousRowPresentationScope = rowPresentationScope;
+    previousRowPresentationWasBatching = rowPresentationBatching;
 
     if (
       previousKeys === null ||
+      initialRowPresentation ||
       timelineLoading ||
       !reverseSort ||
       performance.now() < suppressRowEntryMotionUntilMs ||
@@ -1077,7 +1178,7 @@
   const rowHeightRetention = new TimelineRowHeightRetention();
   const heightRowCount = $derived(
     rowHeightRetention.update({
-      visibleRowCount: containmentLayout.totalRowCount,
+      visibleRowCount: presentedPhysicalRowCount,
       nowMs,
       retain:
         displayMode === 'fixed-window' &&
@@ -1093,6 +1194,10 @@
   // 24 px row height, 32 rows cover 768 px in either direction while keeping
   // the pool bounded to roughly two viewportfuls on a laptop-sized display.
   const OVERSCAN = 32;
+  const RETAINED_DOM_ROW_LIMIT = 512;
+  const virtualizeRows = $derived(
+    !disableVirtualization && availableLayoutRowCount > RETAINED_DOM_ROW_LIMIT,
+  );
   const TIMELINE_VERTICAL_PADDING = ROW_HEIGHT;
 
   // Closed-form inverse of getRowY (both cursor segments are linear) → the
@@ -1194,11 +1299,11 @@
 
   // Active group's index in visibleGroups (-1 = none). Derived here so the row
   // pool doesn't subscribe to $activeGroups directly.
-  const activeIdx = $derived(
-    $activeGroups.length > 0
-      ? (containmentLayout.indexOfGroup($activeGroups[0]) ?? -1)
-      : -1,
-  );
+  const activeIdx = $derived.by(() => {
+    if ($activeGroups.length === 0) return -1;
+    const index = containmentLayout.indexOfGroup($activeGroups[0]) ?? -1;
+    return index < layoutRowCount ? index : -1;
+  });
   const activeLayoutRow = $derived(
     activeIdx >= 0 ? containmentLayout.rowAt(activeIdx) : undefined,
   );
@@ -1234,11 +1339,9 @@
   }
 
   const descStart = $derived(
-    containmentLayout.pendingGap?.insertionIndex ?? layoutRowCount,
+    presentedPendingGap?.insertionIndex ?? layoutRowCount,
   );
-  const layoutPendingCount = $derived(
-    containmentLayout.pendingGap?.rowCount ?? 0,
-  );
+  const layoutPendingCount = $derived(presentedPendingGap?.rowCount ?? 0);
 
   const totalForY = $derived(
     getTotalForY(layoutRowCount, layoutPendingCount, descStart),
@@ -1264,6 +1367,9 @@
     getTimelineSegmentedScrollModel({
       totalRows: heightRowCount + (chainFrameCandidates.length ? 3 : 2),
       rowHeightPx: ROW_HEIGHT,
+      forceSegmented:
+        containmentLayout.totalRowCount * ROW_HEIGHT >
+        TIMELINE_NORMAL_SCROLL_LIMIT_PX,
     }),
   );
   let logicalOriginRow = $state(0);
@@ -1307,10 +1413,7 @@
   let stableFrames = 0;
   const STABLE_FRAMES = 8; // still frames before the sampling loop idles out
 
-  // Self-driven rAF loop, not a per-scroll-event measure: a wheel fling fires
-  // `wheel` but coalesces `scroll`, so an event-driven measure goes stale mid-fling.
-  function sampleBand() {
-    bandRafId = undefined;
+  function measureVisibleBand() {
     if (!containerEl) return;
     let top: number;
     let viewHeight: number;
@@ -1342,6 +1445,11 @@
     } else {
       stableFrames++;
     }
+  }
+
+  function sampleBand() {
+    bandRafId = undefined;
+    measureVisibleBand();
 
     // Loop while moving; idle out once still. pokeSampler restarts it on activity.
     if (stableFrames < STABLE_FRAMES) {
@@ -1349,7 +1457,7 @@
     }
   }
 
-  function pokeSampler() {
+  function prepareForVerticalMovement() {
     suppressRowEntryMotionUntilMs = performance.now() + 250;
     if (
       rowEntryOffsets.size > 0 ||
@@ -1359,6 +1467,18 @@
       finishRowEntry();
     }
     stableFrames = 0;
+  }
+
+  function pokeSampler() {
+    prepareForVerticalMovement();
+    if (bandRafId === undefined) {
+      bandRafId = requestAnimationFrame(sampleBand);
+    }
+  }
+
+  function sampleScrollImmediately() {
+    prepareForVerticalMovement();
+    measureVisibleBand();
     if (bandRafId === undefined) {
       bandRafId = requestAnimationFrame(sampleBand);
     }
@@ -1413,12 +1533,12 @@
     const target: HTMLElement | Window = scroller ?? window;
     const opts = { passive: true };
     // wheel/touchmove cover flings where `scroll` events are throttled.
-    target.addEventListener('scroll', pokeSampler, opts);
+    target.addEventListener('scroll', sampleScrollImmediately, opts);
     target.addEventListener('wheel', pokeSampler, opts);
     target.addEventListener('touchmove', pokeSampler, opts);
     window.addEventListener('resize', pokeSampler, opts);
     return () => {
-      target.removeEventListener('scroll', pokeSampler);
+      target.removeEventListener('scroll', sampleScrollImmediately);
       target.removeEventListener('wheel', pokeSampler);
       target.removeEventListener('touchmove', pokeSampler);
       window.removeEventListener('resize', pokeSampler);
@@ -1457,6 +1577,10 @@
       totalForY,
     });
   });
+  const renderedWindowStart = $derived(virtualizeRows ? windowStart : 0);
+  const renderedWindowEnd = $derived(
+    virtualizeRows ? windowEnd : layoutRowCount,
+  );
 
   // ── Row pool ────────────────────────────────────────────────────────────────
   // Fixed-size set of slots reused across scroll (vs a keyed each that creates/
@@ -1464,6 +1588,7 @@
   // re-point to a new group — avoids the mount churn that caused major-GC pauses.
   const POOL_SLACK = 4;
   const poolSize = $derived.by(() => {
+    if (!virtualizeRows) return layoutRowCount;
     const band = visibleBand;
     const bandHeight = band ? band[1] - band[0] : Math.min(svgHeight, 1000);
     return Math.ceil(bandHeight / ROW_HEIGHT) + 2 * windowOverscan + POOL_SLACK;
@@ -1478,8 +1603,12 @@
     const total = layoutRowCount;
     const slots: ({ index: number; row: TimelineLayoutRow } | null)[] =
       new Array(poolSize).fill(null);
-    const end = Math.min(windowEnd, total, windowStart + poolSize);
-    for (let index = windowStart; index < end; index++) {
+    const end = Math.min(
+      renderedWindowEnd,
+      total,
+      renderedWindowStart + poolSize,
+    );
+    for (let index = renderedWindowStart; index < end; index++) {
       const slot = index % poolSize;
       const row = containmentLayout.rowAt(index);
       if (!row) continue;
@@ -1500,7 +1629,9 @@
 
   const pooledEdgeKeys = $derived(
     getObservedTimelineEdgeKeys(
-      pool.flatMap((slot) => (slot ? [slot.row] : [])),
+      virtualizeRows
+        ? pool.flatMap((slot) => (slot ? [slot.row] : []))
+        : containmentLayout.rows(windowStart, windowEnd),
       incomingEdgeByWorkflowKey,
     ),
   );
@@ -1556,10 +1687,22 @@
   );
 
   const layoutRunSpans = $derived(
-    containmentLayout.runSpans(windowStart, windowEnd),
+    containmentLayout
+      .runSpans(renderedWindowStart, renderedWindowEnd)
+      .map((span) => ({
+        ...span,
+        rowEnd: Math.min(span.rowEnd, presentedPhysicalRowCount),
+      }))
+      .filter((span) => span.rowStart < span.rowEnd),
   );
   const layoutWorkflowSpans = $derived(
-    containmentLayout.workflowSpans(windowStart, windowEnd),
+    containmentLayout
+      .workflowSpans(renderedWindowStart, renderedWindowEnd)
+      .map((span) => ({
+        ...span,
+        rowEnd: Math.min(span.rowEnd, presentedPhysicalRowCount),
+      }))
+      .filter((span) => span.rowStart < span.rowEnd),
   );
   const frameVerticalLayout = $derived(
     getTimelineFrameVerticalLayout({
@@ -1569,6 +1712,10 @@
       panelHeight,
       verticalPaddingPx: TIMELINE_VERTICAL_PADDING - verticalOriginOffsetPx,
     }),
+  );
+  const frameBandTop = $derived(virtualizeRows ? layerBandTop : 0);
+  const frameBandHeight = $derived(
+    virtualizeRows ? layerBandHeight : timelineHeight,
   );
   const runSpanByKey = $derived(
     new Map(layoutRunSpans.map((span) => [span.key, span])),
@@ -1690,7 +1837,11 @@
   )}
   style:height="{shellHeight}px"
   data-segmented-scroll={verticalScrollModel.segmented || undefined}
+  data-virtualized-rows={virtualizeRows || undefined}
   data-logical-row-count={layoutRowCount}
+  data-available-row-count={availableLayoutRowCount}
+  data-row-presentation-complete={rowPresentationComplete}
+  aria-busy={!rowPresentationComplete || undefined}
   data-mounted-row-count={performanceStats?.mountedRows}
   data-rendered-line-count={performanceStats?.renderedLines}
   data-rendered-element-count={performanceStats?.renderedElements}
@@ -1796,8 +1947,8 @@
                 kind="chain"
                 depth={frame.span.depth}
                 paint="background"
-                bandTop={layerBandTop}
-                bandHeight={layerBandHeight}
+                bandTop={frameBandTop}
+                bandHeight={frameBandHeight}
                 entryOffsetPx={workflowFrameEntryOffset(
                   frame.candidate.workflowKey ?? '',
                 )}
@@ -1830,8 +1981,8 @@
                 kind="run"
                 depth={frame.span.depth}
                 paint="background"
-                bandTop={layerBandTop}
-                bandHeight={layerBandHeight}
+                bandTop={frameBandTop}
+                bandHeight={frameBandHeight}
                 entryOffsetPx={runFrameEntryOffset(
                   timelineRunKey(
                     frame.candidate.workflowKey ?? '',
@@ -1898,8 +2049,8 @@
                 kind="chain"
                 depth={frame.span.depth}
                 paint="foreground"
-                bandTop={layerBandTop}
-                bandHeight={layerBandHeight}
+                bandTop={frameBandTop}
+                bandHeight={frameBandHeight}
                 entryOffsetPx={workflowFrameEntryOffset(
                   frame.candidate.workflowKey ?? '',
                 )}
@@ -1942,8 +2093,8 @@
                 kind="run"
                 depth={frame.span.depth}
                 paint="foreground"
-                bandTop={layerBandTop}
-                bandHeight={layerBandHeight}
+                bandTop={frameBandTop}
+                bandHeight={frameBandHeight}
                 entryOffsetPx={runFrameEntryOffset(
                   timelineRunKey(
                     frame.candidate.workflowKey ?? '',
@@ -2078,13 +2229,12 @@
           </ul>
         </div>
 
-        {#if timelineLoading && containmentLayout.pendingGap}
+        {#if timelineLoading && presentedPendingGap}
           {@const rectY =
             TIMELINE_VERTICAL_PADDING +
-            (containmentLayout.pendingGap.rowStart + 1.5) * ROW_HEIGHT +
-            shiftFor(containmentLayout.pendingGap.insertionIndex)}
-          {@const rectH =
-            containmentLayout.pendingGap.rowCount * ROW_HEIGHT + RADIUS}
+            (presentedPendingGap.rowStart + 1.5) * ROW_HEIGHT +
+            shiftFor(presentedPendingGap.insertionIndex)}
+          {@const rectH = presentedPendingGap.rowCount * ROW_HEIGHT + RADIUS}
           <div
             class="absolute animate-pulse rounded bg-slate-400/30"
             style:left="{GUTTER}px"

@@ -35,6 +35,20 @@ const baseUrl =
 const preset = process.env.TIMELINE_BREAKPOINT_PRESET ?? 'full';
 const quickPreset = preset === 'quick';
 const massivePreset = preset === 'massive';
+const virtualizationDisabled =
+  process.env.TIMELINE_BREAKPOINT_DISABLE_VIRTUALIZATION === '1';
+const requestedRowType = process.env.TIMELINE_BREAKPOINT_ROW_TYPE;
+if (
+  requestedRowType !== undefined &&
+  requestedRowType !== 'marker' &&
+  requestedRowType !== 'activity'
+) {
+  throw new Error(
+    'TIMELINE_BREAKPOINT_ROW_TYPE must be "marker" or "activity".',
+  );
+}
+const rowType =
+  requestedRowType ?? (virtualizationDisabled ? 'activity' : 'marker');
 if (!quickPreset && !massivePreset && preset !== 'full') {
   throw new Error(
     'TIMELINE_BREAKPOINT_PRESET must be "quick", "full", or "massive".',
@@ -68,6 +82,11 @@ const maximumBrowserHeapBytes =
   numberFromEnvironment('TIMELINE_BREAKPOINT_MAX_BROWSER_HEAP_MB', 1_200) *
   1024 *
   1024;
+const maximumRenderedElements = integerFromEnvironment(
+  'TIMELINE_BREAKPOINT_MAX_RENDERED_ELEMENTS',
+  200_000,
+  1_000_000,
+);
 const updateP95LimitMs = numberFromEnvironment(
   'TIMELINE_BREAKPOINT_UPDATE_P95_MS',
   50,
@@ -110,6 +129,7 @@ const fixture = createTimelineStressFixture({
   rowsPerRun,
   runDurationMs: 60_000,
   startTimeMs: Date.now() - runCount * 60_000,
+  rowType,
 });
 const scrollChurnFixture = createTimelineStressFixture({
   workflowId: 'timeline-scroll-churn-chain',
@@ -121,6 +141,9 @@ const scrollChurnFixture = createTimelineStressFixture({
 
 type TimelineDomStats = {
   logicalRows: number;
+  availableRows: number;
+  presentationComplete: boolean;
+  entryPresentationPending: boolean;
   mountedRows: number;
   renderedLines: number;
   renderedElements: number;
@@ -128,6 +151,13 @@ type TimelineDomStats = {
   updateP95Ms: number;
   updateSamples: number;
   updateSequence: number;
+};
+
+type RowPresentationSample = {
+  atMs: number;
+  presentedRows: number;
+  availableRows: number;
+  complete: boolean;
 };
 
 type ScrollStats = {
@@ -195,6 +225,15 @@ const readTimelineStats = async (page: Page): Promise<TimelineDomStats> => {
     .locator('#event-history-timeline-graph')
     .evaluate((element) => ({
       logicalRows: element.getAttribute('data-logical-row-count'),
+      availableRows: element.getAttribute('data-available-row-count'),
+      presentationComplete: element.getAttribute(
+        'data-row-presentation-complete',
+      ),
+      entryPresentationPending: Boolean(
+        element.querySelector(
+          '.timeline-row-entry-pending, .timeline-frame-entry-pending, .timeline-rows-animating',
+        ),
+      ),
       mountedRows: element.getAttribute('data-mounted-row-count'),
       renderedLines: element.getAttribute('data-rendered-line-count'),
       renderedElements: element.getAttribute('data-rendered-element-count'),
@@ -203,9 +242,19 @@ const readTimelineStats = async (page: Page): Promise<TimelineDomStats> => {
       updateSamples: element.getAttribute('data-update-sample-count'),
       updateSequence: element.getAttribute('data-update-sequence'),
     }));
-  return Object.fromEntries(
-    Object.entries(attributes).map(([key, value]) => [key, Number(value ?? 0)]),
-  ) as TimelineDomStats;
+  return {
+    logicalRows: Number(attributes.logicalRows ?? 0),
+    availableRows: Number(attributes.availableRows ?? 0),
+    presentationComplete: attributes.presentationComplete === 'true',
+    entryPresentationPending: attributes.entryPresentationPending,
+    mountedRows: Number(attributes.mountedRows ?? 0),
+    renderedLines: Number(attributes.renderedLines ?? 0),
+    renderedElements: Number(attributes.renderedElements ?? 0),
+    updateMs: Number(attributes.updateMs ?? 0),
+    updateP95Ms: Number(attributes.updateP95Ms ?? 0),
+    updateSamples: Number(attributes.updateSamples ?? 0),
+    updateSequence: Number(attributes.updateSequence ?? 0),
+  };
 };
 
 const waitForTimelineToSettle = async (
@@ -222,7 +271,12 @@ const waitForTimelineToSettle = async (
   let stats = await readTimelineStats(page);
   while (performance.now() - startedAt < 8_000) {
     stats = await readTimelineStats(page);
-    if (stats.updateSequence !== lastSequence || activeRequests() > 0) {
+    if (
+      stats.updateSequence !== lastSequence ||
+      activeRequests() > 0 ||
+      !stats.presentationComplete ||
+      stats.entryPresentationPending
+    ) {
       lastSequence = stats.updateSequence;
       stableSince = performance.now();
     } else if (performance.now() - stableSince >= 350) {
@@ -285,9 +339,6 @@ const scrollBrowserWindow = async (
             resolveFrame();
           }),
         );
-        await new Promise<void>((resolveFrame) =>
-          requestAnimationFrame(() => resolveFrame()),
-        );
         const timeline = document.querySelector<HTMLElement>(
           '#event-history-timeline-graph',
         );
@@ -331,6 +382,9 @@ const scrollBrowserWindow = async (
           blankFrames += 1;
           blankFrameRatios.push(positionRatio);
         }
+        await new Promise<void>((resolveFrame) =>
+          requestAnimationFrame(() => resolveFrame()),
+        );
       }
       const sorted = [...frameDurations].sort((left, right) => left - right);
       const p95Index = Math.min(
@@ -510,6 +564,42 @@ const main = async (): Promise<void> => {
         for (const entry of list.getEntries()) longTasks.push(entry.duration);
       }).observe({ entryTypes: ['longtask'] });
     });
+    await page.addInitScript(`
+      Object.defineProperty(window, '__timelineRowPresentationSamples', {
+        configurable: true,
+        value: [],
+      });
+      let lastRowPresentation = '';
+      new MutationObserver(() => {
+        const timeline = document.querySelector(
+          '#event-history-timeline-graph',
+        );
+        if (!timeline) return;
+        const sample = {
+          atMs: performance.now(),
+          presentedRows: Number(timeline.dataset.logicalRowCount || 0),
+          availableRows: Number(timeline.dataset.availableRowCount || 0),
+          complete: timeline.dataset.rowPresentationComplete === 'true',
+        };
+        const key = [
+          sample.presentedRows,
+          sample.availableRows,
+          sample.complete,
+        ].join(':');
+        if (key === lastRowPresentation) return;
+        lastRowPresentation = key;
+        window.__timelineRowPresentationSamples.push(sample);
+      }).observe(document, {
+        attributes: true,
+        childList: true,
+        subtree: true,
+        attributeFilter: [
+          'data-logical-row-count',
+          'data-available-row-count',
+          'data-row-presentation-complete',
+        ],
+      });
+    `);
 
     const session = await context.newCDPSession(page);
     await session.send('Performance.enable');
@@ -540,7 +630,7 @@ const main = async (): Promise<void> => {
       `live layout scroll | p95 ${layoutChurnScroll.p95FrameMs.toFixed(1)} ms | blank frames ${layoutChurnScroll.blankFrames}`,
     );
 
-    const timelineUrl = `${baseUrl}/namespaces/default/workflows/${fixture.workflowId}/${fixture.firstRunId}/timeline?follow_continues=on`;
+    const timelineUrl = `${baseUrl}/namespaces/default/workflows/${fixture.workflowId}/${fixture.firstRunId}/timeline?follow_continues=on${virtualizationDisabled ? '&timeline_virtualization=off' : ''}`;
     await page.goto(timelineUrl, {
       waitUntil: 'domcontentloaded',
       timeout: 20_000,
@@ -693,6 +783,10 @@ const main = async (): Promise<void> => {
         stoppedByGuard = `browser heap reached ${(browserHeapBytes / 1024 / 1024).toFixed(0)} MB`;
         break;
       }
+      if (stats.renderedElements >= maximumRenderedElements) {
+        stoppedByGuard = `rendered DOM reached ${stats.renderedElements} elements`;
+        break;
+      }
       if (nodeRssBytes >= maximumNodeRssBytes) {
         stoppedByGuard = `Node RSS reached ${(nodeRssBytes / 1024 / 1024).toFixed(0)} MB`;
         break;
@@ -716,10 +810,12 @@ const main = async (): Promise<void> => {
 
     const report = {
       preset,
+      virtualizationDisabled,
       generated: {
         runs: fixture.runs.length,
         rowsPerRun,
         totalRows: fixture.totalRows,
+        rowType: fixture.runs[0].rowType,
       },
       limits: {
         maximumRows,
@@ -727,6 +823,7 @@ const main = async (): Promise<void> => {
         maximumRuntimeMs,
         maximumNodeRssBytes,
         maximumBrowserHeapBytes,
+        maximumRenderedElements,
         updateP95LimitMs,
         scrollP95LimitMs,
         longTaskLimitMs,
@@ -735,6 +832,14 @@ const main = async (): Promise<void> => {
         hardLongTaskLimitMs,
       },
       peakApiRequests,
+      rowPresentationSamples: await page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __timelineRowPresentationSamples: RowPresentationSample[];
+            }
+          ).__timelineRowPresentationSamples,
+      ),
       layoutChurnScroll,
       layoutChurnBreakpoint:
         layoutChurnScroll && layoutChurnScroll.blankFrames > 0
@@ -754,6 +859,11 @@ const main = async (): Promise<void> => {
     await mkdir(dirname(outputPath), { recursive: true });
     await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);
     console.log(`Report: ${outputPath}`);
+    if (breakpoint || stoppedByGuard) {
+      const screenshotPath = outputPath.replace(/\.json$/, '.png');
+      await page.screenshot({ path: screenshotPath });
+      console.log(`Breakpoint screenshot: ${screenshotPath}`);
+    }
     if (stoppedByGuard) console.log(`Stopped safely: ${stoppedByGuard}`);
     if (!breakpoint && !stoppedByGuard) {
       console.log(

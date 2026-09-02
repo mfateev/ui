@@ -20,12 +20,15 @@ const clamp = (value: number, minimum: number, maximum: number): number =>
 export const getTimelineSegmentedScrollModel = ({
   totalRows,
   rowHeightPx,
+  forceSegmented = false,
 }: {
   totalRows: number;
   rowHeightPx: number;
+  forceSegmented?: boolean;
 }): TimelineSegmentedScrollModel => {
   const logicalHeightPx = Math.max(0, totalRows * rowHeightPx);
-  const segmented = logicalHeightPx > TIMELINE_NORMAL_SCROLL_LIMIT_PX;
+  const segmented =
+    forceSegmented || logicalHeightPx > TIMELINE_NORMAL_SCROLL_LIMIT_PX;
   const physicalHeightPx = segmented
     ? Math.min(TIMELINE_SEGMENTED_SCROLL_HEIGHT_PX, logicalHeightPx)
     : logicalHeightPx;

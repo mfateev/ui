@@ -43,6 +43,7 @@
     "perf:timeline": "node scripts/benchmark-timeline.mjs",
     "perf:timeline:breakpoint": "esno scripts/benchmark-timeline-breakpoint.ts",
     "perf:timeline:500k": "TIMELINE_BREAKPOINT_PRESET=massive esno scripts/benchmark-timeline-breakpoint.ts",
+    "perf:timeline:no-virtualization": "TIMELINE_BREAKPOINT_DISABLE_VIRTUALIZATION=1 TIMELINE_BREAKPOINT_MAX_ROWS=7500 TIMELINE_BREAKPOINT_MAX_BROWSER_HEAP_MB=512 TIMELINE_BREAKPOINT_MAX_RENDERED_ELEMENTS=100000 esno scripts/benchmark-timeline-breakpoint.ts",
     "perf:timeline:quick": "TIMELINE_BREAKPOINT_PRESET=quick esno scripts/benchmark-timeline-breakpoint.ts",
     "test:ui": "TZ=UTC vitest --ui",
     "test:coverage": "TZ=UTC vitest run --coverage",

@@ -31,6 +31,16 @@ describe('timeline segmented scrolling', () => {
     );
   });
 
+  it('can keep a progressively growing large layout in its scroll container', () => {
+    const model = getTimelineSegmentedScrollModel({
+      totalRows: 128,
+      rowHeightPx: 44,
+      forceSegmented: true,
+    });
+    expect(model.segmented).toBe(true);
+    expect(model.physicalHeightPx).toBe(128 * 44);
+  });
+
   it('rebases without moving the viewport anchor', () => {
     const model = getTimelineSegmentedScrollModel({
       totalRows: 1_000_000,

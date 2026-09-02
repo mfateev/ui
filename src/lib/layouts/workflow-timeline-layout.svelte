@@ -105,6 +105,9 @@
   };
 
   const reverseSort = $derived($eventFilterSort === 'descending');
+  const disableTimelineVirtualization = $derived(
+    page.url.searchParams.get('timeline_virtualization') === 'off',
+  );
   const requestedDisplayMode = $derived(urlParams.timelineDisplayMode);
   const displayMode = $derived(
     requestedDisplayMode === 'full-duration'
@@ -739,6 +742,7 @@
         {workflow}
         groups={bufferGroups}
         {reverseSort}
+        disableVirtualization={disableTimelineVirtualization}
         loading={!historyCtx.fetchComplete}
         totalExpectedEvents={estimatedTotalGroups}
         descMinId={historyCtx.descMinId}

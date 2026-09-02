@@ -49,4 +49,33 @@ describe('timeline stress fixture', () => {
       });
     }
   });
+
+  it('can generate one completed activity line per row', () => {
+    const fixture = createTimelineStressFixture({
+      runCount: 1,
+      rowsPerRun: 2,
+      rowType: 'activity',
+    });
+    const events = fixture.historyPage(
+      fixture.firstRunId,
+      'ascending',
+      100,
+    ).events;
+
+    expect(events).toHaveLength(8);
+    expect(events.slice(1, 7).map(({ eventType }) => eventType)).toEqual([
+      'ActivityTaskScheduled',
+      'ActivityTaskStarted',
+      'ActivityTaskCompleted',
+      'ActivityTaskScheduled',
+      'ActivityTaskStarted',
+      'ActivityTaskCompleted',
+    ]);
+    expect(events[3]).toMatchObject({
+      activityTaskCompletedEventAttributes: {
+        scheduledEventId: '2',
+        startedEventId: '3',
+      },
+    });
+  });
 });

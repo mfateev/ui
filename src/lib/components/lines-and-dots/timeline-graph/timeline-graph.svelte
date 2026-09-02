@@ -397,10 +397,19 @@
         }),
   );
 
+  const fixedWindowTimeRange = $derived.by(() => {
+    if (displayMode !== 'fixed-window') return undefined;
+    return getTimelineWindowTimeRange({
+      following: viewport.isFollowing,
+      frozenAnchorTimeMs,
+      durationMs: durationPerViewportMs,
+      availableStartTimeMs: timeline.workflowTimespan.startTimeMs,
+      followingEndTimeMs: aggregateEndTimeMs,
+    });
+  });
   const fixedWindowStartTimeMs = $derived(
-    viewport.isFollowing || frozenAnchorTimeMs === null
-      ? aggregateEndTimeMs - fixedWindowDurationMs
-      : frozenAnchorTimeMs,
+    fixedWindowTimeRange?.startTimeMs ??
+      aggregateEndTimeMs - fixedWindowDurationMs,
   );
   const scaleDurationPerViewportMs = $derived(
     displayMode === 'fixed-window'
@@ -429,15 +438,6 @@
   const viewportMotion = new TimelineMotion();
   const liveEdgeMotion = new TimelineMotion();
   const workflowIsLive = $derived(aggregateHasLive);
-  const fixedWindowTimeRange = $derived.by(() => {
-    if (displayMode !== 'fixed-window') return undefined;
-    return getTimelineWindowTimeRange({
-      following: viewport.isFollowing,
-      frozenAnchorTimeMs,
-      durationMs: durationPerViewportMs,
-      followingEndTimeMs: aggregateEndTimeMs,
-    });
-  });
   const shouldAnimateTimeline = $derived(
     displayMode === 'fixed-window' &&
       ((viewport.isFollowing && workflowIsLive) || windowMode === 'playing') &&

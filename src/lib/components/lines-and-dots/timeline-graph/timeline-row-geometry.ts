@@ -22,11 +22,22 @@ export function getTimelineDotAlignment({
   index,
   eventCount,
   pending,
+  boundarySpanPx,
+  markerSizePx,
 }: {
   index: number;
   eventCount: number;
   pending: boolean;
+  boundarySpanPx?: number;
+  markerSizePx?: number;
 }): 'start' | 'center' | 'end' {
+  if (
+    boundarySpanPx !== undefined &&
+    markerSizePx !== undefined &&
+    boundarySpanPx < markerSizePx
+  ) {
+    return 'center';
+  }
   if (index === 0) return 'start';
   if (!pending && index === eventCount - 1) return 'end';
   return 'center';

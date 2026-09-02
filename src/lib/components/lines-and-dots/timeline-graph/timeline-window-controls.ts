@@ -67,23 +67,34 @@ export function getTimelineWindowTimeRange({
   following,
   frozenAnchorTimeMs,
   durationMs,
+  availableStartTimeMs,
   followingEndTimeMs,
 }: {
   following: boolean;
   frozenAnchorTimeMs: number | null;
   durationMs: number;
+  availableStartTimeMs?: number;
   followingEndTimeMs: number;
 }): { startTimeMs: number; endTimeMs: number } {
-  if (!following && frozenAnchorTimeMs !== null) {
-    return {
-      startTimeMs: frozenAnchorTimeMs,
-      endTimeMs: frozenAnchorTimeMs + durationMs,
-    };
+  let startTimeMs =
+    !following && frozenAnchorTimeMs !== null
+      ? frozenAnchorTimeMs
+      : followingEndTimeMs - durationMs;
+
+  if (availableStartTimeMs !== undefined) {
+    const latestStartTimeMs = Math.max(
+      availableStartTimeMs,
+      followingEndTimeMs - durationMs,
+    );
+    startTimeMs = Math.min(
+      Math.max(startTimeMs, availableStartTimeMs),
+      latestStartTimeMs,
+    );
   }
 
   return {
-    startTimeMs: followingEndTimeMs - durationMs,
-    endTimeMs: followingEndTimeMs,
+    startTimeMs,
+    endTimeMs: startTimeMs + durationMs,
   };
 }
 

@@ -38,6 +38,7 @@
   let dragMode = $state<DragMode | null>(null);
   let dragLeft = $state<number | null>(null);
   let dragWidth = $state<number | null>(null);
+  let dragPointerId: number | null = null;
   let dragOffset = 0;
   let dragFixedEdge = 0;
   let visualDurationMs = 1;
@@ -190,6 +191,7 @@
     dragMode = mode;
     dragLeft = visualWindowLeft;
     dragWidth = visualWindowWidth;
+    dragPointerId = event.pointerId;
     dragOffset = pointerPosition(event) - visualWindowLeft;
     dragFixedEdge =
       mode === 'resize-start'
@@ -201,7 +203,18 @@
   };
 
   const dragWindow = (event: PointerEvent) => {
-    if (dragMode === null || dragLeft === null || dragWidth === null) return;
+    if (
+      dragMode === null ||
+      dragLeft === null ||
+      dragWidth === null ||
+      event.pointerId !== dragPointerId
+    ) {
+      return;
+    }
+    if (event.buttons === 0) {
+      finishDragging(event);
+      return;
+    }
     const pointer = pointerPosition(event);
     const minimumWidth = minimumWindowWidth();
 
@@ -231,35 +244,43 @@
       dragMode === null ||
       dragLeft === null ||
       dragWidth === null ||
-      startTimeMs === undefined
+      startTimeMs === undefined ||
+      event.pointerId !== dragPointerId
     ) {
       return;
     }
+    const completedMode = dragMode;
     const selectedStartTimeMs =
       startTimeMs + (dragLeft / 100) * visualDurationMs;
     const selectedEndTimeMs =
       selectedStartTimeMs + (dragWidth / 100) * visualDurationMs;
-    trackElement?.releasePointerCapture(event.pointerId);
-    if (dragMode === 'move') {
+    dragMode = null;
+    dragLeft = null;
+    dragWidth = null;
+    dragPointerId = null;
+    if (trackElement?.hasPointerCapture(event.pointerId)) {
+      trackElement.releasePointerCapture(event.pointerId);
+    }
+    if (completedMode === 'move') {
       onWindowMove?.(selectedStartTimeMs);
     } else {
       onWindowResize?.({
         startTimeMs: selectedStartTimeMs,
         endTimeMs: selectedEndTimeMs,
-        anchor: dragMode === 'resize-start' ? 'end' : 'start',
+        anchor: completedMode === 'resize-start' ? 'end' : 'start',
       });
     }
-    dragMode = null;
-    dragLeft = null;
-    dragWidth = null;
   };
 
   const cancelDragging = (event: PointerEvent) => {
-    if (dragMode === null) return;
-    trackElement?.releasePointerCapture(event.pointerId);
+    if (dragMode === null || event.pointerId !== dragPointerId) return;
     dragMode = null;
     dragLeft = null;
     dragWidth = null;
+    dragPointerId = null;
+    if (trackElement?.hasPointerCapture(event.pointerId)) {
+      trackElement.releasePointerCapture(event.pointerId);
+    }
   };
 
   const resizeWithKeyboard = (event: KeyboardEvent, edge: 'start' | 'end') => {
@@ -301,6 +322,8 @@
   };
 </script>
 
+<svelte:window onpointerup={finishDragging} onpointercancel={cancelDragging} />
+
 <div
   bind:this={overviewElement}
   class="surface-background border-b border-subtle px-3 py-2"
@@ -325,6 +348,7 @@
     onpointermove={dragWindow}
     onpointerup={finishDragging}
     onpointercancel={cancelDragging}
+    onlostpointercapture={finishDragging}
   >
     {#if startTimeMs !== undefined}
       <div

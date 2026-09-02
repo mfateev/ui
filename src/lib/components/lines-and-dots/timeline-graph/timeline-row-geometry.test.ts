@@ -28,6 +28,48 @@ describe('getTimelineDotAlignment', () => {
       getTimelineDotAlignment({ index: 1, eventCount: 3, pending: false }),
     ).toBe('center');
   });
+
+  it('centers boundary markers when edge alignment would reverse them', () => {
+    expect(
+      getTimelineDotAlignment({
+        index: 0,
+        eventCount: 3,
+        pending: false,
+        boundarySpanPx: 6,
+        markerSizePx: 20,
+      }),
+    ).toBe('center');
+    expect(
+      getTimelineDotAlignment({
+        index: 2,
+        eventCount: 3,
+        pending: false,
+        boundarySpanPx: 6,
+        markerSizePx: 20,
+      }),
+    ).toBe('center');
+  });
+
+  it('keeps boundary markers edge-aligned when they fit chronologically', () => {
+    expect(
+      getTimelineDotAlignment({
+        index: 0,
+        eventCount: 3,
+        pending: false,
+        boundarySpanPx: 20,
+        markerSizePx: 20,
+      }),
+    ).toBe('start');
+    expect(
+      getTimelineDotAlignment({
+        index: 2,
+        eventCount: 3,
+        pending: false,
+        boundarySpanPx: 20,
+        markerSizePx: 20,
+      }),
+    ).toBe('end');
+  });
 });
 
 describe('getTimelineDotRole', () => {

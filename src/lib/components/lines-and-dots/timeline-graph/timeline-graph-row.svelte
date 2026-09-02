@@ -43,7 +43,7 @@
   import { alignedDotBox, lineBox } from './primitives';
   import { type DotColors, dotColors, strokeColor } from '../colors';
   import { CategoryIcon, type TimelineIconName } from '../constants';
-  import { GUTTER, RADIUS, ROW_HEIGHT } from './constants';
+  import { DOT_STROKE, GUTTER, RADIUS, ROW_HEIGHT } from './constants';
   import { timelineTextPosition } from './timeline-positioning';
   import {
     getTimelineDotAlignment,
@@ -220,6 +220,16 @@
       hasPauseTime: Boolean(pauseTime),
       haloPx: HALO,
     }),
+  );
+  const terminalMarkerIndex = $derived(
+    pauseTime
+      ? points.length - 1
+      : Math.min(group.eventCount - 1, points.length - 1),
+  );
+  const boundarySpanPx = $derived(
+    terminalMarkerIndex > 0
+      ? points[terminalMarkerIndex] - points[0]
+      : undefined,
   );
   const hasVisiblePendingConnector = $derived(
     rowGeometry.connectors.some((connector) => connector.pending),
@@ -459,6 +469,8 @@
           index,
           eventCount: group.eventCount,
           pending: group.isPending,
+          boundarySpanPx,
+          markerSizePx: 2 * RADIUS + DOT_STROKE,
         })}
         {@const role = getTimelineDotRole({
           index,

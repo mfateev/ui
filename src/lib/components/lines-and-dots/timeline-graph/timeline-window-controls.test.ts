@@ -76,6 +76,30 @@ describe('getTimelineWindowTimeRange', () => {
       }),
     ).toEqual({ startTimeMs: 25_000, endTimeMs: 30_000 });
   });
+
+  it('clamps a stale paused anchor when the available range contracts', () => {
+    expect(
+      getTimelineWindowTimeRange({
+        following: false,
+        frozenAnchorTimeMs: 75_000,
+        durationMs: 30_000,
+        availableStartTimeMs: 10_000,
+        followingEndTimeMs: 100_000,
+      }),
+    ).toEqual({ startTimeMs: 70_000, endTimeMs: 100_000 });
+  });
+
+  it('clamps a paused anchor before the available range', () => {
+    expect(
+      getTimelineWindowTimeRange({
+        following: false,
+        frozenAnchorTimeMs: 5_000,
+        durationMs: 30_000,
+        availableStartTimeMs: 10_000,
+        followingEndTimeMs: 100_000,
+      }),
+    ).toEqual({ startTimeMs: 10_000, endTimeMs: 40_000 });
+  });
 });
 
 describe('timelineWindowIsAtEnd', () => {

@@ -11,7 +11,7 @@ test.describe('Timeline display mode', () => {
     await mockWorkflowApis(page);
   });
 
-  test('switches between sliding-window, full-duration, and classic views', async ({
+  test('fits full duration within the sliding-window view', async ({
     page,
   }) => {
     await page.goto(timelineUrl);
@@ -20,29 +20,37 @@ test.describe('Timeline display mode', () => {
     const fixedWindow = page.getByTestId('timeline-fixed-window');
     const fullDuration = page.getByTestId('timeline-full-duration');
     const classic = page.getByTestId('timeline-classic');
+    const zoomControls = page.getByTestId('timeline-zoom-controls');
 
     await expect(fixedWindow).toHaveAttribute('aria-pressed', 'true');
-    await expect(fullDuration).toHaveAttribute('aria-pressed', 'false');
     await expect(classic).toHaveAttribute('aria-pressed', 'false');
     await expect(timeline).toHaveAttribute('data-display-mode', 'fixed-window');
+    await expect(page.getByTestId('timeline-chain-overview')).toBeVisible();
+    await expect(zoomControls.locator(':scope > *')).toHaveCount(4);
+    expect(
+      await zoomControls
+        .locator(':scope > *')
+        .evaluateAll((controls) =>
+          controls.map((control) => control.getAttribute('data-testid')),
+        ),
+    ).toEqual([
+      'timeline-full-duration',
+      'timeline-zoom-out',
+      null,
+      'timeline-zoom-in',
+    ]);
 
     await fullDuration.click();
 
-    await expect(page).toHaveURL(/timeline_mode=full-duration/);
-    await expect(fixedWindow).toHaveAttribute('aria-pressed', 'false');
+    await expect(page).not.toHaveURL(/timeline_mode/);
+    await expect(fixedWindow).toHaveAttribute('aria-pressed', 'true');
     await expect(fullDuration).toHaveAttribute('aria-pressed', 'true');
-    await expect(timeline).toHaveAttribute(
-      'data-display-mode',
-      'full-duration',
-    );
-
-    await page.reload();
-    await expect(fullDuration).toHaveAttribute('aria-pressed', 'true');
+    await expect(timeline).toHaveAttribute('data-display-mode', 'fixed-window');
+    await expect(page.getByTestId('timeline-chain-overview')).toBeVisible();
 
     await classic.click();
 
     await expect(page).toHaveURL(/timeline_mode=classic/);
-    await expect(fullDuration).toHaveAttribute('aria-pressed', 'false');
     await expect(classic).toHaveAttribute('aria-pressed', 'true');
     await expect(timeline).toHaveAttribute('data-display-mode', 'classic');
 

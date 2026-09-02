@@ -62,11 +62,21 @@ describe('syncTimelineViewport', () => {
     expect(viewport.isFollowing).toBe(true);
   });
 
-  it('keeps a completed workflow frozen when paused', () => {
+  it('freezes a following window as soon as the workflow completes', () => {
     const viewport = new Viewport({ widthPx: 100, totalWorldWidthPx: 200 });
-    sync(viewport, { paused: true, total: 200 });
+    sync(viewport, { paused: false, total: 200 });
 
-    sync(viewport, { paused: true, workflowIsLive: false, total: 280 });
+    sync(viewport, { paused: false, workflowIsLive: false, total: 280 });
+
+    expect(viewport.offsetPx).toBe(180);
+    expect(viewport.isFollowing).toBe(false);
+  });
+
+  it('does not resume a completed workflow at the right edge', () => {
+    const viewport = new Viewport({ widthPx: 100, totalWorldWidthPx: 200 });
+    sync(viewport, { paused: true, workflowIsLive: false, total: 200 });
+
+    sync(viewport, { paused: false, workflowIsLive: false, total: 280 });
 
     expect(viewport.offsetPx).toBe(100);
     expect(viewport.isFollowing).toBe(false);

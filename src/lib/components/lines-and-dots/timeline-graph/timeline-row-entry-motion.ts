@@ -1,3 +1,21 @@
+export const MAX_ANIMATED_TIMELINE_GROUPS = 1_000;
+
+/**
+ * Row-entry motion is presentation-only. Once a history is large, continually
+ * rebuilding its complete key list is unnecessary work and the settle delay can
+ * starve a busy live window: new rows remain hidden while events keep arriving.
+ * Large histories therefore update the virtual row pool without entry motion.
+ */
+export const shouldAnimateTimelineRowEntries = ({
+  totalGroupCount,
+  layoutRowCount,
+}: {
+  totalGroupCount: number;
+  layoutRowCount: number;
+}): boolean =>
+  totalGroupCount <= MAX_ANIMATED_TIMELINE_GROUPS &&
+  layoutRowCount <= MAX_ANIMATED_TIMELINE_GROUPS;
+
 export const getTimelineRowEntryOffsets = (
   previousKeys: string[],
   currentKeys: string[],

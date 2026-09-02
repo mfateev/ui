@@ -385,6 +385,7 @@ export const Strings = {
   'timeline-pause': 'Pause',
   'timeline-resume': 'Resume',
   'timeline-jump-current': 'Jump to current',
+  'timeline-jump-end': 'Jump to end',
   'timeline-jump-beginning': 'Jump to beginning',
   'timeline-chain-overview': 'Execution chain',
   'timeline-chain-loading': 'Loading execution chain…',

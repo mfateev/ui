@@ -87,10 +87,19 @@ export function getTimelineWindowTimeRange({
   };
 }
 
+export function timelineWindowIsAtEnd(
+  windowEndTimeMs: number,
+  availableEndTimeMs: number,
+  toleranceMs = 0.5,
+): boolean {
+  return windowEndTimeMs >= availableEndTimeMs - toleranceMs;
+}
+
 export interface TimelineWindowControls {
   mode: TimelineWindowMode;
   atBeginning: boolean;
   atCurrent: boolean;
+  atFullDuration: boolean;
   windowStartTimeMs: number;
   windowEndTimeMs: number;
   windowDurationMs: number;
@@ -100,6 +109,7 @@ export interface TimelineWindowControls {
   resume: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
+  fitToFullDuration: () => void;
   resize: (
     startTimeMs: number,
     endTimeMs: number,

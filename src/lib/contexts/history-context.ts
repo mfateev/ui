@@ -1,7 +1,10 @@
 export const HISTORY_CTX = Symbol('history-ctx');
 
 export type HistoryContext = {
-  /** Unblocks the paused bidirectional fetch cursors. Safe to call multiple times. */
+  /**
+   * Requests complete history for this layout. Unblocks the current preview
+   * pause and any later run fetches; safe to call multiple times.
+   */
   resume: () => void;
   /** True once the full bidirectional fetch + enrichGroups has completed. */
   readonly fetchComplete: boolean;

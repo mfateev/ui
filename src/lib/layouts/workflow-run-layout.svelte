@@ -124,6 +124,10 @@
   let descMinId = $state(0);
 
   let _pauseHandle: PauseHandle | null = null;
+  // Sticky for this layout instance. Timeline/history consumers can mount
+  // before a route reset or before the bidirectional fetch reaches its preview
+  // pause, so treating resume as a one-shot loses the demand signal and leaves
+  // the fetch paused forever after its first two pages.
   let _resumeRequested = false;
   let _lastPollToken = '';
   let _pollPaused = false;
@@ -142,13 +146,11 @@
       return descMinId;
     },
     resume() {
+      _resumeRequested = true;
       if (_pauseHandle) {
         const h = _pauseHandle;
         _pauseHandle = null;
-        _resumeRequested = false;
         h.resume();
-      } else {
-        _resumeRequested = true;
       }
     },
   };
@@ -434,13 +436,20 @@
       return true;
     };
 
+    const historyPath = page.url.pathname;
+    const routeNeedsCompleteHistory =
+      historyPath.endsWith('/timeline') || historyPath.includes('/history');
+
     fetchBidirectional({
       namespace: ns,
       workflowId: wfId,
       runId: rId,
       signal: stagingController.signal,
       maximumPageSize: 1000,
-      pauseAfterPages: 2,
+      // Summary-style tabs only need the two bookend pages. Timeline and
+      // history cannot function over that preview: scrolling reaches the
+      // synthetic middle gap while the real fetch remains paused.
+      pauseAfterPages: routeNeedsCompleteHistory ? undefined : 2,
       onProgress: (p) => {
         if (p.totalEstimated) stagedTotalExpectedEvents = p.totalEstimated;
         if (p.descMinId) stagedDescMinId = p.descMinId;
@@ -448,7 +457,6 @@
       onPause: (handle) => {
         if (!commitStagedRun()) return;
         if (_resumeRequested) {
-          _resumeRequested = false;
           handle.resume();
         } else {
           _pauseHandle = handle;
@@ -742,7 +750,6 @@
     totalExpectedEvents = 0;
     descMinId = 0;
     _pauseHandle = null;
-    _resumeRequested = false;
     _lastPollToken = '';
     _pollPaused = false;
     staging = false;

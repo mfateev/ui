@@ -106,7 +106,12 @@
   };
 
   const reverseSort = $derived($eventFilterSort === 'descending');
-  const displayMode = $derived(urlParams.timelineDisplayMode);
+  const requestedDisplayMode = $derived(urlParams.timelineDisplayMode);
+  const displayMode = $derived(
+    requestedDisplayMode === 'full-duration'
+      ? 'fixed-window'
+      : requestedDisplayMode,
+  );
   let intervalTimelineRuns = $state<TimelineRun[]>([]);
 
   const bufferGroups = $derived.by(() => {
@@ -206,11 +211,30 @@
   let timelineWindowControls = $state<TimelineWindowControls>();
   let chainOverviewRuns = $state<WorkflowChainOverviewRun[]>([]);
   let chainOverviewLoading = $state(false);
+  let legacyFullDurationFitKey = '';
   let chainLoadGeneration = 0;
   const intervalLoader = new TimelineIntervalLoader();
   let intervalLoadGeneration = 0;
   let intervalModelReleases: (() => void)[] = [];
   let intervalTruncated = $state(false);
+
+  $effect(() => {
+    if (requestedDisplayMode !== 'full-duration') {
+      legacyFullDurationFitKey = '';
+      return;
+    }
+    const fitKey = `${workflowId}:${firstRunId}`;
+    if (
+      !timelineWindowControls ||
+      chainOverviewLoading ||
+      chainOverviewRuns.length === 0 ||
+      legacyFullDurationFitKey === fitKey
+    ) {
+      return;
+    }
+    timelineWindowControls.fitToFullDuration();
+    legacyFullDurationFitKey = fitKey;
+  });
 
   const releaseIntervalModels = () => {
     for (const release of intervalModelReleases) release();
@@ -471,14 +495,6 @@
           {translate('workflows.timeline-sliding-window')}
         </ToggleButton>
         <ToggleButton
-          active={displayMode === 'full-duration'}
-          data-testid="timeline-full-duration"
-          onclick={() => onDisplayMode('full-duration')}
-          size="sm"
-        >
-          {translate('workflows.timeline-full-duration')}
-        </ToggleButton>
-        <ToggleButton
           active={displayMode === 'classic'}
           data-testid="timeline-classic"
           onclick={() => onDisplayMode('classic')}
@@ -493,6 +509,15 @@
           aria-label={translate('workflows.timeline-zoom-controls')}
           data-testid="timeline-zoom-controls"
         >
+          <ToggleButton
+            active={timelineWindowControls.atFullDuration}
+            disabled={chainOverviewLoading}
+            data-testid="timeline-full-duration"
+            onclick={timelineWindowControls.fitToFullDuration}
+            size="sm"
+          >
+            {translate('workflows.timeline-full-duration')}
+          </ToggleButton>
           <ToggleButton
             LeadingIcon={IconHyphen}
             aria-label={translate('workflows.timeline-zoom-out')}
@@ -548,7 +573,10 @@
             LeadingIcon={timelineWindowControls.mode === 'paused'
               ? IconPlay
               : IconPause}
-            active={timelineWindowControls.mode === 'paused'}
+            active={timelineWindowControls.mode === 'paused' &&
+              !timelineWindowControls.atCurrent}
+            disabled={timelineWindowControls.mode === 'paused' &&
+              timelineWindowControls.atCurrent}
             data-testid="timeline-window-playback"
             onclick={timelineWindowControls.mode === 'paused'
               ? timelineWindowControls.resume
@@ -566,7 +594,11 @@
             onclick={timelineWindowControls.jumpToCurrent}
             size="sm"
           >
-            {translate('workflows.timeline-jump-current')}
+            {translate(
+              isNotPending
+                ? 'workflows.timeline-jump-end'
+                : 'workflows.timeline-jump-current',
+            )}
           </ToggleButton>
         </ToggleButtons>
       {/if}

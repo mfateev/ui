@@ -53,6 +53,7 @@
   import {
     getTimelineFrameBoundaryOffset,
     getTimelineRowEntryOffsets,
+    shouldAnimateTimelineRowEntries,
   } from './timeline-row-entry-motion';
   import {
     TIMELINE_ROW_HEIGHT_GRACE_MS,
@@ -81,6 +82,7 @@
     getTimelineWindowTimeRange,
     getTimelineWindowZoomDuration,
     TIMELINE_WINDOW_DURATIONS_MS,
+    timelineWindowIsAtEnd,
   } from './timeline-window-controls';
   import type { TimelineDisplayMode } from './types';
   import { syncTimelineViewport } from './viewport-lifecycle';
@@ -316,6 +318,7 @@
   let playbackStartedAtMs = 0;
   let windowLayoutRevision = $state(0);
   let fixedWindowDurationMs = $state(DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS);
+  let windowDurationCustomized = $state(false);
   const durationPerViewportMs = $derived(
     displayMode === 'fixed-window'
       ? fixedWindowDurationMs
@@ -370,7 +373,7 @@
   });
   const shouldAnimateTimeline = $derived(
     displayMode === 'fixed-window' &&
-      (viewport.isFollowing || windowMode === 'playing') &&
+      ((viewport.isFollowing && workflowIsLive) || windowMode === 'playing') &&
       scale.liveEdgePxPerMs > 0,
   );
 
@@ -380,6 +383,29 @@
     containerEl?.style.setProperty('--timeline-frame-offset', '0px');
     containerEl?.style.setProperty('--timeline-live-edge-extension', '0px');
   };
+
+  $effect(() => {
+    if (displayMode !== 'fixed-window' || workflowIsLive) return;
+
+    let terminalWindowDurationMs = fixedWindowDurationMs;
+    if (!windowDurationCustomized) {
+      terminalWindowDurationMs = Math.min(
+        DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS,
+        Math.max(1, timeline.workflowTimespan.durationMs),
+      );
+      if (fixedWindowDurationMs !== terminalWindowDurationMs) {
+        fixedWindowDurationMs = terminalWindowDurationMs;
+        windowLayoutRevision += 1;
+      }
+    }
+    if (windowMode === 'following') {
+      frozenAnchorTimeMs = aggregateEndTimeMs - terminalWindowDurationMs;
+      viewport.moveTo(scale.project(frozenAnchorTimeMs));
+      windowMode = 'paused';
+      viewport.freeze();
+    }
+    resetTimelineMotion();
+  });
 
   const pauseWindow = () => {
     frozenAnchorTimeMs = scale.unproject(viewport.offsetPx);
@@ -439,6 +465,8 @@
     );
     if (nextDurationMs === fixedWindowDurationMs) return;
 
+    windowDurationCustomized = true;
+
     if (!viewport.isFollowing) {
       const currentStartTimeMs =
         frozenAnchorTimeMs ?? scale.unproject(viewport.offsetPx);
@@ -452,13 +480,13 @@
         Math.max(centerTimeMs - nextDurationMs / 2, earliestStartTimeMs),
         latestStartTimeMs,
       );
-      if (windowMode === 'playing') {
-        playbackOriginTimeMs = frozenAnchorTimeMs;
-        playbackStartedAtMs = Date.now();
-      }
     }
 
     fixedWindowDurationMs = nextDurationMs;
+    if (windowMode === 'playing' && frozenAnchorTimeMs !== null) {
+      playbackOriginTimeMs = frozenAnchorTimeMs;
+      playbackStartedAtMs = Date.now();
+    }
     windowLayoutRevision += 1;
     resetTimelineMotion();
   };
@@ -468,6 +496,7 @@
     endTimeMs: number,
     anchor: TimelineWindowResizeAnchor,
   ) => {
+    windowDurationCustomized = true;
     const nextDurationMs = clampTimelineWindowDuration(endTimeMs - startTimeMs);
     const keepFollowing = viewport.isFollowing && anchor === 'end';
 
@@ -485,14 +514,33 @@
       );
       viewport.moveTo(scale.project(frozenAnchorTimeMs));
       windowMode = getTimelineWindowModeAfterManualPosition(windowMode);
-      if (windowMode === 'playing') {
-        playbackOriginTimeMs = frozenAnchorTimeMs;
-        playbackStartedAtMs = Date.now();
-      }
     }
 
     fixedWindowDurationMs = nextDurationMs;
+    if (windowMode === 'playing' && frozenAnchorTimeMs !== null) {
+      playbackOriginTimeMs = frozenAnchorTimeMs;
+      playbackStartedAtMs = Date.now();
+    }
     windowLayoutRevision += 1;
+    resetTimelineMotion();
+  };
+
+  const fitWindowToFullDuration = () => {
+    const fullDurationMs = Math.max(1, timeline.workflowTimespan.durationMs);
+    windowDurationCustomized = true;
+    fixedWindowDurationMs = fullDurationMs;
+    windowLayoutRevision += 1;
+
+    if (workflowIsLive) {
+      windowMode = 'following';
+      frozenAnchorTimeMs = null;
+      viewport.resume(scale.totalWorldWidthPx, true);
+    } else {
+      windowMode = 'paused';
+      frozenAnchorTimeMs = timeline.workflowTimespan.startTimeMs;
+      viewport.moveTo(scale.project(frozenAnchorTimeMs));
+      viewport.freeze();
+    }
     resetTimelineMotion();
   };
 
@@ -501,15 +549,19 @@
       windowControls = undefined;
       return;
     }
+    const windowStartTimeMs =
+      fixedWindowTimeRange?.startTimeMs ?? scale.unproject(viewport.offsetPx);
+    const windowEndTimeMs =
+      fixedWindowTimeRange?.endTimeMs ??
+      scale.unproject(viewport.offsetPx + viewport.widthPx);
     windowControls = {
       mode: windowMode,
       atBeginning: viewport.offsetPx <= viewport.minimumOffsetPx + 0.5,
-      atCurrent: viewport.offsetPx >= viewport.maximumOffsetPx - 0.5,
-      windowStartTimeMs:
-        fixedWindowTimeRange?.startTimeMs ?? scale.unproject(viewport.offsetPx),
-      windowEndTimeMs:
-        fixedWindowTimeRange?.endTimeMs ??
-        scale.unproject(viewport.offsetPx + viewport.widthPx),
+      atCurrent: timelineWindowIsAtEnd(windowEndTimeMs, aggregateEndTimeMs),
+      atFullDuration:
+        fixedWindowDurationMs >= timeline.workflowTimespan.durationMs,
+      windowStartTimeMs,
+      windowEndTimeMs,
       windowDurationMs: durationPerViewportMs,
       canZoomIn: fixedWindowDurationMs > TIMELINE_WINDOW_DURATIONS_MS[0],
       canZoomOut: fixedWindowDurationMs < TIMELINE_WINDOW_DURATIONS_MS.at(-1)!,
@@ -517,6 +569,7 @@
       resume: resumeWindow,
       zoomIn: () => zoomWindow('in'),
       zoomOut: () => zoomWindow('out'),
+      fitToFullDuration: fitWindowToFullDuration,
       resize: resizeWindow,
       jumpToBeginning,
       jumpToCurrent,
@@ -768,10 +821,16 @@
     }),
   );
   const layoutRowCount = $derived(containmentLayout.rowCount);
-  // Entry animations compare complete key lists. Keep them for normal/live
-  // histories, but never materialize a huge logical layout just to animate it.
+  // Entry animations compare complete key lists and hide new rows until a live
+  // burst settles. Large histories bypass that presentation step so sustained
+  // ingestion cannot starve the sliding window of visible rows.
   const animationLayoutRows = $derived(
-    layoutRowCount <= 10_000 ? containmentLayout.rows(0, layoutRowCount) : [],
+    shouldAnimateTimelineRowEntries({
+      totalGroupCount: filteredEntries.length,
+      layoutRowCount,
+    })
+      ? containmentLayout.rows(0, layoutRowCount)
+      : [],
   );
   const layoutRowKey = (row: TimelineLayoutRow): string => row.key;
   let previousLayoutKeys: string[] | null = null;
@@ -1017,9 +1076,11 @@
     }),
   );
 
-  // Rows mounted beyond the viewport, so edge rows survive small scrolls and
-  // direction reversals and are ready ahead of a fast fling.
-  const OVERSCAN = 12;
+  // Rows mounted beyond the viewport, so compositor-thread scrolling can move
+  // ahead of the next main-thread sample without exposing an empty band. At a
+  // 24 px row height, 32 rows cover 768 px in either direction while keeping
+  // the pool bounded to roughly two viewportfuls on a laptop-sized display.
+  const OVERSCAN = 32;
   const TIMELINE_VERTICAL_PADDING = ROW_HEIGHT;
 
   // Closed-form inverse of getRowY (both cursor segments are linear) → the

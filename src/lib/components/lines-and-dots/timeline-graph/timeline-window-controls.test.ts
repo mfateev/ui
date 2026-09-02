@@ -6,6 +6,7 @@ import {
   getTimelineWindowModeAfterManualPosition,
   getTimelineWindowTimeRange,
   getTimelineWindowZoomDuration,
+  timelineWindowIsAtEnd,
 } from './timeline-window-controls';
 
 describe('getTimelineWindowModeAfterManualPosition', () => {
@@ -74,5 +75,13 @@ describe('getTimelineWindowTimeRange', () => {
         followingEndTimeMs: 100_000,
       }),
     ).toEqual({ startTimeMs: 25_000, endTimeMs: 30_000 });
+  });
+});
+
+describe('timelineWindowIsAtEnd', () => {
+  it('allows playback only while forward time remains', () => {
+    expect(timelineWindowIsAtEnd(99_000, 100_000)).toBe(false);
+    expect(timelineWindowIsAtEnd(100_000, 100_000)).toBe(true);
+    expect(timelineWindowIsAtEnd(99_999.75, 100_000)).toBe(true);
   });
 });

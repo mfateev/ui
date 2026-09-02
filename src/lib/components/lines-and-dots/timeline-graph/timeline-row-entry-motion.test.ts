@@ -3,7 +3,35 @@ import { describe, expect, it } from 'vitest';
 import {
   getTimelineFrameBoundaryOffset,
   getTimelineRowEntryOffsets,
+  MAX_ANIMATED_TIMELINE_GROUPS,
+  shouldAnimateTimelineRowEntries,
 } from './timeline-row-entry-motion';
+
+describe('shouldAnimateTimelineRowEntries', () => {
+  it('keeps entry motion for bounded histories and layouts', () => {
+    expect(
+      shouldAnimateTimelineRowEntries({
+        totalGroupCount: MAX_ANIMATED_TIMELINE_GROUPS,
+        layoutRowCount: MAX_ANIMATED_TIMELINE_GROUPS,
+      }),
+    ).toBe(true);
+  });
+
+  it('disables entry motion when the history or visible layout is large', () => {
+    expect(
+      shouldAnimateTimelineRowEntries({
+        totalGroupCount: MAX_ANIMATED_TIMELINE_GROUPS + 1,
+        layoutRowCount: 20,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAnimateTimelineRowEntries({
+        totalGroupCount: 20,
+        layoutRowCount: MAX_ANIMATED_TIMELINE_GROUPS + 1,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe('getTimelineRowEntryOffsets', () => {
   it('slides a batch in from above while preserving existing row positions', () => {

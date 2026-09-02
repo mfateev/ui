@@ -29,16 +29,25 @@ const integerFromEnvironment = (
 
 const baseUrl =
   process.env.TIMELINE_BREAKPOINT_BASE_URL ?? 'http://localhost:3000';
-const runCount = integerFromEnvironment('TIMELINE_BREAKPOINT_RUNS', 32, 32);
+const preset = process.env.TIMELINE_BREAKPOINT_PRESET ?? 'full';
+const quickPreset = preset === 'quick';
+if (!quickPreset && preset !== 'full') {
+  throw new Error('TIMELINE_BREAKPOINT_PRESET must be "quick" or "full".');
+}
+const runCount = integerFromEnvironment(
+  'TIMELINE_BREAKPOINT_RUNS',
+  quickPreset ? 16 : 32,
+  32,
+);
 const maximumRows = integerFromEnvironment(
   'TIMELINE_BREAKPOINT_MAX_ROWS',
-  50_000,
+  quickPreset ? 24_000 : 50_000,
   50_000,
 );
 const rowsPerRun = Math.max(1, Math.floor(maximumRows / runCount));
 const maximumZoomLevels = integerFromEnvironment(
   'TIMELINE_BREAKPOINT_MAX_ZOOMS',
-  10,
+  quickPreset ? 1 : 10,
   12,
 );
 const maximumRuntimeMs = numberFromEnvironment(
@@ -79,8 +88,14 @@ const hardLongTaskLimitMs = numberFromEnvironment(
 );
 const outputPath = resolve(
   process.env.TIMELINE_BREAKPOINT_OUTPUT ??
-    '../.agent-artifacts/timeline-breakpoint-benchmark.json',
+    (quickPreset
+      ? '../.agent-artifacts/timeline-breakpoint-quick.json'
+      : '../.agent-artifacts/timeline-breakpoint-benchmark.json'),
 );
+const cpuProfilePath = process.env.TIMELINE_BREAKPOINT_CPU_PROFILE
+  ? resolve(process.env.TIMELINE_BREAKPOINT_CPU_PROFILE)
+  : undefined;
+const quickTargetDurationMs = 15 * 60_000;
 
 const fixture = createTimelineStressFixture({
   runCount,
@@ -289,6 +304,7 @@ const main = async (): Promise<void> => {
   let firstDegraded: LevelResult | null = null;
   let breakpoint: LevelResult | null = null;
   let stoppedByGuard: string | null = null;
+  let cpuProfilerRunning = false;
 
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
@@ -387,8 +403,29 @@ const main = async (): Promise<void> => {
       await zoomIn.click();
     }
 
+    if (cpuProfilePath) {
+      await session.send('Profiler.enable');
+      await session.send('Profiler.start');
+      cpuProfilerRunning = true;
+    }
+
     const zoomOut = page.getByTestId('timeline-zoom-out');
     const durationLabel = page.getByTestId('timeline-window-duration');
+    if (quickPreset) {
+      const timeline = page.getByRole('region', { name: 'Timeline' });
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        const durationMs = Number(
+          await timeline.getAttribute('data-window-duration-ms'),
+        );
+        if (durationMs >= quickTargetDurationMs) break;
+        if (!(await zoomOut.isEnabled())) break;
+        const previousDuration =
+          (await durationLabel.textContent())?.trim() ?? '';
+        await zoomOut.click();
+        await waitForTextChange(durationLabel, previousDuration, 3_000);
+        await page.waitForTimeout(25);
+      }
+    }
     for (let level = 0; level < maximumZoomLevels; level += 1) {
       if (performance.now() - startedAt >= maximumRuntimeMs) {
         stoppedByGuard = `runtime exceeded ${maximumRuntimeMs} ms`;
@@ -500,7 +537,18 @@ const main = async (): Promise<void> => {
       await page.waitForTimeout(200);
     }
 
+    if (cpuProfilePath && cpuProfilerRunning) {
+      const { profile } = (await session.send('Profiler.stop')) as {
+        profile: unknown;
+      };
+      cpuProfilerRunning = false;
+      await mkdir(dirname(cpuProfilePath), { recursive: true });
+      await writeFile(cpuProfilePath, JSON.stringify(profile));
+      console.log(`CPU profile: ${cpuProfilePath}`);
+    }
+
     const report = {
+      preset,
       generated: {
         runs: fixture.runs.length,
         rowsPerRun,

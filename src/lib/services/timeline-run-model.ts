@@ -58,12 +58,18 @@ export interface TimelineRunModel {
   readonly run: WorkflowChainOverviewRun;
   readonly revision: number;
   readonly groupCount: number;
+  readonly statistics?: TimelineRunModelStatistics;
   groupAt(ordinal: number): TimelineGroupSummary | undefined;
   groups(startOrdinal: number, endOrdinal: number): TimelineGroupSummary[];
   loadDetails(key: string, expectedVersion: number): Promise<EventGroup>;
   retain(): () => void;
   dispose(): void;
 }
+
+export type TimelineRunModelStatistics = {
+  eventCount: number;
+  estimatedBytes: number;
+};
 
 export class StaleTimelineGroupError extends Error {
   constructor() {
@@ -294,6 +300,29 @@ export class BufferTimelineRunModel implements TimelineRunModel {
 
   get sourceGroups(): readonly LazyGroup[] {
     return this.lazyGroups();
+  }
+
+  get statistics(): TimelineRunModelStatistics {
+    let eventCount = 0;
+    let estimatedBytes = 0;
+    for (const group of this.lazyGroups()) {
+      eventCount += group.eventCount;
+      // Cache accounting only needs a stable, conservative approximation. Do
+      // not build TimelineGroupSummary objects just to measure their strings.
+      estimatedBytes +=
+        64 +
+        estimateStringBytes(group.id) +
+        estimateStringBytes(group.initialEvent.eventType) * 2 +
+        (group.eventPoints?.length ?? 1) * 24;
+      if (group.childWorkflow) {
+        estimatedBytes += estimateStringBytes(
+          group.childWorkflow.namespace ?? this.namespace,
+        );
+        estimatedBytes += estimateStringBytes(group.childWorkflow.workflowId);
+        estimatedBytes += estimateStringBytes(group.childWorkflow.runId);
+      }
+    }
+    return { eventCount, estimatedBytes };
   }
 
   materializeSource(group: EventGroup | LazyGroup): EventGroup {

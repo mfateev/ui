@@ -352,52 +352,58 @@ export function getRecursiveTimelineContainmentLayout({
       const start = reverseSort ? run.groups.length - 1 : 0;
       const stop = reverseSort ? -1 : run.groups.length;
       const step = reverseSort ? -1 : 1;
-      for (let ordinal = start; ordinal !== stop; ordinal += step) {
-        const timelineGroup = run.groups[ordinal];
-        const entry = visibleByGroup.get(timelineGroup.group);
-        const edge = node.childrenByGroupKey.get(timelineGroup.timelineKey);
+      if (node.childrenByGroupKey.size === 0 && !hasCursorGap) {
+        appendRange(0, run.groups.length);
+      } else {
+        for (let ordinal = start; ordinal !== stop; ordinal += step) {
+          const timelineGroup = run.groups[ordinal];
+          const entry = visibleByGroup.get(timelineGroup.group);
+          const edge = node.childrenByGroupKey.get(timelineGroup.timelineKey);
 
-        if (entry && hasCursorGap && !gapInserted) {
-          const highCursor = eventId(entry) >= descMinId;
-          if (reverseSort ? !highCursor : highCursor) {
-            flushBefore(ordinal);
-            pendingGap = {
-              insertionIndex: logicalRowIndex,
-              rowStart: physicalRowIndex,
-              rowCount: runPendingCount,
-            };
-            physicalRowIndex += runPendingCount;
-            gapInserted = true;
+          if (entry && hasCursorGap && !gapInserted) {
+            const highCursor = eventId(entry) >= descMinId;
+            if (reverseSort ? !highCursor : highCursor) {
+              flushBefore(ordinal);
+              pendingGap = {
+                insertionIndex: logicalRowIndex,
+                rowStart: physicalRowIndex,
+                rowCount: runPendingCount,
+              };
+              physicalRowIndex += runPendingCount;
+              gapInserted = true;
+            }
           }
-        }
 
-        if (!edge) continue;
-        flushBefore(ordinal);
-        const loadedChild =
-          edge.expansion === 'expanded' && edge.load.state === 'loaded'
-            ? edge.load
-            : undefined;
-        const childIsExpanded = Boolean(loadedChild);
-        if (entry && !childIsExpanded) appendRange(ordinal, ordinal + 1);
-        if (loadedChild) {
-          appended = true;
-          visitWorkflow(loadedChild.node, owners);
-          if (loadedChild.truncation) {
+          if (!edge) continue;
+          flushBefore(ordinal);
+          const loadedChild =
+            edge.expansion === 'expanded' && edge.load.state === 'loaded'
+              ? edge.load
+              : undefined;
+          const childIsExpanded = Boolean(loadedChild);
+          if (entry && !childIsExpanded) appendRange(ordinal, ordinal + 1);
+          if (loadedChild) {
+            appended = true;
+            visitWorkflow(loadedChild.node, owners);
+            if (loadedChild.truncation) {
+              appendState({ edge, node, run, runKey, ancestorRunKeys: owners });
+            }
+          } else if (
+            edge.expansion !== 'collapsed' &&
+            edge.load.state !== 'idle' &&
+            edge.load.state !== 'loading'
+          ) {
             appendState({ edge, node, run, runKey, ancestorRunKeys: owners });
+            appended = true;
           }
-        } else if (
-          edge.expansion !== 'collapsed' &&
-          edge.load.state !== 'idle' &&
-          edge.load.state !== 'loading'
-        ) {
-          appendState({ edge, node, run, runKey, ancestorRunKeys: owners });
-          appended = true;
+          skipCurrent(ordinal);
         }
-        skipCurrent(ordinal);
       }
 
-      if (reverseSort) appendRange(0, rangeEnd);
-      else appendRange(rangeStart, run.groups.length);
+      if (node.childrenByGroupKey.size > 0 || hasCursorGap) {
+        if (reverseSort) appendRange(0, rangeEnd);
+        else appendRange(rangeStart, run.groups.length);
+      }
 
       if (runPendingCount > 0 && !gapInserted) {
         pendingGap = {

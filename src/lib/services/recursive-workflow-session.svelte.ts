@@ -260,6 +260,14 @@ export class RecursiveWorkflowSession {
     const next = new SvelteMap<string, TimelineChildEdge>();
     for (const run of node.runs) {
       for (const entry of run.groups) {
+        // Event groups from the application are categorized. Keep accepting
+        // uncategorized groups for lightweight callers and test fixtures.
+        if (
+          entry.group.category !== undefined &&
+          entry.group.category !== 'child-workflow'
+        ) {
+          continue;
+        }
         const reference = getChildWorkflowReference(
           entry.group,
           node.namespace,

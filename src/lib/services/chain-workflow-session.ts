@@ -14,7 +14,9 @@ export type TimelineGroup = {
   timelineKey: string;
   runId: string;
   group: EventGroup | LazyGroup;
-  materialize?: () => EventGroup;
+  materialize?: (group: EventGroup | LazyGroup) => EventGroup;
+  active?: boolean;
+  runEndTimeMs?: number;
 };
 
 export type TimelineRun = {
@@ -125,18 +127,20 @@ export const timelineKey = (runId: string, groupId: string): string =>
 
 export const toTimelineGroups = (
   runId: string,
-  groups: (EventGroup | LazyGroup)[],
+  groups: readonly (EventGroup | LazyGroup)[],
   materialize: (group: EventGroup | LazyGroup) => EventGroup = materializeGroup,
+  context?: { active: boolean; runEndTimeMs: number },
 ): TimelineGroup[] =>
   groups.map((group) => ({
     timelineKey: timelineKey(runId, group.id),
     runId,
     group,
-    materialize: () => materialize(group),
+    materialize,
+    ...context,
   }));
 
 export const materializeTimelineGroup = (entry: TimelineGroup): EventGroup =>
-  entry.materialize?.() ??
+  entry.materialize?.(entry.group) ??
   ('eventList' in entry.group ? entry.group : materializeGroup(entry.group));
 
 export const createRunRuntime = (): RunRuntimeState => {

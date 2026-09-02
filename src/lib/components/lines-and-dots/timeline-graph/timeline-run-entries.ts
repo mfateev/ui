@@ -1,4 +1,5 @@
 import type { EventGroup } from '$lib/models/event-groups/event-groups';
+import { allEventTypeOptions } from '$lib/models/event-history/get-event-categorization';
 import type {
   TimelineGroup,
   TimelineRun,
@@ -16,11 +17,15 @@ export function getTimelineGroupEntries(
   runs: TimelineRun[],
 ): TimelineGroupEntry[] {
   return runs.flatMap((run) =>
-    run.groups.map((entry) => ({
-      ...entry,
-      active: run.active,
-      runEndTimeMs: run.endTimeMs,
-    })),
+    run.groups.map((entry) =>
+      entry.active === run.active && entry.runEndTimeMs === run.endTimeMs
+        ? (entry as TimelineGroupEntry)
+        : {
+            ...entry,
+            active: run.active,
+            runEndTimeMs: run.endTimeMs,
+          },
+    ),
   );
 }
 
@@ -33,9 +38,13 @@ export function filterTimelineGroupEntries({
   eventTypes: EventTypeCategory[];
   failedOrPending: boolean;
 }): TimelineGroupEntry[] {
-  const eventTypeFiltered = entries.filter((entry) =>
-    eventTypes.includes(entry.group.category),
-  );
+  const selectedTypes = new Set(eventTypes);
+  const allTypesSelected =
+    selectedTypes.size === allEventTypeOptions.length &&
+    allEventTypeOptions.every(({ value }) => selectedTypes.has(value));
+  const eventTypeFiltered = allTypesSelected
+    ? entries
+    : entries.filter((entry) => selectedTypes.has(entry.group.category));
   return filterTimelineGroupEntriesByStatus(eventTypeFiltered, failedOrPending);
 }
 
@@ -57,10 +66,14 @@ export function getTimelineEntryMaps(entries: TimelineGroupEntry[]): {
   entryByGroup: Map<EventGroup | LazyGroup, TimelineGroupEntry>;
   keyByGroup: Map<EventGroup | LazyGroup, string>;
 } {
+  const entryByGroup = new Map<EventGroup | LazyGroup, TimelineGroupEntry>();
+  const keyByGroup = new Map<EventGroup | LazyGroup, string>();
+  for (const entry of entries) {
+    entryByGroup.set(entry.group, entry);
+    keyByGroup.set(entry.group, entry.timelineKey);
+  }
   return {
-    entryByGroup: new Map(entries.map((entry) => [entry.group, entry])),
-    keyByGroup: new Map(
-      entries.map((entry) => [entry.group, entry.timelineKey]),
-    ),
+    entryByGroup,
+    keyByGroup,
   };
 }

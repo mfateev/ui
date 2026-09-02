@@ -53,23 +53,28 @@ export function buildTimeSegments<T extends GroupForSegments>({
   let isSorted = true;
   let prevStartTimeMs = -Infinity;
   for (const group of lazyGroups) {
+    // A completed one-event group has a zero-width timespan and can never
+    // affect the segmented scale. Avoid timestamp parsing and allocation for
+    // signal/marker-heavy histories where nearly every group takes this path.
+    if (group.initialEvent === group.lastEvent && !group.isPending) continue;
+
     const startMs = getGroupStartMs(group);
 
     if (isNullish(startMs)) {
       continue;
     }
 
+    const endMs =
+      getEventGroupEndMs?.(group) ??
+      getGroupEndMs(group, workflowTimespan.endTimeMs);
+
     if (isSorted && startMs < prevStartTimeMs) {
       isSorted = false;
     }
 
-    groupTimespans.push(
-      new Timespan(
-        startMs,
-        getEventGroupEndMs?.(group) ??
-          getGroupEndMs(group, workflowTimespan.endTimeMs),
-      ),
-    );
+    if (endMs > startMs) {
+      groupTimespans.push(new Timespan(startMs, endMs));
+    }
 
     prevStartTimeMs = startMs;
   }

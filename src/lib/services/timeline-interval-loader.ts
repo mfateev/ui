@@ -286,11 +286,15 @@ export class TimelineIntervalLoader {
             this.detailCache,
           );
           const modelGroups = model.groupCount;
-          let modelEvents = 0;
-          for (let ordinal = 0; ordinal < modelGroups; ordinal += 1) {
-            modelEvents += model.groupAt(ordinal)?.eventCount ?? 0;
+          const statistics = model.statistics;
+          let modelEvents = statistics?.eventCount ?? 0;
+          if (!statistics) {
+            for (let ordinal = 0; ordinal < modelGroups; ordinal += 1) {
+              modelEvents += model.groupAt(ordinal)?.eventCount ?? 0;
+            }
           }
-          const modelBytes = estimateTimelineModelBytes(model);
+          const modelBytes =
+            statistics?.estimatedBytes ?? estimateTimelineModelBytes(model);
           const reason =
             groups + modelGroups > this.limits.intervalGroups
               ? 'group-limit'

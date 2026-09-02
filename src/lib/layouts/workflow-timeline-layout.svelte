@@ -53,10 +53,7 @@
   } from '$lib/services/chain-workflow-session';
   import { eventBuffer } from '$lib/services/grouped-event-buffer.svelte';
   import { TimelineIntervalLoader } from '$lib/services/timeline-interval-loader';
-  import {
-    BufferTimelineRunModel,
-    type TimelineRunModel,
-  } from '$lib/services/timeline-run-model';
+  import { BufferTimelineRunModel } from '$lib/services/timeline-run-model';
   import {
     loadWorkflowChainOverview,
     mergeWorkflowChainOverviewRuns,
@@ -114,7 +111,7 @@
       ? 'fixed-window'
       : requestedDisplayMode,
   );
-  let intervalTimelineRuns = $state<TimelineRun[]>([]);
+  let intervalTimelineRuns = $state.raw<TimelineRun[]>([]);
 
   const bufferGroups = $derived.by(() => {
     // The buffer owns its run identity. Never infer that identity from the
@@ -365,26 +362,22 @@
       Math.min(chainOverviewRuns.length, Math.max(firstIndex, lastIndex) + 2),
     );
 
-    const appendModel = (model: TimelineRunModel) => {
-      if (generation !== intervalLoadGeneration) return;
-      if (!(model instanceof BufferTimelineRunModel)) return;
-      intervalModelReleases.push(model.retain());
+    const toTimelineRun = (model: BufferTimelineRunModel) => {
       const run = model.run;
-      const timelineRun = {
+      return {
         runId: run.runId,
         status: run.status,
         startTimeMs: run.startTimeMs,
         endTimeMs: run.endTimeMs,
-        groups: toTimelineGroups(run.runId, [...model.sourceGroups], (group) =>
-          model.materializeSource(group),
+        groups: toTimelineGroups(
+          run.runId,
+          model.sourceGroups,
+          (group) => model.materializeSource(group),
+          { active: false, runEndTimeMs: run.endTimeMs },
         ),
         active: false,
         successorRunId: run.nextRunId,
       };
-      intervalTimelineRuns = [
-        ...intervalTimelineRuns.filter(({ runId }) => runId !== run.runId),
-        timelineRun,
-      ];
     };
 
     const result = await intervalLoader.load({
@@ -393,9 +386,14 @@
       runs: requestedRuns,
       startTimeMs,
       endTimeMs,
-      onModel: appendModel,
     });
     if (generation !== intervalLoadGeneration) return;
+    const models = result.models.filter(
+      (model): model is BufferTimelineRunModel =>
+        model instanceof BufferTimelineRunModel,
+    );
+    intervalModelReleases = models.map((model) => model.retain());
+    intervalTimelineRuns = models.map(toTimelineRun);
     intervalTruncated = result.truncation.some(
       ({ affectsSelectedWindow }) => affectsSelectedWindow,
     );

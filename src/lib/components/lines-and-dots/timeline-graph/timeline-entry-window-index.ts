@@ -1,46 +1,76 @@
 import type { EventGroup } from '$lib/models/event-groups/event-groups';
-import type {
-  TimelineGroupSummary,
-  TimelineRunModel,
-} from '$lib/services/timeline-run-model';
 import { validTimeToDate } from '$lib/utilities/format-time';
 
-import { TimelineIntervalIndex } from './timeline-interval-index';
 import type { TimelineGroupEntry } from './timeline-run-entries';
 
 const time = (value: EventGroup['initialEvent']['eventTime']): number =>
   value ? validTimeToDate(value).getTime() : 0;
 
+type PendingInterval = {
+  ordinal: number;
+  startTimeMs: number;
+  lastTimeMs: number;
+};
+
+/** Immutable interval index optimized for already time-ordered histories. */
 export class TimelineEntryWindowIndex {
-  private readonly index: TimelineIntervalIndex;
+  private readonly ordinals: Uint32Array;
+  private readonly startTimes: Float64Array;
+  private readonly endTimes: Float64Array;
+  private readonly prefixMaximumEndTimes: Float64Array;
+  private readonly pending: PendingInterval[];
+  private readonly preservesInputOrder: boolean;
 
   constructor(private readonly entries: readonly TimelineGroupEntry[]) {
-    const model: TimelineRunModel = {
-      run: {
-        runId: 'entry-window-index',
-        status: null,
-        startTimeMs: 0,
-        endTimeMs: 0,
-      },
-      revision: 0,
-      groupCount: entries.length,
-      groupAt: (ordinal) => this.summaryAt(ordinal),
-      groups: (start, end) => {
-        const summaries: TimelineGroupSummary[] = [];
-        for (let ordinal = start; ordinal < end; ordinal += 1) {
-          const summary = this.summaryAt(ordinal);
-          if (summary) summaries.push(summary);
-        }
-        return summaries;
-      },
-      loadDetails: async () => {
-        throw new Error('The entry window index does not own event details.');
-      },
-      retain: () => () => undefined,
-      dispose: () => undefined,
-    };
-    this.index = new TimelineIntervalIndex(model);
-    this.index.ingest();
+    const startByOrdinal = new Float64Array(entries.length);
+    const endByOrdinal = new Float64Array(entries.length);
+    const orderedOrdinals: number[] = [];
+    const pending: PendingInterval[] = [];
+    let previousStartTimeMs = Number.NEGATIVE_INFINITY;
+    let alreadySorted = true;
+
+    for (let ordinal = 0; ordinal < entries.length; ordinal += 1) {
+      const entry = entries[ordinal];
+      const group = entry.group;
+      const startTimeMs = time(group.initialEvent.eventTime);
+      const lastTimeMs = time(group.lastEvent.eventTime) || startTimeMs;
+      const groupIsPending = group.isPending;
+      if (entry.active && groupIsPending) {
+        pending.push({ ordinal, startTimeMs, lastTimeMs });
+        continue;
+      }
+      startByOrdinal[ordinal] = startTimeMs;
+      endByOrdinal[ordinal] =
+        !entry.active && groupIsPending
+          ? Math.max(lastTimeMs, entry.runEndTimeMs)
+          : lastTimeMs;
+      if (startTimeMs < previousStartTimeMs) alreadySorted = false;
+      previousStartTimeMs = startTimeMs;
+      orderedOrdinals.push(ordinal);
+    }
+
+    if (!alreadySorted) {
+      orderedOrdinals.sort(
+        (left, right) =>
+          startByOrdinal[left] - startByOrdinal[right] || left - right,
+      );
+    }
+
+    this.ordinals = Uint32Array.from(orderedOrdinals);
+    this.startTimes = new Float64Array(orderedOrdinals.length);
+    this.endTimes = new Float64Array(orderedOrdinals.length);
+    this.prefixMaximumEndTimes = new Float64Array(orderedOrdinals.length);
+    let maximumEndTimeMs = Number.NEGATIVE_INFINITY;
+    for (let index = 0; index < orderedOrdinals.length; index += 1) {
+      const ordinal = orderedOrdinals[index];
+      const endTimeMs = endByOrdinal[ordinal];
+      this.startTimes[index] = startByOrdinal[ordinal];
+      this.endTimes[index] = endTimeMs;
+      maximumEndTimeMs = Math.max(maximumEndTimeMs, endTimeMs);
+      this.prefixMaximumEndTimes[index] = maximumEndTimeMs;
+    }
+    this.pending = pending;
+    this.preservesInputOrder = alreadySorted && pending.length === 0;
   }
 
   query(
@@ -52,47 +82,51 @@ export class TimelineEntryWindowIndex {
     visitedNodes: number;
     pendingVisited: number;
   } {
-    const result = this.index.query(startTimeMs, endTimeMs, nowMs);
+    const endIndex = this.firstStartAfter(endTimeMs);
+    const startIndex = this.firstPrefixEndAtOrAfter(startTimeMs, endIndex);
+    const matchingOrdinals: number[] = [];
+    for (let index = startIndex; index < endIndex; index += 1) {
+      if (this.endTimes[index] >= startTimeMs) {
+        matchingOrdinals.push(this.ordinals[index]);
+      }
+    }
+    for (const interval of this.pending) {
+      if (
+        interval.startTimeMs <= endTimeMs &&
+        Math.max(interval.lastTimeMs, nowMs) >= startTimeMs
+      ) {
+        matchingOrdinals.push(interval.ordinal);
+      }
+    }
+    if (!this.preservesInputOrder) {
+      matchingOrdinals.sort((left, right) => left - right);
+    }
     return {
-      entries: result.ordinals.map((ordinal) => this.entries[ordinal]),
-      visitedNodes: result.visitedNodes,
-      pendingVisited: result.pendingVisited,
+      entries: matchingOrdinals.map((ordinal) => this.entries[ordinal]),
+      visitedNodes: Math.max(0, endIndex - startIndex),
+      pendingVisited: this.pending.length,
     };
   }
 
-  private summaryAt(ordinal: number): TimelineGroupSummary | undefined {
-    const entry = this.entries[ordinal];
-    if (!entry) return undefined;
-    const group = entry.group;
-    const startTimeMs = time(group.initialEvent.eventTime);
-    const lastTimeMs = time(group.lastEvent.eventTime) || startTimeMs;
-    const pending = entry.active && group.isPending;
-    return {
-      key: entry.timelineKey,
-      version: 'version' in group ? (group.version ?? 0) : 0,
-      initialEventId: Number(group.initialEvent.id),
-      finalEventId: Number(group.lastEvent.id),
-      startTimeMs,
-      endTimeMs:
-        !entry.active && group.isPending
-          ? Math.max(lastTimeMs, entry.runEndTimeMs)
-          : lastTimeMs,
-      category: group.category,
-      classification: group.classification,
-      finalClassification: group.finalClassification,
-      eventCount: group.eventCount,
-      points: [],
-      row: {
-        displayName: '',
-        prefix: '',
-        initialEventType: group.initialEvent.eventType,
-        retryAttempt: 0,
-        retried: false,
-        scheduling: false,
-        timelineCategory: group.category,
-        pendingPaused: false,
-      },
-      pending,
-    };
+  private firstStartAfter(timeMs: number): number {
+    let low = 0;
+    let high = this.startTimes.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (this.startTimes[middle] <= timeMs) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  }
+
+  private firstPrefixEndAtOrAfter(timeMs: number, endIndex: number): number {
+    let low = 0;
+    let high = endIndex;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (this.prefixMaximumEndTimes[middle] < timeMs) low = middle + 1;
+      else high = middle;
+    }
+    return low;
   }
 }

@@ -7,7 +7,10 @@ import {
   workflowGroupKey,
 } from './recursive-timeline-model';
 import { TimelineVisibilityBitset } from './timeline-interval-index';
-import type { TimelineGroupEntry } from './timeline-run-entries';
+import {
+  getTimelineGroupEntry,
+  type TimelineGroupEntry,
+} from './timeline-run-entries';
 
 export type TimelineLayoutRow =
   | {
@@ -157,6 +160,10 @@ const intersects = (
   end = Number.POSITIVE_INFINITY,
 ): boolean => rowEnd > start && rowStart < end;
 
+const isSafetyLimited = (edge: TimelineChildEdge): boolean =>
+  edge.load.state === 'truncated' ||
+  (edge.load.state === 'loaded' && edge.load.truncation !== undefined);
+
 /** Prefix-addressable containment without allocating a row object per group. */
 export function getRecursiveTimelineContainmentLayout({
   root,
@@ -170,7 +177,9 @@ export function getRecursiveTimelineContainmentLayout({
   const collectRuns = (node: TimelineWorkflowNode): void => {
     for (const run of node.runs) runById.set(run.runId, run);
     for (const edge of node.childrenByGroupKey.values()) {
-      if (edge.load.state === 'loaded') collectRuns(edge.load.node);
+      if (edge.load.state === 'loaded' && !edge.load.truncation) {
+        collectRuns(edge.load.node);
+      }
     }
   };
   collectRuns(root);
@@ -309,13 +318,13 @@ export function getRecursiveTimelineContainmentLayout({
 
       const visibleEntryAt = (
         ordinal: number,
+        edge?: TimelineChildEdge,
       ): TimelineGroupEntry | undefined => {
         if (!mask.has(ordinal)) return undefined;
         const timelineGroup = run.groups[ordinal];
-        return (
-          exceptionalEntryByGroup.get(timelineGroup.group) ??
-          (timelineGroup as TimelineGroupEntry)
-        );
+        const entry =
+          exceptionalEntryByGroup.get(timelineGroup.group) ?? timelineGroup;
+        return getTimelineGroupEntry(entry, run, edge?.execution);
       };
 
       let appended = false;
@@ -355,9 +364,9 @@ export function getRecursiveTimelineContainmentLayout({
               return undefined;
             }
             const timelineGroup = run.groups[ordinal];
-            const entry = visibleEntryAt(ordinal);
-            if (!entry) return undefined;
             const edge = node.childrenByGroupKey.get(timelineGroup.timelineKey);
+            const entry = visibleEntryAt(ordinal, edge);
+            if (!entry) return undefined;
             return {
               kind: 'group',
               key:
@@ -372,7 +381,7 @@ export function getRecursiveTimelineContainmentLayout({
               runKey,
               depth: node.depth,
               ancestorRunKeys: owners,
-              childEdge: edge,
+              childEdge: edge && !isSafetyLimited(edge) ? edge : undefined,
               rowIndex: rowStart + localIndex,
             };
           },
@@ -406,8 +415,8 @@ export function getRecursiveTimelineContainmentLayout({
       } else {
         for (let ordinal = start; ordinal !== stop; ordinal += step) {
           const timelineGroup = run.groups[ordinal];
-          const entry = visibleEntryAt(ordinal);
           const edge = node.childrenByGroupKey.get(timelineGroup.timelineKey);
+          const entry = visibleEntryAt(ordinal, edge);
 
           if (entry && hasCursorGap && !gapInserted) {
             const highCursor = eventId(entry) >= descMinId;
@@ -426,7 +435,9 @@ export function getRecursiveTimelineContainmentLayout({
           if (!edge) continue;
           flushBefore(ordinal);
           const loadedChild =
-            edge.expansion === 'expanded' && edge.load.state === 'loaded'
+            edge.expansion === 'expanded' &&
+            edge.load.state === 'loaded' &&
+            !edge.load.truncation
               ? edge.load
               : undefined;
           const childIsExpanded = Boolean(loadedChild);
@@ -434,10 +445,8 @@ export function getRecursiveTimelineContainmentLayout({
           if (loadedChild) {
             appended = true;
             visitWorkflow(loadedChild.node, owners);
-            if (loadedChild.truncation) {
-              appendState({ edge, node, run, runKey, ancestorRunKeys: owners });
-            }
           } else if (
+            !isSafetyLimited(edge) &&
             edge.expansion !== 'collapsed' &&
             edge.load.state !== 'idle' &&
             edge.load.state !== 'loading'

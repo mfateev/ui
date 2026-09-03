@@ -1,12 +1,13 @@
 <script lang="ts">
   import Button from '$lib/holocene/button.svelte';
   import { translate } from '$lib/i18n/translate';
-  import { IconChevronDown, IconChevronRight } from '$lib/io/icon';
 
   import type { DotColors } from '../colors';
   import { DOT_STROKE, GUTTER, RADIUS } from './constants';
   import { alignedDotBox } from './primitives';
   import type { WorkflowFrameGeometry } from './workflow-frame-geometry';
+
+  import TimelineChildToggleIcon from './timeline-child-toggle-icon.svelte';
 
   interface Props {
     geometry: WorkflowFrameGeometry;
@@ -25,6 +26,7 @@
     entryKey?: string;
     bottomEntryOffsetPx?: number;
     entryPending?: boolean;
+    controlX?: number;
     onToggle?: () => void;
     expanded?: boolean;
   }
@@ -46,6 +48,7 @@
     entryKey,
     bottomEntryOffsetPx = 0,
     entryPending = false,
+    controlX,
     onToggle,
     expanded = true,
   }: Props = $props();
@@ -139,6 +142,7 @@
   class:timeline-frame-entry-pending={entryPending}
   data-timeline-entry-offset={entryOffsetPx || undefined}
   data-timeline-entry-key={entryKey}
+  data-timeline-frame-entry
   data-timeline-bottom-entry-offset={bottomEntryOffsetPx || undefined}
   style:--timeline-row-entry-offset={`${entryOffsetPx}px`}
 >
@@ -241,9 +245,7 @@
           <span
             class:frame-label-chain={kind === 'chain'}
             class:workflow-run-label={kind === 'run'}
-            class:pointer-events-none={!onToggle}
-            class:pointer-events-auto={Boolean(onToggle)}
-            class="absolute z-10 inline-flex min-h-[var(--dot)] items-center truncate whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none text-current"
+            class="pointer-events-none absolute z-10 inline-flex min-h-[var(--dot)] items-center truncate whitespace-nowrap rounded-full bg-[rgb(var(--color-surface-primary))] px-1.5 text-[13px] leading-none text-current"
             style:left={labelLeft}
             style:top="{geometry.topPx - RADIUS}px"
             style:max-width={labelMaxWidth}
@@ -255,22 +257,24 @@
             title={displayLabel}
             use:measureLabel
           >
-            {#if onToggle}
-              <Button
-                variant="ghost"
-                size="xs"
-                class="mr-1 h-4 w-4 shrink-0 p-0"
-                onclick={onToggle}
-                aria-label={`${expanded ? translate('workflows.child-timeline-collapse') : translate('workflows.child-timeline-expand')}: ${label}`}
-                aria-expanded={expanded}
-                LeadingIcon={expanded ? IconChevronDown : IconChevronRight}
-                title={expanded
-                  ? translate('workflows.child-timeline-collapse')
-                  : translate('workflows.child-timeline-expand')}
-              />
-            {/if}
             <span class="truncate">{displayLabel}</span>
           </span>
+        {/if}
+        {#if onToggle && controlX !== undefined && drawTop}
+          <Button
+            variant="secondary"
+            size="xs"
+            class="pointer-events-auto absolute z-30 h-5 w-5 -translate-y-1/2 p-0"
+            style={`left: ${controlX}px; top: ${geometry.topPx}px`}
+            onclick={onToggle}
+            aria-label={`${expanded ? translate('workflows.child-timeline-collapse') : translate('workflows.child-timeline-expand')}: ${label}`}
+            aria-expanded={expanded}
+            title={expanded
+              ? translate('workflows.child-timeline-collapse')
+              : translate('workflows.child-timeline-expand')}
+          >
+            <TimelineChildToggleIcon {expanded} />
+          </Button>
         {/if}
         {#if drawTop && kind === 'chain'}
           {#each visibleDots as dot (dot.point)}

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
 
-  import { onDestroy, untrack } from 'svelte';
+  import { flushSync, onDestroy, untrack } from 'svelte';
   import { twMerge } from 'tailwind-merge';
 
   import { timestamp } from '$lib/components/timestamp.svelte';
@@ -11,6 +11,7 @@
     type ChainRetentionWindow,
     getChainRetentionWindow,
     materializeTimelineGroup,
+    type TimelineGroup,
     type TimelineRun,
     toTimelineGroups,
   } from '$lib/services/chain-workflow-session';
@@ -76,7 +77,7 @@
   import {
     filterTimelineGroupEntries,
     filterTimelineGroupEntriesByStatus,
-    getTimelineGroupEntries,
+    getTimelineGroupEntry,
     type TimelineGroupEntry,
   } from './timeline-run-entries';
   import {
@@ -212,23 +213,38 @@
 
   const workflowTree = $derived(recursiveSession.snapshot);
   const workflowNodes = $derived(flattenWorkflowNodes(workflowTree));
-  const incomingEdgeByWorkflowKey = $derived.by(() => {
-    const incomingEdges = new SvelteMap<string, TimelineChildEdge>();
+  const incomingChildByWorkflowKey = $derived.by(() => {
+    const incomingChildren = new SvelteMap<
+      string,
+      { edge: TimelineChildEdge; parentEntry: TimelineGroup }
+    >();
     for (const node of workflowNodes) {
       for (const edge of node.childrenByGroupKey.values()) {
         if (edge.load.state === 'loaded') {
-          incomingEdges.set(edge.load.node.key, edge);
+          const parentEntry = node.runs
+            .flatMap((run) => run.groups)
+            .find((entry) => entry.timelineKey === edge.parentGroupKey);
+          if (parentEntry) {
+            incomingChildren.set(edge.load.node.key, { edge, parentEntry });
+          }
         }
       }
     }
-    return incomingEdges;
+    return incomingChildren;
   });
   const allWorkflowRuns = $derived(workflowNodes.flatMap((node) => node.runs));
+  const describedChildExecutions = $derived(
+    workflowNodes.flatMap((node) =>
+      [...node.childrenByGroupKey.values()].flatMap((edge) =>
+        edge.execution ? [edge.execution] : [],
+      ),
+    ),
+  );
   const aggregateHasLive = $derived(
     allWorkflowRuns.some(
       (run) =>
         run.active && (run.status === 'Running' || run.status === 'Paused'),
-    ),
+    ) || describedChildExecutions.some((execution) => execution.active),
   );
   const aggregateStartTimeMs = $derived.by(() => {
     let minimum = Number.POSITIVE_INFINITY;
@@ -243,11 +259,26 @@
     for (const run of allWorkflowRuns) {
       if (run.endTimeMs > maximum) maximum = run.endTimeMs;
     }
+    for (const execution of describedChildExecutions) {
+      if (execution.endTimeMs !== undefined && execution.endTimeMs > maximum) {
+        maximum = execution.endTimeMs;
+      }
+    }
     return Number.isFinite(maximum) ? maximum : nowMs;
   });
 
   const timelineGroupEntries = $derived(
-    workflowNodes.flatMap((node) => getTimelineGroupEntries(node.runs)),
+    workflowNodes.flatMap((node) =>
+      node.runs.flatMap((run) =>
+        run.groups.map((entry) =>
+          getTimelineGroupEntry(
+            entry,
+            run,
+            node.childrenByGroupKey.get(entry.timelineKey)?.execution,
+          ),
+        ),
+      ),
+    ),
   );
   const allEventTypesSelected = $derived.by(() => {
     const selected = new Set($eventTypeFilter);
@@ -299,9 +330,16 @@
     const endTimes = new WeakMap<LazyGroup, number>();
     for (const node of workflowNodes) {
       for (const run of node.runs) {
-        if (run.active) continue;
         for (const entry of run.groups) {
-          if (entry.group.isPending) {
+          if (!entry.group.isPending) continue;
+          const execution = node.childrenByGroupKey.get(
+            entry.timelineKey,
+          )?.execution;
+          if (execution) {
+            if (!execution.active && execution.endTimeMs !== undefined) {
+              endTimes.set(entry.group as LazyGroup, execution.endTimeMs);
+            }
+          } else if (!run.active) {
             endTimes.set(entry.group as LazyGroup, run.endTimeMs);
           }
         }
@@ -788,6 +826,29 @@
     );
   };
 
+  const getChildControlPlacement = (
+    entry: TimelineGroup,
+    edge: TimelineChildEdge,
+  ): { x: number; fitsAfter: boolean } => {
+    const controlEndTime =
+      edge.execution &&
+      !edge.execution.active &&
+      edge.execution.endTimeMs !== undefined
+        ? new Date(edge.execution.endTimeMs).toISOString()
+        : entry.group.lastEvent.eventTime;
+    const afterX = projectX(controlEndTime) + RADIUS * 2 + 4;
+    const fitsAfter = afterX + 24 <= canvasWidth - GUTTER;
+    return {
+      x: fitsAfter
+        ? afterX
+        : Math.max(
+            GUTTER + edge.depth * 12,
+            projectX(entry.group.initialEvent.eventTime) - RADIUS * 2 - 4 - 24,
+          ),
+      fitsAfter,
+    };
+  };
+
   const toggleSegment = (segmentKey: string) => {
     const segment = timeline.segments.find(
       (candidate) => candidate.timespan.key === segmentKey,
@@ -934,11 +995,16 @@
   let presentedLayoutRowCount = $state(0);
   let rowPresentationBatching = $state(false);
   let observedRowPresentationScope = '';
+  let presentNextChildToggleImmediately = false;
 
   $effect(() => {
     const availableRows = availableLayoutRowCount;
     const scope = rowPresentationScope;
-    if (scope !== observedRowPresentationScope) {
+    if (presentNextChildToggleImmediately) {
+      presentNextChildToggleImmediately = false;
+      presentedLayoutRowCount = availableRows;
+      rowPresentationBatching = false;
+    } else if (scope !== observedRowPresentationScope) {
       observedRowPresentationScope = scope;
       presentedLayoutRowCount = initialTimelinePaintRows(availableRows);
       rowPresentationBatching = presentedLayoutRowCount < availableRows;
@@ -1064,6 +1130,9 @@
   let rowEntrySettleTimer: ReturnType<typeof setTimeout> | null = null;
   let previousRowPresentationScope = '';
   let previousRowPresentationWasBatching = false;
+  let suppressRowEntryAfterChildToggleUntilMs = 0;
+  let mountedChildToggleAnimations: Animation[] = [];
+  let mountedChildToggleFrame = 0;
 
   // Live polling can split one server-side event burst across adjacent refreshes.
   // Keep the previous layout painted until that burst has gone quiet, then admit
@@ -1076,6 +1145,8 @@
     if (rowEntrySettleTimer !== null) clearTimeout(rowEntrySettleTimer);
     rowEntryObserver?.disconnect();
     rowEntryAnimations.forEach((animation) => animation.cancel());
+    cancelAnimationFrame(mountedChildToggleFrame);
+    mountedChildToggleAnimations.forEach((animation) => animation.cancel());
   });
 
   const finishRowEntry = () => {
@@ -1090,6 +1161,136 @@
     rowEntryAnimating = false;
     rowEntryOffsets = new Map();
     rowEntryNewKeys = new Set();
+  };
+
+  const mountedRowTops = (originY: number): Map<string, number> => {
+    const rows = Array.from(
+      rowStackEl?.querySelectorAll<HTMLElement>('li[data-timeline-key]') ?? [],
+    )
+      .filter((row) => row.getClientRects().length > 0)
+      .map((row) => ({
+        key: row.dataset.timelineKey ?? '',
+        top: row.getBoundingClientRect().top,
+      }));
+    rows.sort(
+      (left, right) =>
+        Math.abs(left.top - originY) - Math.abs(right.top - originY),
+    );
+    const tops = new SvelteMap(
+      rows.slice(0, 256).map(({ key, top }) => [key, top] as const),
+    );
+    for (const button of containerEl?.querySelectorAll<HTMLElement>(
+      'button[aria-label^="Expand child workflow"], button[aria-label^="Collapse child workflow"]',
+    ) ?? []) {
+      const owner = button.closest<HTMLElement>(
+        'li[data-timeline-key], [data-timeline-frame-entry]',
+      );
+      const key =
+        owner?.dataset.timelineKey ?? owner?.dataset.timelineEntryKey ?? '';
+      if (key && owner?.getClientRects().length) {
+        tops.set(key, owner.getBoundingClientRect().top);
+      }
+    }
+    return tops;
+  };
+
+  const animateMountedRowsAfterChildToggle = ({
+    previousTops,
+    originY,
+  }: {
+    previousTops: ReadonlyMap<string, number>;
+    originY: number;
+  }) => {
+    const rowOffsets = new SvelteMap<string, number>();
+    const candidateRows = Array.from(
+      rowStackEl?.querySelectorAll<HTMLElement>('li[data-timeline-key]') ?? [],
+    )
+      .filter((row) => row.getClientRects().length > 0)
+      .map((row) => ({
+        element: row,
+        key: row.dataset.timelineKey ?? '',
+        top: row.getBoundingClientRect().top,
+      }))
+      .filter(
+        ({ key, top }) =>
+          previousTops.has(key) ||
+          Math.abs(top - originY) <= window.innerHeight * 2,
+      )
+      .sort(
+        (left, right) =>
+          Number(previousTops.has(right.key)) -
+            Number(previousTops.has(left.key)) ||
+          Math.abs(left.top - originY) - Math.abs(right.top - originY),
+      )
+      .slice(0, 256);
+    const rowAnimations = candidateRows.flatMap(({ element, key, top }) => {
+      const offsetPx = (previousTops.get(key) ?? originY) - top;
+      rowOffsets.set(key, offsetPx);
+      if (!offsetPx) return [];
+      return [
+        element.animate(
+          [{ translate: `0 ${offsetPx}px` }, { translate: '0 0' }],
+          {
+            duration: 1200,
+            easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          },
+        ),
+      ];
+    });
+    const frameAnimations = Array.from(
+      containerEl?.querySelectorAll<HTMLElement>(
+        '[data-timeline-frame-entry]',
+      ) ?? [],
+    ).flatMap((frame) => {
+      const key = frame.dataset.timelineEntryKey ?? '';
+      const offsetPx = rowOffsets.get(key);
+      if (!offsetPx) return [];
+      return [
+        frame.animate(
+          [{ translate: `0 ${offsetPx}px` }, { translate: '0 0' }],
+          {
+            duration: 1200,
+            easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          },
+        ),
+      ];
+    });
+    mountedChildToggleAnimations = [...rowAnimations, ...frameAnimations];
+    const animations = mountedChildToggleAnimations;
+    animations.forEach((animation) => {
+      animation.pause();
+      animation.currentTime = 0;
+    });
+    cancelAnimationFrame(mountedChildToggleFrame);
+    mountedChildToggleFrame = requestAnimationFrame(() => {
+      if (mountedChildToggleAnimations !== animations) return;
+      animations.forEach((animation) => animation.play());
+    });
+    void Promise.allSettled(
+      animations.map((animation) => animation.finished),
+    ).then(() => {
+      if (mountedChildToggleAnimations === animations) {
+        mountedChildToggleAnimations = [];
+      }
+    });
+  };
+
+  const toggleChild = (edgeKey: string) => {
+    const activeElement = document.activeElement;
+    const originY =
+      activeElement instanceof HTMLElement
+        ? activeElement.getBoundingClientRect().top +
+          activeElement.getBoundingClientRect().height / 2
+        : (containerEl?.getBoundingClientRect().top ?? 0);
+    const previousTops = mountedRowTops(originY);
+    mountedChildToggleAnimations.forEach((animation) => animation.cancel());
+    mountedChildToggleAnimations = [];
+    presentNextChildToggleImmediately = true;
+    suppressRowEntryAfterChildToggleUntilMs =
+      performance.now() + ROW_ENTRY_SETTLE_MS + 1200;
+    flushSync(() => recursiveSession.toggle(edgeKey));
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    animateMountedRowsAfterChildToggle({ previousTops, originY });
   };
 
   const currentEntryVisualOffsets = (): Map<string, number> => {
@@ -1113,6 +1314,18 @@
     const currentKeys = animationLayoutRows.map(layoutRowKey);
     const previousKeys = previousLayoutKeys;
     previousLayoutKeys = currentKeys;
+    if (suppressRowEntryAfterChildToggleUntilMs) {
+      if (recursiveSession.requestCount > 0) {
+        suppressRowEntryAfterChildToggleUntilMs =
+          performance.now() + ROW_ENTRY_SETTLE_MS;
+      } else if (performance.now() >= suppressRowEntryAfterChildToggleUntilMs) {
+        suppressRowEntryAfterChildToggleUntilMs = 0;
+      }
+    }
+    if (suppressRowEntryAfterChildToggleUntilMs) {
+      finishRowEntry();
+      return;
+    }
     const initialRowPresentation =
       rowPresentationScope !== previousRowPresentationScope ||
       rowPresentationBatching ||
@@ -2248,8 +2461,15 @@
             class="timeline-motion-layer pointer-events-none absolute inset-0 z-20"
           >
             {#each presentedChainFrameLayouts as frame (frame.candidate.key)}
-              {@const incomingEdge = frame.candidate.workflowKey
-                ? incomingEdgeByWorkflowKey.get(frame.candidate.workflowKey)
+              {@const incomingChild = frame.candidate.workflowKey
+                ? incomingChildByWorkflowKey.get(frame.candidate.workflowKey)
+                : undefined}
+              {@const incomingEdge = incomingChild?.edge}
+              {@const expandedChildControl = incomingChild
+                ? getChildControlPlacement(
+                    incomingChild.parentEntry,
+                    incomingChild.edge,
+                  )
                 : undefined}
               <WorkflowFrame
                 geometry={frame.geometry}
@@ -2278,8 +2498,9 @@
                 entryPending={frameEntryPending(
                   `${frame.candidate.workflowKey ?? ''}:workflow-header`,
                 )}
+                controlX={expandedChildControl?.x}
                 onToggle={incomingEdge
-                  ? () => recursiveSession.toggle(incomingEdge.key)
+                  ? () => toggleChild(incomingEdge.key)
                   : undefined}
               />
             {/each}
@@ -2385,21 +2606,11 @@
               >
                 {#if slot?.row.kind === 'group'}
                   {@const timelineEntry = slot.row.entry}
-                  {@const childControlAfterX =
-                    projectX(timelineEntry.group.lastEvent.eventTime) +
-                    RADIUS * 1.5 +
-                    1}
-                  {@const childControlFitsAfter =
-                    childControlAfterX + 24 <= canvasWidth - GUTTER}
-                  {@const childControlX = slot.row.childEdge
-                    ? childControlFitsAfter
-                      ? childControlAfterX
-                      : Math.max(
-                          GUTTER + slot.row.childEdge.depth * 12,
-                          projectX(timelineEntry.group.initialEvent.eventTime) -
-                            RADIUS * 1.5 -
-                            24,
-                        )
+                  {@const childControl = slot.row.childEdge
+                    ? getChildControlPlacement(
+                        timelineEntry,
+                        slot.row.childEdge,
+                      )
                     : undefined}
                   <div class="timeline-motion-layer absolute inset-0">
                     {#if !('eventList' in timelineEntry.group) && timelineEntry.group.eventCount === 1 && !timelineEntry.group.isPending && timelineEntry.active === false}
@@ -2419,6 +2630,7 @@
                         project={projectX}
                         {readOnly}
                         active={timelineEntry?.active ?? true}
+                        resolvedStatus={timelineEntry?.resolvedStatus}
                         retainedEndTimeMs={timelineEntry?.active
                           ? undefined
                           : timelineEntry?.runEndTimeMs}
@@ -2428,22 +2640,33 @@
                         viewportEndOverscanPx={displayMode === 'fixed-window'
                           ? TIMELINE_MOTION_OVERSCAN_PX
                           : 0}
+                        fanOutShortBoundaryMarkers={Boolean(slot.row.childEdge)}
                         labelLeadingOffsetPx={slot.row.childEdge &&
-                        childControlFitsAfter
+                        childControl?.fitsAfter
                           ? 34
                           : 0}
                         labelTrailingOffsetPx={slot.row.childEdge &&
-                        !childControlFitsAfter
+                        !childControl?.fitsAfter
                           ? 34
                           : 0}
+                        onBeforeSelect={slot.row.childEdge
+                          ? () => {
+                              if (
+                                slot.row.kind === 'group' &&
+                                slot.row.childEdge?.expansion === 'expanded'
+                              ) {
+                                toggleChild(slot.row.childEdge.key);
+                              }
+                            }
+                          : undefined}
                       />
                     {/if}
                     {#if slot.row.childEdge}
                       <TimelineChildEdgeRow
                         edge={slot.row.childEdge}
                         {canvasWidth}
-                        anchorX={childControlX}
-                        onToggle={(edgeKey) => recursiveSession.toggle(edgeKey)}
+                        anchorX={childControl?.x}
+                        onToggle={toggleChild}
                         onRetry={(edgeKey) => recursiveSession.retry(edgeKey)}
                       />
                     {/if}
@@ -2453,7 +2676,7 @@
                     edge={slot.row.edge}
                     {canvasWidth}
                     presentation="state"
-                    onToggle={(edgeKey) => recursiveSession.toggle(edgeKey)}
+                    onToggle={toggleChild}
                     onRetry={(edgeKey) => recursiveSession.retry(edgeKey)}
                   />
                 {/if}

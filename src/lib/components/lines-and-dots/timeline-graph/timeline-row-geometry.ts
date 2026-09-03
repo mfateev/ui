@@ -24,18 +24,29 @@ export function getTimelineDotAlignment({
   pending,
   boundarySpanPx,
   markerSizePx,
+  boundaryEndIndex = eventCount - 1,
+  fanOutShortBoundaryMarkers = false,
+  centerSingleMarker = false,
 }: {
   index: number;
   eventCount: number;
   pending: boolean;
   boundarySpanPx?: number;
   markerSizePx?: number;
+  boundaryEndIndex?: number;
+  fanOutShortBoundaryMarkers?: boolean;
+  centerSingleMarker?: boolean;
 }): 'start' | 'center' | 'end' {
+  if (centerSingleMarker && eventCount === 1) return 'center';
   if (
     boundarySpanPx !== undefined &&
     markerSizePx !== undefined &&
     boundarySpanPx < markerSizePx
   ) {
+    if (fanOutShortBoundaryMarkers) {
+      if (index === 0) return 'end';
+      if (index === boundaryEndIndex) return 'start';
+    }
     return 'center';
   }
   if (index === 0) return 'start';
@@ -58,6 +69,7 @@ export function getTimelineDotRole({
   livePending,
   hasPauseTime,
   active,
+  resolvedTerminal = false,
 }: {
   index: number;
   eventCount: number;
@@ -66,16 +78,20 @@ export function getTimelineDotRole({
   livePending: boolean;
   hasPauseTime: boolean;
   active: boolean;
+  resolvedTerminal?: boolean;
 }): TimelineDotRole | null {
   if (hasPauseTime && index === pointCount - 1 && index >= eventCount) {
     return 'pause';
   }
   if (index === 0) return 'start';
+  if (resolvedTerminal && pointCount > eventCount && index === pointCount - 1) {
+    return 'completion';
+  }
   if (livePending && !hasPauseTime && index === pointCount - 1) {
     return 'pending';
   }
   if (!pending && index === eventCount - 1) return 'completion';
-  if (!active && pending && index === eventCount - 1) {
+  if (!resolvedTerminal && !active && pending && index === eventCount - 1) {
     return 'retained-pending';
   }
   return null;

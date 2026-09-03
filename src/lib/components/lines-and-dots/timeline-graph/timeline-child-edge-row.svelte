@@ -1,10 +1,11 @@
 <script lang="ts">
   import Button from '$lib/holocene/button.svelte';
   import { translate } from '$lib/i18n/translate';
-  import { IconChevronDown, IconChevronRight } from '$lib/io/icon';
 
   import { GUTTER } from './constants';
   import type { TimelineChildEdge } from './recursive-timeline-model';
+
+  import TimelineChildToggleIcon from './timeline-child-toggle-icon.svelte';
 
   type Props = {
     edge: TimelineChildEdge;
@@ -37,23 +38,24 @@
           ? translate('workflows.child-timeline-unavailable')
           : translate('workflows.child-timeline-error');
     }
-    if (edge.load.state === 'truncated') {
-      return translate('workflows.child-timeline-truncated');
-    }
     if (edge.load.state === 'evicted') {
       return translate('workflows.child-timeline-evicted');
     }
-    if (edge.load.state === 'loaded' && edge.load.truncation) {
-      return translate('workflows.child-timeline-truncated');
-    }
     return '';
   });
+  const actionText = $derived(
+    translate(
+      expanded
+        ? 'workflows.child-timeline-collapse'
+        : 'workflows.child-timeline-expand',
+    ),
+  );
   const accessibleName = $derived(
-    translate('workflows.child-timeline-control-name', {
+    `${actionText}: ${translate('workflows.child-timeline-control-name', {
       workflowId: edge.reference.workflowId,
       depth: edge.depth,
       state: loadState,
-    }),
+    })}`,
   );
   const regionId = $derived(`child-timeline-${encodeURIComponent(edge.key)}`);
   const controlPosition = $derived(
@@ -93,7 +95,7 @@
   <Button
     variant="secondary"
     size="xs"
-    class="pointer-events-auto absolute top-1/2 z-30 h-6 w-6 -translate-y-1/2 p-0"
+    class="pointer-events-auto absolute top-1/2 z-30 h-5 w-5 -translate-y-1/2 p-0"
     style={controlPosition}
     onclick={() => onToggle(edge.key)}
     aria-label={accessibleName}
@@ -102,9 +104,10 @@
       ? regionId
       : undefined}
     loading={edge.load.state === 'loading'}
-    LeadingIcon={expanded ? IconChevronDown : IconChevronRight}
-    title={expanded
-      ? translate('workflows.child-timeline-collapse')
-      : translate('workflows.child-timeline-expand')}
-  />
+    title={actionText}
+  >
+    {#if edge.load.state !== 'loading'}
+      <TimelineChildToggleIcon {expanded} />
+    {/if}
+  </Button>
 {/if}

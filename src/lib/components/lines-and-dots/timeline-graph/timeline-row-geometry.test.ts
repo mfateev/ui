@@ -29,7 +29,18 @@ describe('getTimelineDotAlignment', () => {
     ).toBe('center');
   });
 
-  it('centers boundary markers when edge alignment would reverse them', () => {
+  it('centers a requested single marker on its timestamp', () => {
+    expect(
+      getTimelineDotAlignment({
+        index: 0,
+        eventCount: 1,
+        pending: false,
+        centerSingleMarker: true,
+      }),
+    ).toBe('center');
+  });
+
+  it('fans boundary markers outward when edge alignment would reverse them', () => {
     expect(
       getTimelineDotAlignment({
         index: 0,
@@ -37,12 +48,59 @@ describe('getTimelineDotAlignment', () => {
         pending: false,
         boundarySpanPx: 6,
         markerSizePx: 20,
+        fanOutShortBoundaryMarkers: true,
       }),
-    ).toBe('center');
+    ).toBe('end');
     expect(
       getTimelineDotAlignment({
         index: 2,
         eventCount: 3,
+        pending: false,
+        boundarySpanPx: 6,
+        markerSizePx: 20,
+        fanOutShortBoundaryMarkers: true,
+      }),
+    ).toBe('start');
+    expect(
+      getTimelineDotAlignment({
+        index: 1,
+        eventCount: 3,
+        pending: false,
+        boundarySpanPx: 6,
+        markerSizePx: 20,
+        fanOutShortBoundaryMarkers: true,
+      }),
+    ).toBe('center');
+  });
+
+  it('fans out a described completion beyond the history event count', () => {
+    expect(
+      getTimelineDotAlignment({
+        index: 2,
+        eventCount: 2,
+        pending: false,
+        boundarySpanPx: 6,
+        markerSizePx: 20,
+        boundaryEndIndex: 2,
+        fanOutShortBoundaryMarkers: true,
+      }),
+    ).toBe('start');
+  });
+
+  it('keeps compact non-child boundaries centered', () => {
+    expect(
+      getTimelineDotAlignment({
+        index: 0,
+        eventCount: 2,
+        pending: false,
+        boundarySpanPx: 6,
+        markerSizePx: 20,
+      }),
+    ).toBe('center');
+    expect(
+      getTimelineDotAlignment({
+        index: 1,
+        eventCount: 2,
         pending: false,
         boundarySpanPx: 6,
         markerSizePx: 20,
@@ -73,6 +131,36 @@ describe('getTimelineDotAlignment', () => {
 });
 
 describe('getTimelineDotRole', () => {
+  it('renders a described terminal child state as a completion point', () => {
+    expect(
+      getTimelineDotRole({
+        index: 2,
+        eventCount: 2,
+        pointCount: 3,
+        pending: true,
+        livePending: false,
+        hasPauseTime: false,
+        active: false,
+        resolvedTerminal: true,
+      }),
+    ).toBe('completion');
+  });
+
+  it('does not retain the stale pending marker after description resolves it', () => {
+    expect(
+      getTimelineDotRole({
+        index: 1,
+        eventCount: 2,
+        pointCount: 3,
+        pending: true,
+        livePending: false,
+        hasPauseTime: false,
+        active: false,
+        resolvedTerminal: true,
+      }),
+    ).toBeNull();
+  });
+
   const role = (
     index: number,
     overrides: Partial<Parameters<typeof getTimelineDotRole>[0]> = {},

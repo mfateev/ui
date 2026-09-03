@@ -152,11 +152,10 @@ export const Strings = {
   'child-timeline-unauthorized':
     'You are not authorized to view this child workflow.',
   'child-timeline-error': 'Child workflow could not be loaded.',
-  'child-timeline-truncated': 'Child workflow timeline reached a safety limit.',
   'child-timeline-evicted': 'Child workflow was unloaded to reclaim memory.',
   'child-timeline-anchor': 'Child workflow {{workflowId}}',
-  'child-timeline-collapse': 'Collapse',
-  'child-timeline-expand': 'Expand',
+  'child-timeline-collapse': 'Collapse child workflow',
+  'child-timeline-expand': 'Expand child workflow',
   'child-timeline-control-name':
     'Child workflow {{workflowId}}, depth {{depth}}, {{state}}',
   'child-timeline-retry-name': 'Retry loading child workflow {{workflowId}}',

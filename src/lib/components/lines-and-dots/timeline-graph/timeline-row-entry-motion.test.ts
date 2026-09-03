@@ -112,6 +112,23 @@ describe('getTimelineRowEntryOffsets', () => {
       ),
     ).toEqual(new Map([['replacement', 0]]));
   });
+
+  it('expands replacement rows downward from the row they replace', () => {
+    expect(
+      getTimelineRowEntryOffsets(
+        ['above', 'relationship', 'below'],
+        ['above', 'spacing', 'header', 'child-row', 'below'],
+        24,
+      ),
+    ).toEqual(
+      new Map([
+        ['below', -48],
+        ['child-row', -48],
+        ['header', -24],
+        ['spacing', 0],
+      ]),
+    );
+  });
 });
 
 describe('getTimelineFrameBoundaryOffset', () => {

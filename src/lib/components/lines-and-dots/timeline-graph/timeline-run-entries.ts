@@ -4,26 +4,46 @@ import type {
   TimelineRun,
 } from '$lib/services/chain-workflow-session';
 import type { EventTypeCategory } from '$lib/types/events';
+import type { WorkflowStatus } from '$lib/types/workflows';
 import { getFailedOrPendingGroups } from '$lib/utilities/get-failed-or-pending';
 
 export type TimelineGroupEntry = TimelineGroup & {
   active: boolean;
   runEndTimeMs: number;
+  resolvedStatus?: WorkflowStatus;
 };
+
+export function getTimelineGroupEntry(
+  entry: TimelineGroup,
+  run: TimelineRun,
+  execution?: {
+    status: WorkflowStatus;
+    active: boolean;
+    endTimeMs?: number;
+  },
+): TimelineGroupEntry {
+  const active = execution?.active ?? run.active;
+  const runEndTimeMs = execution?.endTimeMs ?? run.endTimeMs;
+  const resolvedStatus = execution?.status;
+  const entryResolvedStatus =
+    'resolvedStatus' in entry ? entry.resolvedStatus : undefined;
+  return entry.active === active &&
+    entry.runEndTimeMs === runEndTimeMs &&
+    entryResolvedStatus === resolvedStatus
+    ? (entry as TimelineGroupEntry)
+    : {
+        ...entry,
+        active,
+        runEndTimeMs,
+        resolvedStatus,
+      };
+}
 
 export function getTimelineGroupEntries(
   runs: TimelineRun[],
 ): TimelineGroupEntry[] {
   return runs.flatMap((run) =>
-    run.groups.map((entry) =>
-      entry.active === run.active && entry.runEndTimeMs === run.endTimeMs
-        ? (entry as TimelineGroupEntry)
-        : {
-            ...entry,
-            active: run.active,
-            runEndTimeMs: run.endTimeMs,
-          },
-    ),
+    run.groups.map((entry) => getTimelineGroupEntry(entry, run)),
   );
 }
 
@@ -53,9 +73,15 @@ export function filterTimelineGroupEntriesByStatus(
   if (!failedOrPending) return entries;
   const matchingGroups = new Set(
     getFailedOrPendingGroups(
-      entries.map((entry) => entry.group),
+      entries
+        .filter((entry) => !entry.resolvedStatus)
+        .map((entry) => entry.group),
       true,
     ),
   );
-  return entries.filter((entry) => matchingGroups.has(entry.group));
+  return entries.filter((entry) =>
+    entry.resolvedStatus
+      ? entry.resolvedStatus === 'Failed' || entry.resolvedStatus === 'TimedOut'
+      : matchingGroups.has(entry.group),
+  );
 }

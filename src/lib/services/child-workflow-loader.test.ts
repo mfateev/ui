@@ -5,6 +5,7 @@ import type { WorkflowExecutionAPIResponse } from '$lib/types/workflows';
 import {
   ChildWorkflowLoadError,
   classifyChildWorkflowError,
+  describeChildWorkflow,
   loadChildWorkflow,
 } from './child-workflow-loader';
 
@@ -47,6 +48,33 @@ const completedEvent = {
 };
 
 describe('loadChildWorkflow', () => {
+  it('describes the exact child execution directly', async () => {
+    const request = vi.fn().mockResolvedValue(describeResponse);
+
+    const result = await describeChildWorkflow({
+      reference: {
+        namespace: 'default',
+        workflowId: 'child',
+        runId: 'child-run',
+      },
+      signal: new AbortController().signal,
+      request,
+    });
+
+    expect(result).toMatchObject({
+      id: 'child',
+      runId: 'child-run',
+      status: 'Completed',
+      isRunning: false,
+    });
+    expect(request).toHaveBeenCalledWith(
+      expect.stringContaining('/workflows/child'),
+      expect.objectContaining({
+        params: { 'execution.runId': 'child-run' },
+      }),
+    );
+  });
+
   it('stops before accepting a page that exceeds the event budget', async () => {
     const historyPages = [
       { history: { events: [rawEvent(1)] }, nextPageToken: 'next' },

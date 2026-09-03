@@ -21,12 +21,14 @@ import { routeForApi } from '$lib/utilities/route-for-api';
 
 import {
   ChildWorkflowLoadError,
+  describeChildWorkflow,
   loadChildWorkflow,
   type LoadedChildWorkflow,
 } from './child-workflow-loader';
 import { runLivePoll } from './live-poll';
 
 type Loader = typeof loadChildWorkflow;
+type Describer = typeof describeChildWorkflow;
 type LivePoller = typeof runLivePoll;
 
 type Reservation = {
@@ -49,6 +51,13 @@ type QueueTask = {
   awaitingReservation?: boolean;
 };
 
+type DescribeTask = {
+  key: string;
+  reference: TimelineChildEdge['reference'];
+  edges: Set<TimelineChildEdge>;
+  controller: AbortController;
+};
+
 const emptyReservation = (): Reservation => ({
   nodes: 0,
   runs: 0,
@@ -56,13 +65,38 @@ const emptyReservation = (): Reservation => ({
   events: 0,
 });
 
+const executionStateFromWorkflow = (
+  workflow: WorkflowExecution,
+): NonNullable<TimelineChildEdge['execution']> => {
+  const endTimeMs = workflow.endTime ? Date.parse(workflow.endTime) : undefined;
+  return {
+    status: workflow.status,
+    active: workflow.isRunning || workflow.isPaused,
+    endTimeMs: Number.isFinite(endTimeMs) ? endTimeMs : undefined,
+  };
+};
+
+const executionStateFromRun = (
+  run: TimelineRun,
+): NonNullable<TimelineChildEdge['execution']> => ({
+  status: run.status,
+  active: run.active,
+  endTimeMs: run.active ? undefined : run.endTimeMs,
+});
+
 export class RecursiveWorkflowSession {
   private revision = $state(0);
   private rootNode: TimelineWorkflowNode;
   private readonly limits: RecursiveTimelineLimits;
   private readonly loader: Loader;
+  private readonly describer: Describer;
   private readonly queued: QueueTask[] = [];
+  private readonly queuedDescriptions: DescribeTask[] = [];
   private readonly tasksByExecutionKey = new SvelteMap<string, QueueTask>();
+  private readonly descriptionsByExecutionKey = new SvelteMap<
+    string,
+    DescribeTask
+  >();
   private readonly loadedByExecutionKey = new SvelteMap<
     string,
     TimelineWorkflowNode
@@ -91,6 +125,7 @@ export class RecursiveWorkflowSession {
     runs,
     limits = DEFAULT_RECURSIVE_TIMELINE_LIMITS,
     loader = loadChildWorkflow,
+    describer = describeChildWorkflow,
     livePoller = runLivePoll,
   }: {
     namespace: string;
@@ -98,10 +133,12 @@ export class RecursiveWorkflowSession {
     runs: TimelineRun[];
     limits?: RecursiveTimelineLimits;
     loader?: Loader;
+    describer?: Describer;
     livePoller?: LivePoller;
   }) {
     this.limits = limits;
     this.loader = loader;
+    this.describer = describer;
     this.livePoller = livePoller;
     this.rootNode = this.createNode({ namespace, workflow, runs, depth: 0 });
     this.resolveTopology();
@@ -165,6 +202,10 @@ export class RecursiveWorkflowSession {
         this.enqueue(found.edge, found.ancestry);
         changed = true;
       }
+      if (found.edge.load.state === 'truncated' && !found.edge.execution) {
+        this.enqueueDescription(found.edge);
+        changed = true;
+      }
     }
     if (changed) {
       this.changed();
@@ -183,7 +224,7 @@ export class RecursiveWorkflowSession {
         ) {
           this.enqueue(edge, nextAncestry);
         }
-        if (edge.load.state === 'loaded') {
+        if (edge.load.state === 'loaded' && !edge.load.truncation) {
           visit(edge.load.node, nextAncestry);
         }
       }
@@ -201,7 +242,7 @@ export class RecursiveWorkflowSession {
       found.edge.expansion === 'expanded' &&
       (found.edge.load.state === 'idle' || found.edge.load.state === 'evicted')
     ) {
-      this.enqueue(found.edge, found.ancestry);
+      this.enqueue(found.edge, found.ancestry, true);
     }
     this.changed();
   }
@@ -247,8 +288,13 @@ export class RecursiveWorkflowSession {
         if (edge.load.state === 'loading') edge.load = { state: 'idle' };
       }
     }
+    for (const task of this.descriptionsByExecutionKey.values()) {
+      task.controller.abort();
+    }
     this.queued.length = 0;
+    this.queuedDescriptions.length = 0;
     this.tasksByExecutionKey.clear();
+    this.descriptionsByExecutionKey.clear();
     this.reserved = emptyReservation();
     this.changed();
   }
@@ -342,7 +388,11 @@ export class RecursiveWorkflowSession {
     return visit(this.rootNode, []);
   }
 
-  private enqueue(edge: TimelineChildEdge, ancestry: string[]): void {
+  private enqueue(
+    edge: TimelineChildEdge,
+    ancestry: string[],
+    userInitiated = false,
+  ): void {
     const targetKey = childExecutionKey(edge.reference);
     if (ancestry.includes(targetKey)) {
       edge.load = { state: 'truncated', truncation: { reason: 'cycle' } };
@@ -355,11 +405,18 @@ export class RecursiveWorkflowSession {
         truncation: { reason: 'depth-limit' },
       };
       this.counters.topologyTruncations += 1;
+      this.enqueueDescription(edge);
       return;
     }
     const loaded = this.loadedByExecutionKey.get(targetKey);
     if (loaded) {
       edge.load = { state: 'loaded', node: loaded };
+      const run = loaded.runs.find(
+        (candidate) => candidate.runId === edge.reference.runId,
+      );
+      edge.execution = run
+        ? executionStateFromRun(run)
+        : executionStateFromWorkflow(loaded.workflow);
       return;
     }
     const existing = this.tasksByExecutionKey.get(targetKey);
@@ -370,6 +427,12 @@ export class RecursiveWorkflowSession {
     }
 
     let reservation = this.reserve();
+    if (!reservation && userInitiated) {
+      while (this.evictLeastRecentlyUsed(edge, ancestry)) {
+        reservation = this.reserve();
+        if (reservation) break;
+      }
+    }
     const canWaitForCapacity =
       !reservation &&
       this.activeRequests >= this.limits.maximumConcurrentRequests &&
@@ -378,11 +441,10 @@ export class RecursiveWorkflowSession {
         this.queued.filter((task) => task.awaitingReservation).length <
         this.limits.maximumNodes - 1;
     if (!reservation && !canWaitForCapacity) {
-      edge.load = {
-        state: 'truncated',
-        truncation: { reason: this.limitReason() },
-      };
+      edge.expansion = 'collapsed';
+      edge.load = { state: 'idle' };
       this.counters.topologyTruncations += 1;
+      this.enqueueDescription(edge);
       return;
     }
     reservation ??= emptyReservation();
@@ -404,6 +466,38 @@ export class RecursiveWorkflowSession {
     this.queued.push(task);
     this.counters.topologyRequests += 1;
     this.drain();
+  }
+
+  private evictLeastRecentlyUsed(
+    target: TimelineChildEdge,
+    ancestry: string[],
+  ): boolean {
+    const candidates: TimelineChildEdge[] = [];
+    const visit = (node: TimelineWorkflowNode): void => {
+      for (const edge of node.childrenByGroupKey.values()) {
+        if (edge.load.state !== 'loaded') continue;
+        if (edge !== target && !ancestry.includes(edge.load.node.key)) {
+          candidates.push(edge);
+        }
+        visit(edge.load.node);
+      }
+    };
+    visit(this.rootNode);
+    candidates.sort(
+      (left, right) =>
+        Number(this.visibleEdgeKeys.has(left.key)) -
+          Number(this.visibleEdgeKeys.has(right.key)) ||
+        right.depth - left.depth ||
+        Number(left.expansion === 'expanded') -
+          Number(right.expansion === 'expanded') ||
+        left.lastVisibleAt - right.lastVisibleAt,
+    );
+    const victim = candidates[0];
+    if (!victim) return false;
+    victim.expansion = 'collapsed';
+    victim.load = { state: 'evicted' };
+    this.rebuildLoadedIndex();
+    return true;
   }
 
   private reserve(): Reservation | null {
@@ -444,52 +538,83 @@ export class RecursiveWorkflowSession {
     return reservation;
   }
 
-  private limitReason():
-    | 'node-limit'
-    | 'run-limit'
-    | 'group-limit'
-    | 'event-limit' {
-    if (
-      this.retained.nodes + this.reserved.nodes >=
-      this.limits.maximumNodes - 1
-    )
-      return 'node-limit';
-    if (
-      this.retained.runs + this.reserved.runs >=
-      this.limits.maximumDescendantRuns
-    )
-      return 'run-limit';
-    if (
-      this.retained.groups + this.reserved.groups >=
-      this.limits.maximumDescendantGroups
-    )
-      return 'group-limit';
-    return 'event-limit';
-  }
-
   private drain(): void {
     while (
       !this.disposed &&
       this.activeRequests < this.limits.maximumConcurrentRequests &&
-      this.queued.length
+      (this.queued.length || this.queuedDescriptions.length)
     ) {
       const task = this.queued[0];
-      if (!task) return;
-      if (task.awaitingReservation) {
+      if (task?.awaitingReservation) {
         const reservation = this.reserve();
-        if (!reservation) return;
-        task.reservation = reservation;
-        task.loadLimits = {
-          maximumEvents: reservation.events,
-          maximumGroups: reservation.groups,
-        };
-        task.awaitingReservation = false;
+        if (reservation) {
+          task.reservation = reservation;
+          task.loadLimits = {
+            maximumEvents: reservation.events,
+            maximumGroups: reservation.groups,
+          };
+          task.awaitingReservation = false;
+        } else {
+          const description = this.queuedDescriptions.shift();
+          if (!description) return;
+          this.activeRequests += 1;
+          void this.runDescription(description);
+          continue;
+        }
       }
-      this.queued.shift();
+      if (task) {
+        this.queued.shift();
+        this.activeRequests += 1;
+        void this.runTask(task);
+        continue;
+      }
+      const description = this.queuedDescriptions.shift();
+      if (!description) return;
       this.activeRequests += 1;
-      void this.runTask(task);
+      void this.runDescription(description);
     }
     this.changed();
+  }
+
+  private enqueueDescription(edge: TimelineChildEdge): void {
+    if (edge.execution) return;
+    const key = childExecutionKey(edge.reference);
+    const existing = this.descriptionsByExecutionKey.get(key);
+    if (existing) {
+      existing.edges.add(edge);
+      return;
+    }
+    const task: DescribeTask = {
+      key,
+      reference: edge.reference,
+      edges: new SvelteSet([edge]),
+      controller: new AbortController(),
+    };
+    this.descriptionsByExecutionKey.set(key, task);
+    this.queuedDescriptions.push(task);
+    this.drain();
+  }
+
+  private async runDescription(task: DescribeTask): Promise<void> {
+    try {
+      const workflow = await this.describer({
+        reference: task.reference,
+        signal: task.controller.signal,
+      });
+      if (this.disposed || task.controller.signal.aborted) return;
+      const execution = executionStateFromWorkflow(workflow);
+      for (const edge of task.edges) edge.execution = execution;
+    } catch {
+      // The history safety-limit state remains useful when Describe is also
+      // unavailable. Expansion/retry continues to own user-facing errors.
+    } finally {
+      if (this.descriptionsByExecutionKey.get(task.key) === task) {
+        this.descriptionsByExecutionKey.delete(task.key);
+      }
+      this.activeRequests -= 1;
+      this.changed();
+      this.drain();
+    }
   }
 
   private async runTask(task: QueueTask): Promise<void> {
@@ -572,6 +697,7 @@ export class RecursiveWorkflowSession {
       });
     }
     for (const edge of task.edges) {
+      edge.execution = executionStateFromWorkflow(result.workflow);
       edge.load = {
         state: 'loaded',
         node,
@@ -633,6 +759,18 @@ export class RecursiveWorkflowSession {
       }
       if (task.edges.size) continue;
       this.cancelTask(task);
+    }
+    for (const task of [...this.descriptionsByExecutionKey.values()]) {
+      for (const edge of [...task.edges]) {
+        if (!reachableEdges.has(edge)) task.edges.delete(edge);
+      }
+      if (task.edges.size) continue;
+      task.controller.abort();
+      const queuedIndex = this.queuedDescriptions.indexOf(task);
+      if (queuedIndex >= 0) this.queuedDescriptions.splice(queuedIndex, 1);
+      if (this.descriptionsByExecutionKey.get(task.key) === task) {
+        this.descriptionsByExecutionKey.delete(task.key);
+      }
     }
   }
 

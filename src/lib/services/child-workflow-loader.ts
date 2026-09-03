@@ -69,6 +69,44 @@ const defaultRequest: ChildWorkflowRequest = (route, init) =>
     notifyOnError: false,
   });
 
+export const describeChildWorkflow = async ({
+  reference,
+  signal,
+  request = defaultRequest,
+}: {
+  reference: ChildWorkflowReference;
+  signal: AbortSignal;
+  request?: ChildWorkflowRequest;
+}): Promise<WorkflowExecution> => {
+  const describeRoute = routeForApi('workflow', {
+    namespace: reference.namespace,
+    workflowId: reference.workflowId,
+  });
+  const response = await request<WorkflowExecutionAPIResponse>(describeRoute, {
+    params: { 'execution.runId': reference.runId },
+    options: { signal },
+  });
+  if (!response) {
+    throw new ChildWorkflowLoadError(
+      'unavailable',
+      'The child workflow is unavailable',
+    );
+  }
+  const workflow = toWorkflowExecution(response);
+  if (
+    !workflow.id ||
+    !workflow.runId ||
+    workflow.id !== reference.workflowId ||
+    workflow.runId !== reference.runId
+  ) {
+    throw new ChildWorkflowLoadError(
+      'malformed',
+      'The child workflow response did not match the requested execution',
+    );
+  }
+  return workflow;
+};
+
 const statusCode = (error: unknown): number | undefined => {
   const candidate = error as Partial<NetworkError> & { status?: number };
   return candidate.statusCode ?? candidate.response?.status ?? candidate.status;
@@ -106,35 +144,11 @@ export const loadChildWorkflow = async ({
   request?: ChildWorkflowRequest;
 }): Promise<LoadedChildWorkflow> => {
   try {
-    const describeRoute = routeForApi('workflow', {
-      namespace: reference.namespace,
-      workflowId: reference.workflowId,
+    const workflow = await describeChildWorkflow({
+      reference,
+      signal,
+      request,
     });
-    const response = await request<WorkflowExecutionAPIResponse>(
-      describeRoute,
-      {
-        params: { 'execution.runId': reference.runId },
-        options: { signal },
-      },
-    );
-    if (!response) {
-      throw new ChildWorkflowLoadError(
-        'unavailable',
-        'The child workflow is unavailable',
-      );
-    }
-    const workflow = toWorkflowExecution(response);
-    if (
-      !workflow.id ||
-      !workflow.runId ||
-      workflow.id !== reference.workflowId ||
-      workflow.runId !== reference.runId
-    ) {
-      throw new ChildWorkflowLoadError(
-        'malformed',
-        'The child workflow response did not match the requested execution',
-      );
-    }
 
     const historyRoute = routeForApi('events.ascending', {
       namespace: reference.namespace,

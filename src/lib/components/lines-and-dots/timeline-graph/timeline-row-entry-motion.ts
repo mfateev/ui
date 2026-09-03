@@ -25,6 +25,22 @@ export const getTimelineRowEntryOffsets = (
   const previousIndex = new Map(
     previousKeys.map((key, index) => [key, index] as const),
   );
+  const currentKeySet = new Set(currentKeys);
+  const removedIndices = previousKeys.flatMap((key, index) =>
+    currentKeySet.has(key) ? [] : [index],
+  );
+  const previousExistingIndex = new Array<number>(currentKeys.length);
+  const nextExistingIndex = new Array<number>(currentKeys.length);
+  let existingIndex = Number.NEGATIVE_INFINITY;
+  for (let index = 0; index < currentKeys.length; index += 1) {
+    previousExistingIndex[index] = existingIndex;
+    existingIndex = previousIndex.get(currentKeys[index]) ?? existingIndex;
+  }
+  existingIndex = Number.POSITIVE_INFINITY;
+  for (let index = currentKeys.length - 1; index >= 0; index -= 1) {
+    nextExistingIndex[index] = existingIndex;
+    existingIndex = previousIndex.get(currentKeys[index]) ?? existingIndex;
+  }
   const offsets = new Map<string, number>();
   let nextExistingOffsetPx = -rowHeightPx;
 
@@ -38,7 +54,17 @@ export const getTimelineRowEntryOffsets = (
       nextExistingOffsetPx = offsetPx;
       if (offsetPx) offsets.set(key, offsetPx);
     } else {
-      offsets.set(key, nextExistingOffsetPx);
+      const removedIndex = removedIndices.find(
+        (candidate) =>
+          candidate > previousExistingIndex[index] &&
+          candidate < nextExistingIndex[index],
+      );
+      offsets.set(
+        key,
+        removedIndex === undefined
+          ? nextExistingOffsetPx
+          : (removedIndex - index) * rowHeightPx,
+      );
     }
   }
 

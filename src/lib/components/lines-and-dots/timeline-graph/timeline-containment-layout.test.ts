@@ -44,6 +44,42 @@ const allRows = (layout: TimelineContainmentLayout) =>
   layout.rows(0, layout.rowCount);
 
 describe('getRecursiveTimelineContainmentLayout', () => {
+  it('preserves closed-run metadata for unfiltered child rows', () => {
+    const relationship = entry('retained', 1);
+    delete (relationship as Partial<TimelineGroupEntry>).active;
+    delete (relationship as Partial<TimelineGroupEntry>).runEndTimeMs;
+    const retainedRun = {
+      ...run('retained', 10, false),
+      groups: [relationship],
+    };
+    const root = {
+      key: 'root',
+      namespace: 'default',
+      workflowId: 'root',
+      firstRunId: 'retained',
+      workflow: { id: 'root' } as WorkflowExecution,
+      runs: [retainedRun],
+      childrenByGroupKey: new Map(),
+      depth: 0,
+    } as TimelineWorkflowNode;
+
+    const row = getRecursiveTimelineContainmentLayout({
+      root,
+      visibleEntries: null,
+      participatingRunKeys: new Set([timelineRunKey('root', 'retained')]),
+      reverseSort: false,
+      pendingGroupCount: 0,
+      descMinId: 0,
+    })
+      .rows(0, 3)
+      .find((candidate) => candidate.kind === 'group');
+
+    expect(row).toMatchObject({
+      kind: 'group',
+      entry: { active: false, runEndTimeMs: 20 },
+    });
+  });
+
   it('addresses a large run without materializing its complete row list', () => {
     const entries = Array.from({ length: 100_000 }, (_, index) =>
       entry('large-run', index + 1),
@@ -208,7 +244,9 @@ describe('getRecursiveTimelineContainmentLayout', () => {
       row.key.endsWith('workflow-spacing-after-padding'),
     );
     const followingParentRow = rows.find(
-      (row) => row.kind === 'group' && row.entry === rootAction,
+      (row) =>
+        row.kind === 'group' &&
+        row.entry.timelineKey === rootAction.timelineKey,
     );
     expect(leadingSpacing?.rowIndex).toBe((childSpan?.rowStart ?? 0) - 1);
     expect(trailingSpacing?.rowIndex).toBe(childSpan?.rowEnd);
@@ -219,7 +257,9 @@ describe('getRecursiveTimelineContainmentLayout', () => {
       (trailingPadding?.rowIndex ?? 0) + 1,
     );
     const visibleChildRow = rows.find(
-      (row) => row.kind === 'group' && row.entry === childAction,
+      (row) =>
+        row.kind === 'group' &&
+        row.entry.timelineKey === childAction.timelineKey,
     );
     expect(
       getObservedTimelineEdgeKeys(
@@ -321,4 +361,89 @@ describe('getRecursiveTimelineContainmentLayout', () => {
     );
     expect(loadingRows.some((row) => row.kind === 'child-state')).toBe(false);
   });
+
+  it.each([
+    {
+      name: 'before loading',
+      load: {
+        state: 'truncated',
+        truncation: { reason: 'node-limit' },
+      } as TimelineChildEdge['load'],
+    },
+    {
+      name: 'after a partial load',
+      load: {
+        state: 'loaded',
+        node: {
+          key: 'child',
+          namespace: 'default',
+          workflowId: 'child',
+          firstRunId: 'child-run',
+          workflow: { id: 'child' } as WorkflowExecution,
+          runs: [
+            {
+              ...run('child-run', 2),
+              groups: [entry('child-run', 1)],
+            },
+          ],
+          childrenByGroupKey: new Map(),
+          depth: 1,
+        },
+        truncation: { reason: 'event-limit' },
+      } as TimelineChildEdge['load'],
+    },
+  ])(
+    'leaves a safety-limited child collapsed $name without a state row',
+    ({ load }) => {
+      const relationship = entry('root-run', 1);
+      const edge = {
+        key: 'limited-edge',
+        parentGroupKey: relationship.timelineKey,
+        reference: {
+          namespace: 'default',
+          workflowId: 'child',
+          runId: 'child-run',
+        },
+        expansion: 'expanded',
+        load,
+        depth: 1,
+        lastVisibleAt: 0,
+      } as TimelineChildEdge;
+      const root = {
+        key: 'root',
+        namespace: 'default',
+        workflowId: 'root',
+        firstRunId: 'root-run',
+        workflow: { id: 'root' } as WorkflowExecution,
+        runs: [{ ...run('root-run', 0), groups: [relationship] }],
+        childrenByGroupKey: new Map([[relationship.timelineKey, edge]]),
+        depth: 0,
+      } as TimelineWorkflowNode;
+
+      const rows = allRows(
+        getRecursiveTimelineContainmentLayout({
+          root,
+          visibleEntries: [relationship],
+          participatingRunKeys: new Set([
+            timelineRunKey('root', 'root-run'),
+            timelineRunKey('child', 'child-run'),
+          ]),
+          reverseSort: false,
+          pendingGroupCount: 0,
+          descMinId: 0,
+        }),
+      );
+      const relationshipRow = rows.find(
+        (row) => row.kind === 'group' && row.key === edge.key,
+      );
+
+      expect(relationshipRow).toMatchObject({
+        kind: 'group',
+        entry: { timelineKey: relationship.timelineKey },
+      });
+      expect(relationshipRow).toHaveProperty('childEdge', undefined);
+      expect(rows.some((row) => row.kind === 'child-state')).toBe(false);
+      expect(rows.some((row) => row.workflowKey === 'child')).toBe(false);
+    },
+  );
 });

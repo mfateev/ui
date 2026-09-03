@@ -28,13 +28,17 @@
   import type { LazyGroup } from '$lib/services/grouped-event-buffer';
   import { setActiveGroup } from '$lib/stores/active-events';
   import { resolveSystemNexusEvent } from '$lib/system-nexus-endpoints';
+  import type { WorkflowStatus } from '$lib/types/workflows';
   import {
     decodeLocalActivity,
     getLocalActivityMarkerEvent,
   } from '$lib/utilities/decode-local-activity';
   import { type ValidTime, validTimeToDate } from '$lib/utilities/format-time';
   import type { SummaryAttribute } from '$lib/utilities/get-single-attribute-for-event';
-  import { getEventClassificationLabel } from '$lib/utilities/get-status-label';
+  import {
+    getEventClassificationLabel,
+    getWorkflowStatusLabel,
+  } from '$lib/utilities/get-status-label';
   import {
     isActivityTaskScheduledEvent,
     isActivityTaskStartedEvent,
@@ -62,11 +66,14 @@
     eventCount?: number;
     timelineKey?: string;
     active?: boolean;
+    resolvedStatus?: WorkflowStatus;
     retainedEndTimeMs?: number;
     pendingEndTimeMs?: number;
     labelLeadingOffsetPx?: number;
     labelTrailingOffsetPx?: number;
     viewportEndOverscanPx?: number;
+    fanOutShortBoundaryMarkers?: boolean;
+    onBeforeSelect?: () => void;
   };
 
   let {
@@ -77,15 +84,25 @@
     eventCount = 0,
     timelineKey = group.id,
     active = true,
+    resolvedStatus,
     retainedEndTimeMs,
     pendingEndTimeMs,
     labelLeadingOffsetPx = 0,
     labelTrailingOffsetPx = 0,
     viewportEndOverscanPx = 0,
+    fanOutShortBoundaryMarkers = false,
+    onBeforeSelect,
   }: Props = $props();
 
   const timelineWidth = $derived(canvasWidth - 2 * GUTTER);
-  const isLivePending = $derived(active && group.isPending);
+  const resolvedTerminal = $derived(
+    Boolean(resolvedStatus) &&
+      resolvedStatus !== 'Running' &&
+      resolvedStatus !== 'Paused',
+  );
+  const isLivePending = $derived(
+    active && group.isPending && !resolvedTerminal,
+  );
   const pendingActivity = $derived(active ? group?.pendingActivity : undefined);
   const materializedGroup = $derived('eventList' in group ? group : undefined);
   const compiledDisplayName = $derived(
@@ -110,9 +127,11 @@
   const accessibleName = $derived(
     translate('events.row-accessible-name', {
       eventType: displayName,
-      classification: getEventClassificationLabel(
-        group.finalClassification || group.classification,
-      ),
+      classification: resolvedStatus
+        ? getWorkflowStatusLabel(resolvedStatus)
+        : getEventClassificationLabel(
+            group.finalClassification ?? group.classification,
+          ),
     }),
   );
   const pauseTime = $derived(
@@ -222,7 +241,7 @@
     }),
   );
   const terminalMarkerIndex = $derived(
-    pauseTime
+    resolvedTerminal || pauseTime
       ? points.length - 1
       : Math.min(group.eventCount - 1, points.length - 1),
   );
@@ -259,6 +278,7 @@
 
   const onClick = () => {
     if (readOnly) return;
+    onBeforeSelect?.();
     setActiveGroup(group, timelineKey);
   };
 
@@ -326,7 +346,7 @@
 )}
   {@const bounds = lineBox([leftX, spanCy], [rightX, spanCy])}
   <div
-    class="tl-line absolute"
+    class="tl-line absolute z-10"
     class:tl-line--gradient={opts.gradient}
     class:tl-line--dashed={opts.dashed}
     class:tl-line--animate={opts.animate}
@@ -353,7 +373,7 @@
        instead of triggering layout; anchored at 0,0 by left-0 top-0. -->
   <div
     data-dot-alignment={alignment}
-    class="absolute left-0 top-0 h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"
+    class="absolute left-0 top-0 z-10 h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"
     style:transform="translate({bounds.left}px, {bounds.top}px)"
     style:border-color={colors.stroke}
     style:background={colors.fill}
@@ -468,9 +488,12 @@
         {@const alignment = getTimelineDotAlignment({
           index,
           eventCount: group.eventCount,
-          pending: group.isPending,
+          pending: group.isPending && !resolvedTerminal,
           boundarySpanPx,
           markerSizePx: 2 * RADIUS + DOT_STROKE,
+          boundaryEndIndex: terminalMarkerIndex,
+          fanOutShortBoundaryMarkers,
+          centerSingleMarker: effectiveCategory === 'signal',
         })}
         {@const role = getTimelineDotRole({
           index,
@@ -480,13 +503,16 @@
           livePending: isLivePending,
           hasPauseTime: Boolean(pauseTime),
           active,
+          resolvedTerminal,
         })}
         {#if role}
           {@render dot(
             localX,
             dotColors(
-              lazyEventPoints?.[index]?.classification ??
-                materializedGroup?.eventList[index]?.classification,
+              resolvedTerminal && index >= group.eventCount
+                ? resolvedStatus
+                : (lazyEventPoints?.[index]?.classification ??
+                    materializedGroup?.eventList[index]?.classification),
             ),
             role === 'pending'
               ? 'retry'

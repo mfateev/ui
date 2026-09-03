@@ -4,7 +4,7 @@ import {
   type TimelineRun,
 } from '$lib/services/chain-workflow-session';
 import type { LazyGroup } from '$lib/services/grouped-event-buffer';
-import type { WorkflowExecution } from '$lib/types/workflows';
+import type { WorkflowExecution, WorkflowStatus } from '$lib/types/workflows';
 
 export type ChildWorkflowReference = {
   namespace: string;
@@ -53,6 +53,11 @@ export type TimelineChildEdge = {
   load: TimelineChildLoadState;
   depth: number;
   lastVisibleAt: number;
+  execution?: {
+    status: WorkflowStatus;
+    active: boolean;
+    endTimeMs?: number;
+  };
 };
 
 export type TimelineWorkflowNode = {
@@ -201,7 +206,11 @@ export const flattenWorkflowNodes = (
     visited.add(node.key);
     nodes.push(node);
     for (const edge of node.childrenByGroupKey.values()) {
-      if (edge.expansion === 'expanded' && edge.load.state === 'loaded') {
+      if (
+        edge.expansion === 'expanded' &&
+        edge.load.state === 'loaded' &&
+        !edge.load.truncation
+      ) {
         visit(edge.load.node);
       }
     }

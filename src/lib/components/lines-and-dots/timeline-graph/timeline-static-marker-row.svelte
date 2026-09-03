@@ -34,7 +34,11 @@
       group.category;
     return {
       visible: pointX >= GUTTER && pointX <= canvasWidth - GUTTER,
-      bounds: alignedDotBox(pointX, ROW_HEIGHT / 2, 'start'),
+      bounds: alignedDotBox(
+        pointX,
+        ROW_HEIGHT / 2,
+        effectiveCategory === 'signal' ? 'center' : 'start',
+      ),
       displayName,
       accessibleName: translate('events.row-accessible-name', {
         eventType: displayName,
@@ -63,7 +67,7 @@
     onclick={() => setActiveGroup(group, timelineKey)}
   >
     <span
-      class="absolute h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"
+      class="absolute left-0 top-0 h-[var(--dot)] w-[var(--dot)] rounded-[var(--dot-r)] border-2 border-solid"
       style:transform="translate({presentation.bounds.left}px, {presentation
         .bounds.top}px)"
       style:border-color={presentation.colors.stroke}

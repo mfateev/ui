@@ -439,6 +439,7 @@ describe('RecursiveWorkflowSession', () => {
       runs: [rootRun([childGroup(1, 'first')])],
       limits: { ...DEFAULT_RECURSIVE_TIMELINE_LIMITS, maximumNodes: 2 },
       loader,
+      describer: vi.fn().mockRejectedValue(new Error('unavailable')),
     });
     const firstEdge = [...session.snapshot.childrenByGroupKey.values()][0];
     session.observeEdges([firstEdge.key]);
@@ -457,7 +458,7 @@ describe('RecursiveWorkflowSession', () => {
     session.dispose();
   });
 
-  it('keeps a resolved child and publishes a stable limit row for the next child', async () => {
+  it('keeps a resolved child and leaves the next limited child unexpanded', async () => {
     const loader = vi.fn(
       ({ reference }: Parameters<typeof loadChildWorkflow>[0]) =>
         Promise.resolve(loaded(reference.workflowId)),
@@ -468,6 +469,7 @@ describe('RecursiveWorkflowSession', () => {
       runs: [rootRun([childGroup(1, 'first'), childGroup(2, 'second')])],
       limits: { ...DEFAULT_RECURSIVE_TIMELINE_LIMITS, maximumNodes: 2 },
       loader,
+      describer: vi.fn().mockRejectedValue(new Error('unavailable')),
     });
     const [firstEdge, secondEdge] = [
       ...session.snapshot.childrenByGroupKey.values(),
@@ -475,9 +477,145 @@ describe('RecursiveWorkflowSession', () => {
     session.observeEdges([firstEdge.key]);
     await vi.waitFor(() => expect(firstEdge.load.state).toBe('loaded'));
 
-    expect(secondEdge.load.state).toBe('truncated');
+    expect(secondEdge.load.state).toBe('idle');
+    expect(secondEdge.expansion).toBe('collapsed');
     expect(firstEdge.load.state).toBe('loaded');
     expect(loader).toHaveBeenCalledTimes(1);
+
+    session.toggle(secondEdge.key);
+    await vi.waitFor(() => expect(secondEdge.load.state).toBe('loaded'));
+
+    expect(secondEdge.expansion).toBe('expanded');
+    expect(firstEdge.load.state).toBe('evicted');
+    expect(firstEdge.expansion).toBe('collapsed');
+    expect(loader).toHaveBeenCalledTimes(2);
+    session.dispose();
+  });
+
+  it('evicts a leaf instead of an entire loaded branch for manual expansion', async () => {
+    const withChild = (id: string, child: EventGroup): LoadedChildWorkflow => {
+      const result = loaded(id);
+      result.run.groups = [
+        {
+          runId: result.run.runId,
+          timelineKey: `${result.run.runId}:${child.id}`,
+          group: child,
+        },
+      ];
+      result.eventCount = 1;
+      result.groupCount = 1;
+      return result;
+    };
+    const loader = vi.fn(
+      ({ reference }: Parameters<typeof loadChildWorkflow>[0]) => {
+        if (reference.workflowId === 'branch-b') {
+          return Promise.resolve(
+            withChild('branch-b', childGroup(3, 'branch-b-leaf')),
+          );
+        }
+        if (reference.workflowId === 'branch-a') {
+          return Promise.resolve(
+            withChild('branch-a', childGroup(4, 'manual-target')),
+          );
+        }
+        return Promise.resolve(loaded(reference.workflowId));
+      },
+    );
+    const session = new RecursiveWorkflowSession({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1, 'branch-b'), childGroup(2, 'branch-a')])],
+      limits: {
+        ...DEFAULT_RECURSIVE_TIMELINE_LIMITS,
+        maximumNodes: 4,
+        maximumConcurrentRequests: 1,
+      },
+      loader,
+      describer: vi.fn().mockRejectedValue(new Error('unavailable')),
+    });
+
+    await vi.waitFor(() => expect(session.requestCount).toBe(0));
+
+    const [branchB, branchA] = [
+      ...session.snapshot.childrenByGroupKey.values(),
+    ];
+    if (branchB.load.state !== 'loaded' || branchA.load.state !== 'loaded') {
+      throw new Error('branches not loaded');
+    }
+    const branchBLeaf = [...branchB.load.node.childrenByGroupKey.values()][0];
+    const manualTarget = [...branchA.load.node.childrenByGroupKey.values()][0];
+    expect(branchBLeaf.load.state).toBe('loaded');
+    expect(manualTarget.load.state).toBe('idle');
+
+    session.toggle(manualTarget.key);
+    await vi.waitFor(() => expect(manualTarget.load.state).toBe('loaded'));
+
+    expect(branchB.load.state).toBe('loaded');
+    expect(branchBLeaf.load.state).toBe('evicted');
+    expect(manualTarget.expansion).toBe('expanded');
+    session.dispose();
+  });
+
+  it('does not expand descendants of a partially loaded child', async () => {
+    const limited = loaded('child-1');
+    const grandchild = childGroup(2, 'grandchild');
+    limited.run.groups = [
+      {
+        runId: limited.run.runId,
+        timelineKey: `${limited.run.runId}:${grandchild.id}`,
+        group: grandchild,
+      },
+    ];
+    limited.eventCount = 1;
+    limited.groupCount = 1;
+    limited.truncation = { reason: 'event-limit' };
+    const loader = vi.fn().mockResolvedValue(limited);
+    const session = new RecursiveWorkflowSession({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1)])],
+      loader,
+    });
+
+    await vi.waitFor(() => expect(session.requestCount).toBe(0));
+
+    const edge = [...session.snapshot.childrenByGroupKey.values()][0];
+    expect(edge.load).toMatchObject({
+      state: 'loaded',
+      truncation: { reason: 'event-limit' },
+    });
+    expect(loader).toHaveBeenCalledOnce();
+    session.dispose();
+  });
+
+  it('describes a child whose history is blocked by a safety limit', async () => {
+    const loader = vi.fn(
+      ({ reference }: Parameters<typeof loadChildWorkflow>[0]) =>
+        Promise.resolve(loaded(reference.workflowId)),
+    );
+    const described = workflow('second', 'second-run');
+    described.endTime = '2024-01-01T00:00:05Z';
+    const describer = vi.fn().mockResolvedValue(described);
+    const session = new RecursiveWorkflowSession({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1, 'first'), childGroup(2, 'second')])],
+      limits: { ...DEFAULT_RECURSIVE_TIMELINE_LIMITS, maximumNodes: 2 },
+      loader,
+      describer,
+    });
+    const [, secondEdge] = [...session.snapshot.childrenByGroupKey.values()];
+    await vi.waitFor(() => expect(secondEdge.expansion).toBe('collapsed'));
+
+    await vi.waitFor(() => expect(session.requestCount).toBe(0));
+
+    expect(secondEdge.load.state).toBe('idle');
+    expect(describer).toHaveBeenCalledOnce();
+    expect(secondEdge.execution).toEqual({
+      status: 'Completed',
+      active: false,
+      endTimeMs: Date.parse('2024-01-01T00:00:05Z'),
+    });
     session.dispose();
   });
 
@@ -509,6 +647,7 @@ describe('RecursiveWorkflowSession', () => {
         maximumConcurrentRequests: 1,
       },
       loader,
+      describer: vi.fn().mockRejectedValue(new Error('unavailable')),
     });
     const [firstEdge, secondEdge] = [
       ...session.snapshot.childrenByGroupKey.values(),
@@ -518,7 +657,8 @@ describe('RecursiveWorkflowSession', () => {
 
     session.observeEdges([secondEdge.key]);
 
-    expect(secondEdge.load.state).toBe('truncated');
+    expect(secondEdge.load.state).toBe('idle');
+    expect(secondEdge.expansion).toBe('collapsed');
     expect(firstEdge.load.state).toBe('loading');
     expect(loader).toHaveBeenCalledTimes(1);
     session.dispose();

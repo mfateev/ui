@@ -264,7 +264,7 @@
           <Button
             variant="secondary"
             size="xs"
-            class="pointer-events-auto absolute z-30 h-5 w-5 -translate-y-1/2 p-0"
+            class="pointer-events-auto absolute z-30 h-5 w-5 -translate-y-1/2 p-0 transition-none"
             style={`left: ${controlX}px; top: ${geometry.topPx}px`}
             onclick={onToggle}
             aria-label={`${expanded ? translate('workflows.child-timeline-collapse') : translate('workflows.child-timeline-expand')}: ${label}`}

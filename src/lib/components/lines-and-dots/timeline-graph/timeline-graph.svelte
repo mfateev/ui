@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
   import { flushSync, onDestroy, untrack } from 'svelte';
   import { twMerge } from 'tailwind-merge';
@@ -34,6 +34,11 @@
     type TimelineChildEdge,
     timelineRunKey,
   } from './recursive-timeline-model';
+  import {
+    getTimelineChildToggleExitOffset,
+    getTimelineChildToggleRowTops,
+    isTimelineChildToggleOriginRow,
+  } from './timeline-child-toggle-motion';
   import {
     getRecursiveTimelineContainmentLayout,
     type TimelineLayoutRow,
@@ -1123,6 +1128,7 @@
   let rowEntryAnimating = $state(false);
   let rowEntryFrame = 0;
   let rowStackEl: HTMLUListElement | null = null;
+  let childToggleExitLayerEl: HTMLDivElement | null = null;
   let rowEntryObserver: MutationObserver | null = null;
   let rowEntryAnimations: Animation[] = [];
   let rowEntryGeneration = 0;
@@ -1133,6 +1139,16 @@
   let suppressRowEntryAfterChildToggleUntilMs = 0;
   let mountedChildToggleAnimations: Animation[] = [];
   let mountedChildToggleFrame = 0;
+  let childToggleExitGeneration = 0;
+  type PendingChildToggleAnimation = {
+    edgeKey: string;
+    previousTops: ReadonlyMap<string, number>;
+    originY: number;
+    exitEntries: ChildToggleExitEntry[];
+    direction: 'expand' | 'collapse';
+  };
+  let pendingLoadedChildToggleAnimation =
+    $state.raw<PendingChildToggleAnimation | null>(null);
 
   // Live polling can split one server-side event burst across adjacent refreshes.
   // Keep the previous layout painted until that burst has gone quiet, then admit
@@ -1140,6 +1156,7 @@
   const ROW_ENTRY_SETTLE_MS = 1100;
 
   onDestroy(() => {
+    pendingLoadedChildToggleAnimation = null;
     rowEntryGeneration += 1;
     cancelAnimationFrame(rowEntryFrame);
     if (rowEntrySettleTimer !== null) clearTimeout(rowEntrySettleTimer);
@@ -1164,44 +1181,191 @@
   };
 
   const mountedRowTops = (originY: number): Map<string, number> => {
+    return getTimelineChildToggleRowTops(rowStackEl, originY);
+  };
+
+  const childEdgeForKey = (edgeKey: string): TimelineChildEdge | undefined =>
+    workflowNodes
+      .flatMap((node) => [...node.childrenByGroupKey.values()])
+      .find((edge) => edge.key === edgeKey);
+
+  type ChildToggleExitEntry = {
+    element: HTMLElement;
+    key: string;
+    top: number;
+    kind: 'row' | 'frame';
+    framePaint?: string;
+  };
+
+  const captureChildToggleExitEntries = (
+    previousTops: ReadonlyMap<string, number>,
+  ): ChildToggleExitEntry[] => {
     const rows = Array.from(
       rowStackEl?.querySelectorAll<HTMLElement>('li[data-timeline-key]') ?? [],
-    )
-      .filter((row) => row.getClientRects().length > 0)
-      .map((row) => ({
-        key: row.dataset.timelineKey ?? '',
-        top: row.getBoundingClientRect().top,
-      }));
-    rows.sort(
-      (left, right) =>
-        Math.abs(left.top - originY) - Math.abs(right.top - originY),
+    ).flatMap((element) => {
+      const key = element.dataset.timelineKey ?? '';
+      const top = previousTops.get(key);
+      return key && top !== undefined
+        ? [
+            {
+              element: element.cloneNode(true) as HTMLElement,
+              key,
+              top,
+              kind: 'row' as const,
+            },
+          ]
+        : [];
+    });
+    const frames = Array.from(
+      containerEl?.querySelectorAll<HTMLElement>(
+        '[data-timeline-frame-entry]',
+      ) ?? [],
+    ).flatMap((element) => {
+      const key = element.dataset.timelineEntryKey ?? '';
+      const top = previousTops.get(key);
+      if (!key || top === undefined) return [];
+      const framePaint =
+        element.querySelector<HTMLElement>('[data-frame-paint]')?.dataset
+          .framePaint ?? 'identity';
+      return [
+        {
+          element: element.cloneNode(true) as HTMLElement,
+          key,
+          top,
+          kind: 'frame' as const,
+          framePaint,
+        },
+      ];
+    });
+    return [...rows, ...frames];
+  };
+
+  const frameEntrySignature = (element: HTMLElement): string =>
+    `${element.dataset.timelineEntryKey ?? ''}:${
+      element.querySelector<HTMLElement>('[data-frame-paint]')?.dataset
+        .framePaint ?? 'identity'
+    }`;
+
+  const mountChildToggleExitAnimations = ({
+    entries,
+    originY,
+    direction,
+    motionOffsetPx,
+  }: {
+    entries: ChildToggleExitEntry[];
+    originY: number;
+    direction: 'expand' | 'collapse';
+    motionOffsetPx: number;
+  }): {
+    animations: Animation[];
+    cleanup: () => void;
+    offsetPx: number;
+  } => {
+    const mountedRowKeys = new Set(
+      Array.from(
+        rowStackEl?.querySelectorAll<HTMLElement>('li[data-timeline-key]') ??
+          [],
+      ).map((row) => row.dataset.timelineKey ?? ''),
     );
-    const tops = new SvelteMap(
-      rows.slice(0, 256).map(({ key, top }) => [key, top] as const),
+    const mountedFrameSignatures = new Set(
+      Array.from(
+        containerEl?.querySelectorAll<HTMLElement>(
+          '[data-timeline-frame-entry]',
+        ) ?? [],
+      ).map(frameEntrySignature),
     );
-    for (const button of containerEl?.querySelectorAll<HTMLElement>(
-      'button[aria-label^="Expand child workflow"], button[aria-label^="Collapse child workflow"]',
-    ) ?? []) {
-      const owner = button.closest<HTMLElement>(
-        'li[data-timeline-key], [data-timeline-frame-entry]',
-      );
-      const key =
-        owner?.dataset.timelineKey ?? owner?.dataset.timelineEntryKey ?? '';
-      if (key && owner?.getClientRects().length) {
-        tops.set(key, owner.getBoundingClientRect().top);
-      }
+    const exiting = entries.filter((entry) =>
+      entry.kind === 'row'
+        ? !mountedRowKeys.has(entry.key)
+        : !mountedFrameSignatures.has(
+            `${entry.key}:${entry.framePaint ?? 'identity'}`,
+          ),
+    );
+    const layerOrder = (entry: ChildToggleExitEntry): number =>
+      entry.kind === 'row' ? 1 : entry.framePaint === 'background' ? 0 : 2;
+    const ordered = exiting.toSorted(
+      (left, right) => layerOrder(left) - layerOrder(right),
+    );
+    if (!childToggleExitLayerEl || !ordered.length) {
+      return { animations: [], cleanup: () => undefined, offsetPx: 0 };
     }
-    return tops;
+    const clones: HTMLElement[] = [];
+    for (const entry of ordered) {
+      const clone = entry.element.cloneNode(true) as HTMLElement;
+      clone.setAttribute('aria-hidden', 'true');
+      clone.setAttribute('inert', '');
+      clone
+        .querySelectorAll('[id]')
+        .forEach((element) => element.removeAttribute('id'));
+      // This layer is reserved for detached animation snapshots, so Svelte
+      // never reconciles its children.
+      // eslint-disable-next-line svelte/no-dom-manipulating
+      childToggleExitLayerEl.append(clone);
+      clones.push(clone);
+    }
+    const layer = childToggleExitLayerEl;
+    const layerTop = layer.getBoundingClientRect().top;
+    const clipBoundaryY = originY + ROW_HEIGHT / 2;
+    const clipTop = Math.max(0, clipBoundaryY - layerTop);
+    const fallbackOffsetPx = Math.max(
+      0,
+      ...exiting
+        .filter((entry) => entry.kind === 'row')
+        .map((entry) => entry.top + ROW_HEIGHT - clipBoundaryY),
+    );
+    const exitOffsetPx =
+      direction === 'collapse' ? fallbackOffsetPx : motionOffsetPx;
+    const generation = ++childToggleExitGeneration;
+    layer.style.zIndex = direction === 'expand' ? '30' : '10';
+    if (direction === 'collapse') {
+      layer.style.clipPath = `inset(${clipTop}px 0 0 0)`;
+    } else {
+      layer.style.removeProperty('clip-path');
+    }
+    const animations = clones.map((clone, index) => {
+      const entry = ordered[index];
+      const translatePx = getTimelineChildToggleExitOffset({
+        direction,
+        kind: entry.kind,
+        top: entry.top,
+        originY,
+        rowHeight: ROW_HEIGHT,
+        offsetPx: exitOffsetPx,
+      });
+      return clone.animate(
+        [{ translate: '0 0' }, { translate: `0 ${translatePx}px` }],
+        {
+          duration: 1200,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        },
+      );
+    });
+    return {
+      animations,
+      cleanup: () => {
+        clones.forEach((clone) => clone.remove());
+        if (childToggleExitGeneration === generation) {
+          layer.style.removeProperty('clip-path');
+          layer.style.removeProperty('z-index');
+        }
+      },
+      offsetPx: exitOffsetPx,
+    };
   };
 
   const animateMountedRowsAfterChildToggle = ({
     previousTops,
     originY,
+    exitEntries = [],
+    direction = 'expand',
   }: {
     previousTops: ReadonlyMap<string, number>;
     originY: number;
+    exitEntries?: ChildToggleExitEntry[];
+    direction?: 'expand' | 'collapse';
   }) => {
     const rowOffsets = new SvelteMap<string, number>();
+    const collapsing = direction === 'collapse';
     const candidateRows = Array.from(
       rowStackEl?.querySelectorAll<HTMLElement>('li[data-timeline-key]') ?? [],
     )
@@ -1223,8 +1387,36 @@
           Math.abs(left.top - originY) - Math.abs(right.top - originY),
       )
       .slice(0, 256);
+    const candidateFrames = Array.from(
+      containerEl?.querySelectorAll<HTMLElement>(
+        '[data-timeline-frame-entry]',
+      ) ?? [],
+    ).filter((frame) => !frame.closest('[data-child-toggle-exit-layer]'));
+    const expansionOffsetPx = collapsing
+      ? 0
+      : Math.max(
+          0,
+          ...candidateRows.map(({ key, top }) => {
+            const previousTop = previousTops.get(key);
+            return previousTop === undefined
+              ? top + ROW_HEIGHT - (originY + ROW_HEIGHT / 2)
+              : top - previousTop;
+          }),
+        );
+    const exit = mountChildToggleExitAnimations({
+      entries: exitEntries,
+      originY,
+      direction,
+      motionOffsetPx: expansionOffsetPx,
+    });
     const rowAnimations = candidateRows.flatMap(({ element, key, top }) => {
-      const offsetPx = (previousTops.get(key) ?? originY) - top;
+      const offsetPx = collapsing
+        ? top > originY
+          ? exit.offsetPx
+          : 0
+        : previousTops.has(key) && top > originY
+          ? -expansionOffsetPx
+          : (previousTops.get(key) ?? originY) - top;
       rowOffsets.set(key, offsetPx);
       if (!offsetPx) return [];
       return [
@@ -1237,13 +1429,34 @@
         ),
       ];
     });
-    const frameAnimations = Array.from(
-      containerEl?.querySelectorAll<HTMLElement>(
-        '[data-timeline-frame-entry]',
-      ) ?? [],
-    ).flatMap((frame) => {
+    const previousFrameKeys = new Set(
+      exitEntries
+        .filter((entry) => entry.kind === 'frame')
+        .map((entry) => entry.key),
+    );
+    const frameControlOffsets = new SvelteMap<string, number>();
+    for (const frame of candidateFrames) {
       const key = frame.dataset.timelineEntryKey ?? '';
-      const offsetPx = rowOffsets.get(key);
+      const control = frame.querySelector<HTMLElement>(
+        'button[aria-label^="Expand child workflow"], button[aria-label^="Collapse child workflow"]',
+      );
+      if (!key || !control) continue;
+      const bounds = control.getBoundingClientRect();
+      const centerY = bounds.top + bounds.height / 2;
+      const offsetPx = collapsing
+        ? centerY > originY
+          ? exit.offsetPx
+          : 0
+        : previousFrameKeys.has(key)
+          ? centerY > originY
+            ? -expansionOffsetPx
+            : (rowOffsets.get(key) ?? 0)
+          : originY - centerY;
+      frameControlOffsets.set(key, offsetPx);
+    }
+    const frameAnimations = candidateFrames.flatMap((frame) => {
+      const key = frame.dataset.timelineEntryKey ?? '';
+      const offsetPx = frameControlOffsets.get(key) ?? rowOffsets.get(key);
       if (!offsetPx) return [];
       return [
         frame.animate(
@@ -1255,7 +1468,11 @@
         ),
       ];
     });
-    mountedChildToggleAnimations = [...rowAnimations, ...frameAnimations];
+    mountedChildToggleAnimations = [
+      ...rowAnimations,
+      ...frameAnimations,
+      ...exit.animations,
+    ];
     const animations = mountedChildToggleAnimations;
     animations.forEach((animation) => {
       animation.pause();
@@ -1269,13 +1486,72 @@
     void Promise.allSettled(
       animations.map((animation) => animation.finished),
     ).then(() => {
+      exit.cleanup();
       if (mountedChildToggleAnimations === animations) {
         mountedChildToggleAnimations = [];
       }
     });
   };
 
+  const expandChildAfterLoad = async (
+    pending: PendingChildToggleAnimation,
+  ): Promise<void> => {
+    let edge = childEdgeForKey(pending.edgeKey);
+    while (
+      pendingLoadedChildToggleAnimation === pending &&
+      (edge?.load.state === 'idle' ||
+        edge?.load.state === 'evicted' ||
+        edge?.load.state === 'loading')
+    ) {
+      await new Promise(requestAnimationFrame);
+      edge = childEdgeForKey(pending.edgeKey);
+    }
+    if (
+      pendingLoadedChildToggleAnimation !== pending ||
+      edge?.expansion !== 'collapsed' ||
+      edge.load.state !== 'loaded'
+    ) {
+      if (pendingLoadedChildToggleAnimation === pending) {
+        pendingLoadedChildToggleAnimation = null;
+      }
+      return;
+    }
+
+    const currentTops = mountedRowTops(pending.originY);
+    const currentEntries = captureChildToggleExitEntries(currentTops);
+    const originEntries = pending.exitEntries.filter((entry) =>
+      isTimelineChildToggleOriginRow({
+        kind: entry.kind,
+        top: entry.top,
+        originY: pending.originY,
+        rowHeight: ROW_HEIGHT,
+      }),
+    );
+    const originKeys = new SvelteSet(originEntries.map((entry) => entry.key));
+    const refreshedTops = new SvelteMap(currentTops);
+    for (const entry of originEntries) refreshedTops.set(entry.key, entry.top);
+    pending.previousTops = refreshedTops;
+    pending.exitEntries = [
+      ...currentEntries.filter((entry) => !originKeys.has(entry.key)),
+      ...originEntries,
+    ];
+    pendingLoadedChildToggleAnimation = null;
+    mountedChildToggleAnimations.forEach((animation) => animation.cancel());
+    mountedChildToggleAnimations = [];
+    presentNextChildToggleImmediately = true;
+    suppressRowEntryAfterChildToggleUntilMs =
+      performance.now() + ROW_ENTRY_SETTLE_MS + 1200;
+    flushSync(() => recursiveSession.toggle(pending.edgeKey));
+    animateMountedRowsAfterChildToggle(pending);
+  };
+
   const toggleChild = (edgeKey: string) => {
+    const edgeBeforeToggle = childEdgeForKey(edgeKey);
+    const expanding = edgeBeforeToggle?.expansion === 'collapsed';
+    const stageUnloadedExpansion =
+      expanding &&
+      edgeBeforeToggle?.load.state !== 'loaded' &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const activeElement = document.activeElement;
     const originY =
       activeElement instanceof HTMLElement
@@ -1283,14 +1559,36 @@
           activeElement.getBoundingClientRect().height / 2
         : (containerEl?.getBoundingClientRect().top ?? 0);
     const previousTops = mountedRowTops(originY);
+    const exitEntries = captureChildToggleExitEntries(previousTops);
+    const direction = expanding ? 'expand' : 'collapse';
+    pendingLoadedChildToggleAnimation = null;
     mountedChildToggleAnimations.forEach((animation) => animation.cancel());
     mountedChildToggleAnimations = [];
     presentNextChildToggleImmediately = true;
     suppressRowEntryAfterChildToggleUntilMs =
       performance.now() + ROW_ENTRY_SETTLE_MS + 1200;
+    if (stageUnloadedExpansion) {
+      pendingLoadedChildToggleAnimation = {
+        edgeKey,
+        previousTops,
+        originY,
+        exitEntries,
+        direction,
+      };
+      flushSync(() => recursiveSession.load(edgeKey));
+      void expandChildAfterLoad(pendingLoadedChildToggleAnimation);
+      return;
+    }
     flushSync(() => recursiveSession.toggle(edgeKey));
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    animateMountedRowsAfterChildToggle({ previousTops, originY });
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      return;
+    }
+    animateMountedRowsAfterChildToggle({
+      previousTops,
+      originY,
+      exitEntries,
+      direction,
+    });
   };
 
   const currentEntryVisualOffsets = (): Map<string, number> => {
@@ -2350,17 +2648,6 @@
         ></div>
 
         <div class="timeline-viewport-clip absolute inset-0">
-          <TimelineAxis
-            x1={GUTTER - RADIUS / 4}
-            x2={canvasWidth - GUTTER + RADIUS / 4}
-            gutter={GUTTER}
-            {timelineHeight}
-            bandTop={virtualizeRows ? layerBandTop : 0}
-            bandHeight={virtualizeRows ? layerBandHeight : timelineHeight}
-            {startTime}
-            {scale}
-            viewportOffsetPx={viewport.offsetPx}
-          />
           <div
             class="timeline-motion-layer pointer-events-none absolute inset-0"
           >
@@ -2438,6 +2725,17 @@
               />
             {/each}
           </div>
+          <TimelineAxis
+            x1={GUTTER - RADIUS / 4}
+            x2={canvasWidth - GUTTER + RADIUS / 4}
+            gutter={GUTTER}
+            {timelineHeight}
+            bandTop={virtualizeRows ? layerBandTop : 0}
+            bandHeight={virtualizeRows ? layerBandHeight : timelineHeight}
+            {startTime}
+            {scale}
+            viewportOffsetPx={viewport.offsetPx}
+          />
           {#if !timelineLoading}
             <!-- Anchor's left provides the gutter offset for the layer's 0-based coords. -->
             <div
@@ -2683,8 +2981,13 @@
               </li>
             {/each}
           </ul>
+          <div
+            class="pointer-events-none absolute inset-0 z-10"
+            aria-hidden="true"
+            data-child-toggle-exit-layer
+            bind:this={childToggleExitLayerEl}
+          ></div>
         </div>
-
         {#if timelineLoading && presentedPendingGap}
           {@const rectY =
             TIMELINE_VERTICAL_PADDING +

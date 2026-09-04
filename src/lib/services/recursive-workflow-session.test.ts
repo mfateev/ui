@@ -492,6 +492,35 @@ describe('RecursiveWorkflowSession', () => {
     session.dispose();
   });
 
+  it('loads a collapsed child without expanding it', async () => {
+    const loader = vi.fn(
+      ({ reference }: Parameters<typeof loadChildWorkflow>[0]) =>
+        Promise.resolve(loaded(reference.workflowId)),
+    );
+    const session = new RecursiveWorkflowSession({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1, 'first'), childGroup(2, 'second')])],
+      limits: { ...DEFAULT_RECURSIVE_TIMELINE_LIMITS, maximumNodes: 2 },
+      loader,
+      describer: vi.fn().mockRejectedValue(new Error('unavailable')),
+    });
+    const [firstEdge, secondEdge] = [
+      ...session.snapshot.childrenByGroupKey.values(),
+    ];
+    session.observeEdges([firstEdge.key]);
+    await vi.waitFor(() => expect(firstEdge.load.state).toBe('loaded'));
+
+    expect(secondEdge.expansion).toBe('collapsed');
+    session.load(secondEdge.key);
+    await vi.waitFor(() => expect(secondEdge.load.state).toBe('loaded'));
+
+    expect(secondEdge.expansion).toBe('collapsed');
+    expect(firstEdge.load.state).toBe('evicted');
+    expect(loader).toHaveBeenCalledTimes(2);
+    session.dispose();
+  });
+
   it('evicts a leaf instead of an entire loaded branch for manual expansion', async () => {
     const withChild = (id: string, child: EventGroup): LoadedChildWorkflow => {
       const result = loaded(id);

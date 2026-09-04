@@ -247,6 +247,18 @@ export class RecursiveWorkflowSession {
     this.changed();
   }
 
+  load(edgeKey: string): void {
+    const found = this.findEdge(edgeKey);
+    if (
+      !found ||
+      (found.edge.load.state !== 'idle' && found.edge.load.state !== 'evicted')
+    ) {
+      return;
+    }
+    this.enqueue(found.edge, found.ancestry, true);
+    this.changed();
+  }
+
   retry(edgeKey: string): void {
     const found = this.findEdge(edgeKey);
     if (!found || found.edge.load.state === 'loading') return;

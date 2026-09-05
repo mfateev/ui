@@ -209,8 +209,7 @@ describe('getRecursiveTimelineContainmentLayout', () => {
     expect(rows.map((row) => row.key)).toEqual([
       expect.stringContaining('workflow-header'),
       expect.stringContaining('frame-header'),
-      expect.stringContaining('workflow-spacing-before'),
-      expect.stringContaining('workflow-header'),
+      'root-edge',
       expect.stringContaining('frame-header'),
       expect.stringContaining('child'),
       expect.stringContaining('workflow-spacing-after'),
@@ -222,21 +221,18 @@ describe('getRecursiveTimelineContainmentLayout', () => {
         expect.objectContaining({
           key: timelineRunKey('root', 'root-run'),
           rowStart: 1,
-          rowEnd: 9,
+          rowEnd: 8,
         }),
         expect.objectContaining({
           key: timelineRunKey('child', 'child-run'),
-          rowStart: 4,
-          rowEnd: 6,
+          rowStart: 3,
+          rowEnd: 5,
         }),
       ]),
     );
     const childSpan = layout
       .workflowSpans()
       .find((span) => span.workflowKey === 'child');
-    const leadingSpacing = rows.find((row) =>
-      row.key.endsWith('workflow-spacing-before'),
-    );
     const trailingSpacing = rows.find((row) =>
       row.key.endsWith('workflow-spacing-after'),
     );
@@ -248,7 +244,28 @@ describe('getRecursiveTimelineContainmentLayout', () => {
         row.kind === 'group' &&
         row.entry.timelineKey === rootAction.timelineKey,
     );
-    expect(leadingSpacing?.rowIndex).toBe((childSpan?.rowStart ?? 0) - 1);
+    expect(childSpan).toMatchObject({
+      rowStart: 2,
+      headerKey: 'root-edge',
+      headerKind: 'relationship',
+    });
+    edge.expansion = 'collapsed';
+    const collapsedLayout = getRecursiveTimelineContainmentLayout({
+      root,
+      visibleEntries: [rootRelationship, rootAction, childAction],
+      participatingRunKeys: new Set([
+        timelineRunKey('root', 'root-run'),
+        timelineRunKey('child', 'child-run'),
+      ]),
+      reverseSort: false,
+      pendingGroupCount: 0,
+      descMinId: 0,
+    });
+    expect(
+      collapsedLayout.rows(0, collapsedLayout.rowCount).find((row) => {
+        return row.key === 'root-edge';
+      })?.rowIndex,
+    ).toBe(childSpan?.rowStart);
     expect(trailingSpacing?.rowIndex).toBe(childSpan?.rowEnd);
     expect(trailingPadding?.rowIndex).toBe(
       (trailingSpacing?.rowIndex ?? 0) + 1,

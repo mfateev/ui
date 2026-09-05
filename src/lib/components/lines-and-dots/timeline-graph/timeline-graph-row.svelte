@@ -54,6 +54,7 @@
     getTimelineDotRole,
     getTimelineRowGeometry,
     isTimelineLabelVisible,
+    mergeTimelineRowConnectors,
   } from './timeline-row-geometry';
 
   type Props = {
@@ -73,6 +74,8 @@
     labelTrailingOffsetPx?: number;
     viewportEndOverscanPx?: number;
     fanOutShortBoundaryMarkers?: boolean;
+    continuousConnector?: boolean;
+    connectorColor?: string;
     onBeforeSelect?: () => void;
   };
 
@@ -91,6 +94,8 @@
     labelTrailingOffsetPx = 0,
     viewportEndOverscanPx = 0,
     fanOutShortBoundaryMarkers = false,
+    continuousConnector = false,
+    connectorColor,
     onBeforeSelect,
   }: Props = $props();
 
@@ -240,6 +245,11 @@
       haloPx: HALO,
     }),
   );
+  const visibleConnectors = $derived(
+    continuousConnector
+      ? mergeTimelineRowConnectors(rowGeometry.connectors)
+      : rowGeometry.connectors,
+  );
   const terminalMarkerIndex = $derived(
     resolvedTerminal || pauseTime
       ? points.length - 1
@@ -251,9 +261,9 @@
       : undefined,
   );
   const hasVisiblePendingConnector = $derived(
-    rowGeometry.connectors.some((connector) => connector.pending),
+    visibleConnectors.some((connector) => connector.pending),
   );
-  const hasVisibleConnector = $derived(rowGeometry.connectors.length > 0);
+  const hasVisibleConnector = $derived(visibleConnectors.length > 0);
   const labelSafeInset = GUTTER + 1.5 * RADIUS;
   const labelTextPositionX = $derived(
     textPosition[0] +
@@ -301,10 +311,11 @@
   );
 
   const lineColor = $derived(
-    strokeColor({
-      category: effectiveCategory,
-      classification: group.lastEvent.classification,
-    }),
+    connectorColor ??
+      strokeColor({
+        category: effectiveCategory,
+        classification: group.lastEvent.classification,
+      }),
   );
   const showRetryGradient = $derived(
     retried && group.lastEvent.classification === 'Completed',
@@ -312,14 +323,15 @@
   const scheduling = $derived(group.lastEvent.classification === 'Completed');
 
   const pendingLineColor = $derived(
-    strokeColor({
-      category: pendingActivity
-        ? (pendingActivity.attempt ?? 0) > 1
-          ? 'retry'
-          : 'pending'
-        : effectiveCategory,
-      classification: group.lastEvent.classification,
-    }),
+    connectorColor ??
+      strokeColor({
+        category: pendingActivity
+          ? (pendingActivity.attempt ?? 0) > 1
+            ? 'retry'
+            : 'pending'
+          : effectiveCategory,
+        classification: group.lastEvent.classification,
+      }),
   );
 
   // The button spans just the dots + connectors; its coords are button-local
@@ -346,7 +358,7 @@
 )}
   {@const bounds = lineBox([leftX, spanCy], [rightX, spanCy])}
   <div
-    class="tl-line absolute z-10"
+    class="tl-line absolute z-0"
     class:tl-line--gradient={opts.gradient}
     class:tl-line--dashed={opts.dashed}
     class:tl-line--animate={opts.animate}
@@ -461,8 +473,12 @@
       <div
         class="highlight {groupHover({ category: effectiveCategory })}"
         style:border-radius="{highlightRadius}px"
+        style:left={continuousConnector ? `${HALO}px` : undefined}
+        style:width={continuousConnector
+          ? `calc(100% - ${2 * HALO}px)`
+          : undefined}
       ></div>
-      {#each rowGeometry.connectors as visibleConnector (visibleConnector.index)}
+      {#each visibleConnectors as visibleConnector (visibleConnector.index)}
         {@render connector(
           visibleConnector.startPx - spanLeft,
           visibleConnector.endPx - spanLeft,

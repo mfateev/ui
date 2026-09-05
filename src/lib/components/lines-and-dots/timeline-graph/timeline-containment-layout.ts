@@ -1,6 +1,7 @@
 import type { TimelineRun } from '$lib/services/chain-workflow-session';
 
 import {
+  getTimelineChildExecution,
   type TimelineChildEdge,
   timelineRunKey,
   type TimelineWorkflowNode,
@@ -85,6 +86,8 @@ export type TimelineRunSpan = {
 export type TimelineWorkflowSpan = {
   key: string;
   workflowKey: string;
+  headerKey: string;
+  headerKind: 'synthetic' | 'relationship';
   rowStart: number;
   rowEnd: number;
   depth: number;
@@ -258,17 +261,10 @@ export function getRecursiveTimelineContainmentLayout({
   const visitWorkflow = (
     node: TimelineWorkflowNode,
     ancestorRunKeys: string[],
+    relationshipHeader?: { key: string; rowIndex: number },
   ): void => {
-    if (node.depth > 0) {
-      appendRow({
-        kind: 'workflow-spacing',
-        key: `${node.key}:workflow-spacing-before`,
-        workflowKey: node.key,
-        depth: node.depth,
-        ancestorRunKeys,
-      });
-    }
-    const workflowStart = physicalRowIndex;
+    const workflowStart = relationshipHeader?.rowIndex ?? physicalRowIndex;
+    const headerKey = relationshipHeader?.key ?? `${node.key}:workflow-header`;
     const participatingRuns = node.runs
       .filter((run) =>
         participatingRunKeys.has(timelineRunKey(node.key, run.runId)),
@@ -279,10 +275,10 @@ export function getRecursiveTimelineContainmentLayout({
         return reverseSort ? -ordered : ordered;
       });
 
-    if (participatingRuns.length > 0) {
+    if (participatingRuns.length > 0 && !relationshipHeader) {
       appendRow({
         kind: 'workflow-header',
-        key: `${node.key}:workflow-header`,
+        key: headerKey,
         workflowKey: node.key,
         depth: node.depth,
         ancestorRunKeys,
@@ -324,7 +320,11 @@ export function getRecursiveTimelineContainmentLayout({
         const timelineGroup = run.groups[ordinal];
         const entry =
           exceptionalEntryByGroup.get(timelineGroup.group) ?? timelineGroup;
-        return getTimelineGroupEntry(entry, run, edge?.execution);
+        return getTimelineGroupEntry(
+          entry,
+          run,
+          getTimelineChildExecution(edge),
+        );
       };
 
       let appended = false;
@@ -440,11 +440,17 @@ export function getRecursiveTimelineContainmentLayout({
             !edge.load.truncation
               ? edge.load
               : undefined;
-          const childIsExpanded = Boolean(loadedChild);
-          if (entry && !childIsExpanded) appendRange(ordinal, ordinal + 1);
+          const relationshipRowIndex = entry ? physicalRowIndex : undefined;
+          if (entry) appendRange(ordinal, ordinal + 1);
           if (loadedChild) {
             appended = true;
-            visitWorkflow(loadedChild.node, owners);
+            visitWorkflow(
+              loadedChild.node,
+              owners,
+              relationshipRowIndex === undefined
+                ? undefined
+                : { key: edge.key, rowIndex: relationshipRowIndex },
+            );
           } else if (
             !isSafetyLimited(edge) &&
             edge.expansion !== 'collapsed' &&
@@ -497,6 +503,8 @@ export function getRecursiveTimelineContainmentLayout({
       allWorkflowSpans.push({
         key: `${node.key}:workflow-span`,
         workflowKey: node.key,
+        headerKey,
+        headerKind: relationshipHeader ? 'relationship' : 'synthetic',
         depth: node.depth,
         ancestorRunKeys,
         rowStart: workflowStart,

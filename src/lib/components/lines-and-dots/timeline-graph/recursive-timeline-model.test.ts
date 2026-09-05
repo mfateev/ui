@@ -7,6 +7,8 @@ import {
   childExecutionKey,
   executionKey,
   flattenWorkflowNodes,
+  getTimelineChildExecution,
+  type TimelineChildEdge,
   type TimelineWorkflowNode,
   workflowFrameKey,
   workflowGroupKey,
@@ -86,5 +88,37 @@ describe('flattenWorkflowNodes', () => {
     });
 
     expect(flattenWorkflowNodes(root)).toEqual([root]);
+  });
+});
+
+describe('getTimelineChildExecution', () => {
+  it('uses loaded workflow timing when describe metadata is unavailable', () => {
+    const child = workflowNode('child', 1);
+    child.workflow = {
+      id: 'child',
+      status: 'Completed',
+      isRunning: false,
+      isPaused: false,
+      endTime: '2026-09-04T17:36:43.000Z',
+    } as WorkflowExecution;
+    const edge = {
+      key: 'edge',
+      parentGroupKey: 'relationship',
+      reference: {
+        namespace: 'default',
+        workflowId: 'child',
+        runId: 'child-run',
+      },
+      expansion: 'expanded',
+      load: { state: 'loaded', node: child },
+      depth: 1,
+      lastVisibleAt: 0,
+    } satisfies TimelineChildEdge;
+
+    expect(getTimelineChildExecution(edge)).toEqual({
+      status: 'Completed',
+      active: false,
+      endTimeMs: Date.parse('2026-09-04T17:36:43.000Z'),
+    });
   });
 });

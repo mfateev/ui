@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { RADIUS, ROW_HEIGHT } from './constants';
 import {
   getTimelineFrameVerticalLayout,
-  getWorkflowChainVerticalBounds,
   getWorkflowFrameGeometry,
   getWorkflowFrameVerticalBounds,
 } from './workflow-frame-geometry';
@@ -138,6 +138,8 @@ describe('getTimelineFrameVerticalLayout', () => {
   ) => ({
     key: `${workflowKey}:span`,
     workflowKey,
+    headerKey: `${workflowKey}:header`,
+    headerKind: 'synthetic' as const,
     rowStart,
     rowEnd,
     depth,
@@ -157,7 +159,7 @@ describe('getTimelineFrameVerticalLayout', () => {
     });
 
     expect(layout.runBoundsByKey.get('first')).toEqual({
-      topPx: 72,
+      topPx: 81,
       bottomPx: 129,
     });
     expect(layout.runBoundsByKey.get('second')).toEqual({
@@ -166,10 +168,10 @@ describe('getTimelineFrameVerticalLayout', () => {
     });
   });
 
-  it('keeps workflow padding outside the run activity border', () => {
+  it('keeps the final run inside its workflow box', () => {
     const layout = getTimelineFrameVerticalLayout({
       runSpans: [runSpan('run', 'root', 1, 5)],
-      workflowSpans: [workflowSpan('root', 0, 6, 0)],
+      workflowSpans: [workflowSpan('root', 0, 5, 0)],
       activeRowIndex: -1,
       panelHeight: 0,
       verticalPaddingPx: 12,
@@ -178,9 +180,11 @@ describe('getTimelineFrameVerticalLayout', () => {
     const workflow = layout.workflowBoundsByKey.get('root')!;
 
     expect(run.bottomPx).toBe(177);
-    expect(workflow).toEqual({ topPx: 39, bottomPx: 234 });
+    expect(workflow).toEqual({ topPx: 60, bottomPx: 189 });
     expect(workflow.topPx).toBeLessThan(run.topPx);
     expect(workflow.bottomPx).toBeGreaterThan(run.bottomPx);
+    expect(run.topPx - (workflow.topPx + RADIUS)).toBe(ROW_HEIGHT / 2);
+    expect(workflow.bottomPx - run.bottomPx).toBe(ROW_HEIGHT / 2);
   });
 
   it('keeps the workflow-to-run header gap constant at every depth', () => {
@@ -203,29 +207,9 @@ describe('getTimelineFrameVerticalLayout', () => {
     const run = layout.runBoundsByKey.get('child-run')!;
     const workflow = layout.workflowBoundsByKey.get('child')!;
 
-    expect(workflow).toEqual({ topPx: 63, bottomPx: 198 });
+    expect(workflow).toEqual({ topPx: 84, bottomPx: 189 });
     expect(run.topPx - workflow.topPx).toBe(rootRun.topPx - rootWorkflow.topPx);
     expect(workflow.topPx).toBeLessThan(run.topPx);
     expect(workflow.bottomPx).toBeGreaterThan(run.bottomPx);
   });
-});
-
-describe('getWorkflowChainVerticalBounds', () => {
-  it.each([
-    { depth: 0, expectedPaddingPx: 33 },
-    { depth: 1, expectedPaddingPx: 27 },
-    { depth: 4, expectedPaddingPx: 9 },
-  ])(
-    'keeps its header fixed while reducing bottom padding at depth $depth',
-    ({ depth, expectedPaddingPx }) => {
-      const workflow = getWorkflowChainVerticalBounds({
-        topPx: 100,
-        bottomPx: 500,
-        depth,
-      });
-
-      expect(workflow.topPx).toBe(100);
-      expect(workflow.bottomPx - 500).toBe(expectedPaddingPx);
-    },
-  );
 });

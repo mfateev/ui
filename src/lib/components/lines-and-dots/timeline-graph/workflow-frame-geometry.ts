@@ -35,13 +35,6 @@ export function getTimelineFrameVerticalLayout({
   panelHeight: number;
   verticalPaddingPx: number;
 }): TimelineFrameVerticalLayout {
-  const firstRunRowByWorkflow = new Map<string, number>();
-  for (const span of runSpans) {
-    const firstRow = firstRunRowByWorkflow.get(span.workflowKey);
-    if (firstRow === undefined || span.rowStart < firstRow) {
-      firstRunRowByWorkflow.set(span.workflowKey, span.rowStart);
-    }
-  }
   const runBoundsByKey = new Map<string, { topPx: number; bottomPx: number }>();
   for (const span of runSpans) {
     const bounds = getWorkflowFrameVerticalBounds({
@@ -50,10 +43,8 @@ export function getTimelineFrameVerticalLayout({
       panelHeight,
       paddingPx: 0,
     });
-    const hasPreviousRun =
-      span.rowStart !== firstRunRowByWorkflow.get(span.workflowKey);
     runBoundsByKey.set(span.key, {
-      topPx: bounds.topPx + verticalPaddingPx + (hasPreviousRun ? RADIUS : 0),
+      topPx: bounds.topPx + verticalPaddingPx + RADIUS,
       bottomPx: bounds.bottomPx + verticalPaddingPx + RADIUS,
     });
   }
@@ -66,35 +57,14 @@ export function getTimelineFrameVerticalLayout({
       ...span,
       activeRowIndex,
       panelHeight,
-      paddingPx: RADIUS,
+      paddingPx: 0,
     });
-    workflowBoundsByKey.set(
-      span.workflowKey,
-      getWorkflowChainVerticalBounds({
-        topPx: bounds.topPx + verticalPaddingPx,
-        bottomPx: bounds.bottomPx + verticalPaddingPx,
-        depth: span.depth,
-      }),
-    );
+    workflowBoundsByKey.set(span.workflowKey, {
+      topPx: bounds.topPx + verticalPaddingPx + ROW_HEIGHT / 2,
+      bottomPx: bounds.bottomPx + verticalPaddingPx + RADIUS + ROW_HEIGHT / 2,
+    });
   }
   return { runBoundsByKey, workflowBoundsByKey };
-}
-
-export function getWorkflowChainVerticalBounds({
-  topPx,
-  bottomPx,
-  depth,
-}: {
-  topPx: number;
-  bottomPx: number;
-  depth: number;
-}): { topPx: number; bottomPx: number } {
-  const inset = Math.min(depth, 4) * 6;
-  const internalPaddingPx = ROW_HEIGHT + RADIUS - inset;
-  return {
-    topPx,
-    bottomPx: bottomPx + internalPaddingPx,
-  };
 }
 
 export function getWorkflowFrameVerticalBounds({

@@ -5,7 +5,19 @@ import {
   getTimelineDotRole,
   getTimelineRowGeometry,
   isTimelineLabelVisible,
+  mergeTimelineRowConnectors,
 } from './timeline-row-geometry';
+
+describe('mergeTimelineRowConnectors', () => {
+  it('renders a multi-event workflow as one continuous segment', () => {
+    expect(
+      mergeTimelineRowConnectors([
+        { startPx: 10, endPx: 40, index: 0, pending: false },
+        { startPx: 42, endPx: 100, index: 1, pending: false },
+      ]),
+    ).toEqual([{ startPx: 10, endPx: 100, index: 0, pending: false }]);
+  });
+});
 
 describe('getTimelineDotAlignment', () => {
   it('anchors the initial marker by its left edge', () => {
@@ -21,6 +33,17 @@ describe('getTimelineDotAlignment', () => {
     expect(
       getTimelineDotAlignment({ index: 2, eventCount: 3, pending: true }),
     ).toBe('center');
+  });
+
+  it('anchors a described completion beyond the history events by its right edge', () => {
+    expect(
+      getTimelineDotAlignment({
+        index: 2,
+        eventCount: 2,
+        pending: false,
+        boundaryEndIndex: 2,
+      }),
+    ).toBe('end');
   });
 
   it('keeps intermediate markers centered', () => {

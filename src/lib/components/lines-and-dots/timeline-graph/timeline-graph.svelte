@@ -31,6 +31,7 @@
   import { DOT_STROKE, GUTTER, RADIUS, ROW_HEIGHT } from './constants';
   import {
     flattenWorkflowNodes,
+    getTimelineChildExecution,
     type TimelineChildEdge,
     timelineRunKey,
   } from './recursive-timeline-model';
@@ -218,10 +219,14 @@
 
   const workflowTree = $derived(recursiveSession.snapshot);
   const workflowNodes = $derived(flattenWorkflowNodes(workflowTree));
-  const incomingChildByWorkflowKey = $derived.by(() => {
+  const incomingChildHeaderByWorkflowKey = $derived.by(() => {
     const incomingChildren = new SvelteMap<
       string,
-      { edge: TimelineChildEdge; parentEntry: TimelineGroup }
+      {
+        edge: TimelineChildEdge;
+        parentEntry: TimelineGroup;
+        firstRunId: string;
+      }
     >();
     for (const node of workflowNodes) {
       for (const edge of node.childrenByGroupKey.values()) {
@@ -230,7 +235,11 @@
             .flatMap((run) => run.groups)
             .find((entry) => entry.timelineKey === edge.parentGroupKey);
           if (parentEntry) {
-            incomingChildren.set(edge.load.node.key, { edge, parentEntry });
+            incomingChildren.set(edge.load.node.key, {
+              edge,
+              parentEntry,
+              firstRunId: edge.load.node.firstRunId,
+            });
           }
         }
       }
@@ -238,18 +247,19 @@
     return incomingChildren;
   });
   const allWorkflowRuns = $derived(workflowNodes.flatMap((node) => node.runs));
-  const describedChildExecutions = $derived(
+  const childExecutions = $derived.by(() =>
     workflowNodes.flatMap((node) =>
-      [...node.childrenByGroupKey.values()].flatMap((edge) =>
-        edge.execution ? [edge.execution] : [],
-      ),
+      [...node.childrenByGroupKey.values()].flatMap((edge) => {
+        const execution = getTimelineChildExecution(edge);
+        return execution ? [execution] : [];
+      }),
     ),
   );
   const aggregateHasLive = $derived(
     allWorkflowRuns.some(
       (run) =>
         run.active && (run.status === 'Running' || run.status === 'Paused'),
-    ) || describedChildExecutions.some((execution) => execution.active),
+    ) || childExecutions.some((execution) => execution.active),
   );
   const aggregateStartTimeMs = $derived.by(() => {
     let minimum = Number.POSITIVE_INFINITY;
@@ -264,7 +274,7 @@
     for (const run of allWorkflowRuns) {
       if (run.endTimeMs > maximum) maximum = run.endTimeMs;
     }
-    for (const execution of describedChildExecutions) {
+    for (const execution of childExecutions) {
       if (execution.endTimeMs !== undefined && execution.endTimeMs > maximum) {
         maximum = execution.endTimeMs;
       }
@@ -279,7 +289,9 @@
           getTimelineGroupEntry(
             entry,
             run,
-            node.childrenByGroupKey.get(entry.timelineKey)?.execution,
+            getTimelineChildExecution(
+              node.childrenByGroupKey.get(entry.timelineKey),
+            ),
           ),
         ),
       ),
@@ -337,14 +349,13 @@
       for (const run of node.runs) {
         for (const entry of run.groups) {
           if (!entry.group.isPending) continue;
-          const execution = node.childrenByGroupKey.get(
-            entry.timelineKey,
-          )?.execution;
+          const edge = node.childrenByGroupKey.get(entry.timelineKey);
+          const execution = getTimelineChildExecution(edge);
           if (execution) {
             if (!execution.active && execution.endTimeMs !== undefined) {
               endTimes.set(entry.group as LazyGroup, execution.endTimeMs);
             }
-          } else if (!run.active) {
+          } else if (!edge && !run.active) {
             endTimes.set(entry.group as LazyGroup, run.endTimeMs);
           }
         }
@@ -832,24 +843,22 @@
   };
 
   const getChildControlPlacement = (
-    entry: TimelineGroup,
-    edge: TimelineChildEdge,
+    entry: TimelineGroupEntry,
   ): { x: number; fitsAfter: boolean } => {
     const controlEndTime =
-      edge.execution &&
-      !edge.execution.active &&
-      edge.execution.endTimeMs !== undefined
-        ? new Date(edge.execution.endTimeMs).toISOString()
-        : entry.group.lastEvent.eventTime;
-    const afterX = projectX(controlEndTime) + RADIUS * 2 + 4;
-    const fitsAfter = afterX + 24 <= canvasWidth - GUTTER;
+      entry.group.isPending && entry.active
+        ? new Date(timeline.workflowTimespan.endTimeMs).toISOString()
+        : entry.group.isPending
+          ? new Date(entry.runEndTimeMs).toISOString()
+          : entry.group.lastEvent.eventTime;
+    const endX = projectX(controlEndTime);
+    const controlWidth = 20;
+    const fitsAfter = endX + 34 <= canvasWidth - GUTTER;
     return {
-      x: fitsAfter
-        ? afterX
-        : Math.max(
-            GUTTER + edge.depth * 12,
-            projectX(entry.group.initialEvent.eventTime) - RADIUS * 2 - 4 - 24,
-          ),
+      x: Math.max(
+        GUTTER,
+        Math.min(endX - controlWidth, canvasWidth - GUTTER - controlWidth),
+      ),
       fitsAfter,
     };
   };
@@ -1771,8 +1780,8 @@
   const chainFrameCandidates = $derived(frameCandidates.chainFrames);
   const runFrameEntryOffset = (runKey: string): number =>
     rowEntryOffsets.get(`${runKey}:frame-header`) ?? 0;
-  const workflowFrameEntryOffset = (workflowKey: string): number =>
-    rowEntryOffsets.get(`${workflowKey}:workflow-header`) ?? 0;
+  const workflowFrameEntryOffset = (headerKey: string): number =>
+    rowEntryOffsets.get(headerKey) ?? 0;
   const frameEntryPending = (entryKey: string): boolean =>
     !rowEntryAnimating && rowEntryNewKeys.has(entryKey);
   const frameBottomEntryOffset = ({
@@ -1790,13 +1799,7 @@
   const rootChainFrameCandidate = $derived(
     chainFrameCandidates.find((candidate) => candidate.depth === 0),
   );
-  const inheritedWorkflowFrameColor = $derived(
-    strokeColor({
-      status: rootChainFrameCandidate?.status ?? workflow.status,
-      delayed:
-        Boolean(rootChainFrameCandidate?.live) && isWorkflowDelayed(workflow),
-    }),
-  );
+  const workflowFrameColor = strokeColor({ category: 'child-workflow' });
   const inheritedWorkflowDotColors = $derived(
     dotColors(rootChainFrameCandidate?.status ?? workflow.status),
   );
@@ -2388,12 +2391,30 @@
       const vertical = frameVerticalLayout.runBoundsByKey.get(runKey);
       const span = runSpanByKey.get(runKey);
       if (!vertical || !span) return [];
+      const incomingChild = incomingChildHeaderByWorkflowKey.get(
+        candidate.workflowKey ?? '',
+      );
+      const relationshipStartWorldPx = incomingChild?.parentEntry.group
+        .initialEvent.eventTime
+        ? scale.project(
+            validTimeToDate(
+              incomingChild.parentEntry.group.initialEvent.eventTime,
+            ).getTime(),
+          )
+        : candidate.startWorldPx;
+      const isFirstChildRun = incomingChild?.firstRunId === candidate.runId;
+      const startWorldPx = isFirstChildRun
+        ? Math.max(
+            relationshipStartWorldPx,
+            Math.min(candidate.startWorldPx, relationshipStartWorldPx + 12),
+          )
+        : candidate.startWorldPx;
       return [
         {
           candidate,
           span,
           geometry: getWorkflowFrameGeometry({
-            startWorldPx: candidate.startWorldPx,
+            startWorldPx,
             endWorldPx: candidate.endWorldPx,
             viewportOffsetPx: viewport.offsetPx,
             viewportWidthPx: renderedViewportWidthPx,
@@ -2414,13 +2435,37 @@
       const vertical = frameVerticalLayout.workflowBoundsByKey.get(workflowKey);
       const span = workflowSpanByKey.get(workflowKey);
       if (!vertical || !span) return [];
+      const incomingChild = incomingChildHeaderByWorkflowKey.get(workflowKey);
+      const relationshipStartWorldPx = incomingChild?.parentEntry.group
+        .initialEvent.eventTime
+        ? scale.project(
+            validTimeToDate(
+              incomingChild.parentEntry.group.initialEvent.eventTime,
+            ).getTime(),
+          )
+        : candidate.startWorldPx;
+      const relationshipEndTimeMs = incomingChild?.parentEntry.group.lastEvent
+        .eventTime
+        ? validTimeToDate(
+            incomingChild.parentEntry.group.lastEvent.eventTime,
+          ).getTime()
+        : undefined;
+      const relationshipEndWorldPx =
+        relationshipEndTimeMs === undefined
+          ? candidate.endWorldPx
+          : scale.project(relationshipEndTimeMs);
+      const startWorldPx = Math.min(
+        relationshipStartWorldPx,
+        candidate.startWorldPx,
+      );
+      const endWorldPx = Math.max(relationshipEndWorldPx, candidate.endWorldPx);
       return [
         {
           candidate,
           span,
           geometry: getWorkflowFrameGeometry({
-            startWorldPx: candidate.startWorldPx,
-            endWorldPx: candidate.endWorldPx,
+            startWorldPx,
+            endWorldPx,
             viewportOffsetPx: viewport.offsetPx,
             viewportWidthPx: renderedViewportWidthPx,
             gutterPx: GUTTER,
@@ -2657,25 +2702,22 @@
                 label={frame.candidate.label}
                 workflowType={frame.candidate.workflow?.name}
                 accessibleName=""
-                color={inheritedWorkflowFrameColor}
+                color={workflowFrameColor}
                 colors={inheritedWorkflowDotColors}
                 live={frame.candidate.live}
                 kind="chain"
+                headerKind={frame.span.headerKind}
                 depth={frame.span.depth}
                 paint="background"
                 bandTop={frameBandTop}
                 bandHeight={frameBandHeight}
-                entryOffsetPx={workflowFrameEntryOffset(
-                  frame.candidate.workflowKey ?? '',
-                )}
-                entryKey={`${frame.candidate.workflowKey ?? ''}:workflow-header`}
+                entryOffsetPx={workflowFrameEntryOffset(frame.span.headerKey)}
+                entryKey={frame.span.headerKey}
                 bottomEntryOffsetPx={frameBottomEntryOffset({
-                  topKey: `${frame.candidate.workflowKey ?? ''}:workflow-header`,
+                  topKey: frame.span.headerKey,
                   rowEnd: frame.span.rowEnd,
                 })}
-                entryPending={frameEntryPending(
-                  `${frame.candidate.workflowKey ?? ''}:workflow-header`,
-                )}
+                entryPending={frameEntryPending(frame.span.headerKey)}
               />
             {/each}
             {#each presentedRunFrameLayouts as frame (frame.candidate.key)}
@@ -2683,15 +2725,7 @@
                 geometry={frame.geometry}
                 label={frame.candidate.label}
                 accessibleName=""
-                color={strokeColor({
-                  status: frame.candidate.status,
-                  delayed:
-                    frame.candidate.live &&
-                    Boolean(
-                      frame.candidate.workflow &&
-                      isWorkflowDelayed(frame.candidate.workflow),
-                    ),
-                })}
+                color={workflowFrameColor}
                 colors={dotColors(frame.candidate.status)}
                 live={frame.candidate.live}
                 kind="run"
@@ -2759,16 +2793,6 @@
             class="timeline-motion-layer pointer-events-none absolute inset-0 z-20"
           >
             {#each presentedChainFrameLayouts as frame (frame.candidate.key)}
-              {@const incomingChild = frame.candidate.workflowKey
-                ? incomingChildByWorkflowKey.get(frame.candidate.workflowKey)
-                : undefined}
-              {@const incomingEdge = incomingChild?.edge}
-              {@const expandedChildControl = incomingChild
-                ? getChildControlPlacement(
-                    incomingChild.parentEntry,
-                    incomingChild.edge,
-                  )
-                : undefined}
               <WorkflowFrame
                 geometry={frame.geometry}
                 label={frame.candidate.label}
@@ -2777,29 +2801,22 @@
                   workflowId: frame.candidate.workflow?.id ?? '',
                   status: getWorkflowStatusLabel(frame.candidate.status),
                 })}
-                color={inheritedWorkflowFrameColor}
+                color={workflowFrameColor}
                 colors={inheritedWorkflowDotColors}
                 live={frame.candidate.live}
                 kind="chain"
+                headerKind={frame.span.headerKind}
                 depth={frame.span.depth}
                 paint="foreground"
                 bandTop={frameBandTop}
                 bandHeight={frameBandHeight}
-                entryOffsetPx={workflowFrameEntryOffset(
-                  frame.candidate.workflowKey ?? '',
-                )}
-                entryKey={`${frame.candidate.workflowKey ?? ''}:workflow-header`}
+                entryOffsetPx={workflowFrameEntryOffset(frame.span.headerKey)}
+                entryKey={frame.span.headerKey}
                 bottomEntryOffsetPx={frameBottomEntryOffset({
-                  topKey: `${frame.candidate.workflowKey ?? ''}:workflow-header`,
+                  topKey: frame.span.headerKey,
                   rowEnd: frame.span.rowEnd,
                 })}
-                entryPending={frameEntryPending(
-                  `${frame.candidate.workflowKey ?? ''}:workflow-header`,
-                )}
-                controlX={expandedChildControl?.x}
-                onToggle={incomingEdge
-                  ? () => toggleChild(incomingEdge.key)
-                  : undefined}
+                entryPending={frameEntryPending(frame.span.headerKey)}
               />
             {/each}
             {#each presentedRunFrameLayouts as frame (frame.candidate.key)}
@@ -2814,15 +2831,7 @@
                     status: getWorkflowStatusLabel(frame.candidate.status),
                   },
                 )}
-                color={strokeColor({
-                  status: frame.candidate.status,
-                  delayed:
-                    frame.candidate.live &&
-                    Boolean(
-                      frame.candidate.workflow &&
-                      isWorkflowDelayed(frame.candidate.workflow),
-                    ),
-                })}
+                color={workflowFrameColor}
                 colors={dotColors(frame.candidate.status)}
                 live={frame.candidate.live}
                 kind="run"
@@ -2874,7 +2883,10 @@
               {@const rowKey = slot ? layoutRowKey(slot.row) : ''}
               {@const entryOffsetPx = rowEntryOffsets.get(rowKey) ?? 0}
               <li
-                class="absolute left-0 right-0 top-0"
+                class="absolute left-0 right-0 top-0 {slot?.row.kind ===
+                  'group' && slot.row.childEdge
+                  ? 'z-30'
+                  : ''}"
                 class:timeline-row-entering={entryOffsetPx !== 0}
                 class:timeline-row-animating={rowEntryAnimating}
                 class:timeline-row-entry-pending={!rowEntryAnimating &&
@@ -2905,10 +2917,7 @@
                 {#if slot?.row.kind === 'group'}
                   {@const timelineEntry = slot.row.entry}
                   {@const childControl = slot.row.childEdge
-                    ? getChildControlPlacement(
-                        timelineEntry,
-                        slot.row.childEdge,
-                      )
+                    ? getChildControlPlacement(timelineEntry)
                     : undefined}
                   <div class="timeline-motion-layer absolute inset-0">
                     {#if !('eventList' in timelineEntry.group) && timelineEntry.group.eventCount === 1 && !timelineEntry.group.isPending && timelineEntry.active === false}
@@ -2939,6 +2948,10 @@
                           ? TIMELINE_MOTION_OVERSCAN_PX
                           : 0}
                         fanOutShortBoundaryMarkers={Boolean(slot.row.childEdge)}
+                        continuousConnector={Boolean(slot.row.childEdge)}
+                        connectorColor={slot.row.childEdge
+                          ? workflowFrameColor
+                          : undefined}
                         labelLeadingOffsetPx={slot.row.childEdge &&
                         childControl?.fitsAfter
                           ? 34

@@ -1,13 +1,10 @@
 <script lang="ts">
-  import Button from '$lib/holocene/button.svelte';
   import { translate } from '$lib/i18n/translate';
 
   import type { DotColors } from '../colors';
   import { DOT_STROKE, GUTTER, RADIUS } from './constants';
   import { alignedDotBox } from './primitives';
   import type { WorkflowFrameGeometry } from './workflow-frame-geometry';
-
-  import TimelineChildToggleIcon from './timeline-child-toggle-icon.svelte';
 
   interface Props {
     geometry: WorkflowFrameGeometry;
@@ -18,6 +15,7 @@
     colors: DotColors;
     live: boolean;
     kind: 'chain' | 'run';
+    headerKind?: 'synthetic' | 'relationship';
     depth?: number;
     paint: 'background' | 'foreground';
     bandTop: number;
@@ -26,9 +24,6 @@
     entryKey?: string;
     bottomEntryOffsetPx?: number;
     entryPending?: boolean;
-    controlX?: number;
-    onToggle?: () => void;
-    expanded?: boolean;
   }
 
   let {
@@ -40,6 +35,7 @@
     colors,
     live,
     kind,
+    headerKind = 'synthetic',
     depth = 0,
     paint,
     bandTop,
@@ -48,9 +44,6 @@
     entryKey,
     bottomEntryOffsetPx = 0,
     entryPending = false,
-    controlX,
-    onToggle,
-    expanded = true,
   }: Props = $props();
 
   const bandBottom = $derived(bandTop + bandHeight);
@@ -70,6 +63,9 @@
     geometry.horizontal
       ? Math.max(0, geometry.horizontal.endPx - geometry.horizontal.startPx)
       : 0,
+  );
+  const sidePaintHeight = $derived(
+    paintHeight + (kind === 'chain' && drawBottom ? 2 : 0),
   );
   const visibleDots = $derived(
     [
@@ -125,14 +121,17 @@
       : `${Math.max(0, geometry.labelMaxWidthPx - labelWidthAdjustment)}px`,
   );
   const displayLabel = $derived(
-    `${translate(kind === 'chain' ? 'common.workflow-id' : 'common.run-id')}: ${label}${kind === 'chain' && workflowType ? ` · ${workflowType}` : ''}`,
+    kind === 'chain'
+      ? workflowType || label
+      : `${translate('common.run-id')}: ${label}`,
+  );
+  const drawHeader = $derived(
+    drawTop && (kind === 'run' || headerKind === 'synthetic'),
   );
   const frameBackground = $derived(
     kind === 'run'
       ? 'transparent'
-      : depth % 2 === 1
-        ? 'rgb(var(--color-surface-primary))'
-        : `color-mix(in srgb, ${color} 3%, transparent)`,
+      : `color-mix(in srgb, ${color} 3%, transparent)`,
   );
 </script>
 
@@ -145,6 +144,7 @@
   data-timeline-frame-entry
   data-timeline-bottom-entry-offset={bottomEntryOffsetPx || undefined}
   style:--timeline-row-entry-offset={`${entryOffsetPx}px`}
+  style:--workflow-header-radius={`${RADIUS}px`}
 >
   {#if paint === 'foreground'}
     <div
@@ -158,7 +158,7 @@
 
   {#if geometry.horizontal && paintHeight > 0}
     <div
-      aria-hidden={onToggle ? undefined : 'true'}
+      aria-hidden="true"
       data-frame-kind={kind}
       data-frame-paint={paint}
       data-frame-depth={kind === 'chain' ? depth : undefined}
@@ -177,9 +177,9 @@
           style:--frame-committed-width="{horizontalWidth}px"
         ></div>
       {:else}
-        {#if drawTop}
+        {#if drawHeader}
           <div
-            class:frame-edge-chain={kind === 'chain'}
+            class:frame-edge-chain-header={kind === 'chain'}
             class:frame-dashed={live && kind === 'run'}
             class:tl-line--animate={live && kind === 'run'}
             class:tl-line--dashed={live && kind === 'run'}
@@ -211,8 +211,9 @@
               : undefined}
             style:left="{geometry.horizontal.startPx}px"
             style:top="{geometry.bottomPx}px"
-            style:right={live ? '0' : undefined}
-            style:width={live ? undefined : `${horizontalWidth}px`}
+            style:right={live
+              ? '0'
+              : `calc(100% - ${geometry.horizontal.endPx}px)`}
             style:--frame-color={color}
             style:--tl-line-color={color}
             style:--tl-live-committed-width="{horizontalWidth}px"
@@ -223,10 +224,10 @@
           <div
             class:frame-side-chain={kind === 'chain'}
             class:frame-side-dashed={live && kind === 'run'}
-            class="frame-side pointer-events-none absolute"
+            class="frame-side frame-side-start pointer-events-none absolute"
             style:left="{geometry.horizontal.startPx}px"
             style:top="{paintTop}px"
-            style:height="{paintHeight}px"
+            style:height="{sidePaintHeight}px"
             style:--frame-color={color}
           ></div>
         {/if}
@@ -234,14 +235,14 @@
           <div
             class:frame-side-chain={kind === 'chain'}
             class:frame-side-dashed={live && kind === 'run'}
-            class="frame-side pointer-events-none absolute"
+            class="frame-side frame-side-end pointer-events-none absolute"
             style:left="{geometry.horizontal.endPx}px"
             style:top="{paintTop}px"
-            style:height="{paintHeight}px"
+            style:height="{sidePaintHeight}px"
             style:--frame-color={color}
           ></div>
         {/if}
-        {#if showLabel && drawTop}
+        {#if showLabel && drawHeader}
           <span
             class:frame-label-chain={kind === 'chain'}
             class:workflow-run-label={kind === 'run'}
@@ -260,23 +261,7 @@
             <span class="truncate">{displayLabel}</span>
           </span>
         {/if}
-        {#if onToggle && controlX !== undefined && drawTop}
-          <Button
-            variant="secondary"
-            size="xs"
-            class="pointer-events-auto absolute z-30 h-5 w-5 -translate-y-1/2 p-0 transition-none"
-            style={`left: ${controlX}px; top: ${geometry.topPx}px`}
-            onclick={onToggle}
-            aria-label={`${expanded ? translate('workflows.child-timeline-collapse') : translate('workflows.child-timeline-expand')}: ${label}`}
-            aria-expanded={expanded}
-            title={expanded
-              ? translate('workflows.child-timeline-collapse')
-              : translate('workflows.child-timeline-expand')}
-          >
-            <TimelineChildToggleIcon {expanded} />
-          </Button>
-        {/if}
-        {#if drawTop && kind === 'chain'}
+        {#if drawHeader && kind === 'chain'}
           {#each visibleDots as dot (dot.point)}
             {@const bounds = alignedDotBox(
               dot.point,
@@ -335,34 +320,35 @@
   .frame-side {
     width: 2px;
     background: var(--frame-color);
-    transform: translateX(-1px);
+  }
+
+  .frame-side-start {
+    transform: none;
+  }
+
+  .frame-side-end {
+    transform: translateX(-100%);
   }
 
   .frame-edge-chain {
     height: 4px;
-    background: linear-gradient(
-      to bottom,
-      var(--frame-color) 0 1px,
-      transparent 1px 3px,
-      var(--frame-color) 3px 4px
-    );
+    background: var(--frame-color);
     transform: translateY(-2px);
+  }
+
+  .frame-edge-chain-header {
+    height: calc(2 * var(--workflow-header-radius));
+    background: var(--frame-color);
+    transform: translateY(calc(-1 * var(--workflow-header-radius)));
   }
 
   .frame-side-chain {
     width: 4px;
-    background: linear-gradient(
-      to right,
-      var(--frame-color) 0 1px,
-      transparent 1px 3px,
-      var(--frame-color) 3px 4px
-    );
-    transform: translateX(-2px);
+    background: var(--frame-color);
   }
 
   .frame-label-chain {
-    font-weight: 600;
-    box-shadow: inset 0 0 0 1px var(--frame-color);
+    font-weight: 400;
   }
 
   .frame-dashed {

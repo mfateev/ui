@@ -18,6 +18,22 @@ export interface TimelineRowGeometry {
   hitRange: { startPx: number; endPx: number } | null;
 }
 
+export function mergeTimelineRowConnectors(
+  connectors: TimelineRowConnector[],
+): TimelineRowConnector[] {
+  if (connectors.length < 2) return connectors;
+  const first = connectors[0];
+  const last = connectors.at(-1)!;
+  return [
+    {
+      startPx: Math.min(...connectors.map(({ startPx }) => startPx)),
+      endPx: Math.max(...connectors.map(({ endPx }) => endPx)),
+      index: first.index,
+      pending: last.pending,
+    },
+  ];
+}
+
 export function getTimelineDotAlignment({
   index,
   eventCount,
@@ -50,7 +66,7 @@ export function getTimelineDotAlignment({
     return 'center';
   }
   if (index === 0) return 'start';
-  if (!pending && index === eventCount - 1) return 'end';
+  if (!pending && index === boundaryEndIndex) return 'end';
   return 'center';
 }
 

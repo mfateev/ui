@@ -60,6 +60,34 @@ export type TimelineChildEdge = {
   };
 };
 
+export const getTimelineChildExecution = (
+  edge: TimelineChildEdge | undefined,
+): NonNullable<TimelineChildEdge['execution']> | undefined => {
+  if (!edge) return undefined;
+  if (edge.load.state !== 'loaded') return edge.execution;
+
+  const { workflow, runs } = edge.load.node;
+  const active = workflow.isRunning || workflow.isPaused;
+  const workflowEndTimeMs = workflow.endTime
+    ? Date.parse(workflow.endTime)
+    : Number.NaN;
+  const runEndTimeMs = runs.reduce(
+    (maximum, run) => Math.max(maximum, run.endTimeMs),
+    Number.NEGATIVE_INFINITY,
+  );
+  const endTimeMs = Number.isFinite(workflowEndTimeMs)
+    ? workflowEndTimeMs
+    : Number.isFinite(runEndTimeMs)
+      ? runEndTimeMs
+      : edge.execution?.endTimeMs;
+
+  return {
+    status: workflow.status,
+    active,
+    endTimeMs,
+  };
+};
+
 export type TimelineWorkflowNode = {
   key: string;
   namespace: string;

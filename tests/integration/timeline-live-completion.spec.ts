@@ -156,7 +156,7 @@ test.describe('Timeline live completion', () => {
     await expect(completedButton).toBeVisible();
   });
 
-  test('slides existing rows aside for a streamed activity', async ({
+  test('slides existing rows aside without sweeping a streamed activity horizontally', async ({
     page,
   }) => {
     await mockWorkflowApis(page, runningWorkflow);
@@ -190,47 +190,85 @@ test.describe('Timeline live completion', () => {
       name: /^Event DeployNetwork:/,
     });
     await expect(existing).toBeVisible();
-    const rowStack = existing.locator('xpath=ancestor::ul');
-    await expect(rowStack).not.toHaveClass(/timeline-rows-entering/);
     const initialY = (await existing.boundingBox())?.y;
 
-    const insertionPositions = existing.evaluate(
-      (element) =>
-        new Promise<number[]>((resolve) => {
-          const positions: number[] = [];
-          const rowStack = element.closest('ul');
-          let sawEntry = false;
-          const sample = () => {
-            positions.push(element.getBoundingClientRect().y);
-            if (rowStack?.classList.contains('timeline-rows-entering')) {
-              sawEntry = true;
-            } else if (sawEntry) {
-              resolve(positions);
-              return;
-            }
+    const insertionSamples = page
+      .locator('#event-history-timeline-graph')
+      .evaluate(
+        (element) =>
+          new Promise<{
+            positions: number[];
+            hiddenCounts: number[];
+            entryHorizontalOffsets: number[];
+            entryTopPositions: number[];
+          }>((resolve) => {
+            const positions: number[] = [];
+            const hiddenCounts: number[] = [];
+            const entryHorizontalOffsets: number[] = [];
+            const entryTopPositions: number[] = [];
+            let appendedFirstSeenAt: number | null = null;
+            const sample = () => {
+              const existing = [...element.querySelectorAll('button')].find(
+                (button) =>
+                  button.getAttribute('aria-label')?.includes('DeployNetwork'),
+              );
+              if (existing) positions.push(existing.getBoundingClientRect().y);
+              const elements = element.querySelectorAll(
+                'li[data-timeline-key], [data-timeline-frame-entry]',
+              );
+              hiddenCounts.push(
+                [...elements].filter(
+                  (candidate) =>
+                    getComputedStyle(candidate).visibility === 'hidden',
+                ).length,
+              );
+              const appended = [...element.querySelectorAll('button')].find(
+                (button) =>
+                  button.getAttribute('aria-label')?.includes('VerifyNetwork'),
+              );
+              const appendedRow = appended?.closest<HTMLElement>(
+                '[data-timeline-entry-start-x]',
+              );
+              if (appendedRow) {
+                appendedFirstSeenAt ??= performance.now();
+                const translate = getComputedStyle(appendedRow).translate;
+                entryHorizontalOffsets.push(
+                  translate === 'none' ? 0 : Number.parseFloat(translate),
+                );
+                entryTopPositions.push(appendedRow.getBoundingClientRect().top);
+              }
+              if (
+                appendedFirstSeenAt !== null &&
+                performance.now() - appendedFirstSeenAt >= 1_400 &&
+                appended &&
+                getComputedStyle(appended).visibility !== 'hidden'
+              ) {
+                resolve({
+                  positions,
+                  hiddenCounts,
+                  entryHorizontalOffsets,
+                  entryTopPositions,
+                });
+                return;
+              }
+              requestAnimationFrame(sample);
+            };
             requestAnimationFrame(sample);
-          };
-          requestAnimationFrame(sample);
-        }),
-    );
+          }),
+      );
 
     releaseActivity();
     const appended = page.getByRole('button', {
       name: /^Event VerifyNetwork:/,
     });
     await expect(appended).toBeAttached();
-    await expect(rowStack).toHaveClass(/timeline-rows-entering/);
-    await expect(
-      page
-        .locator(
-          '#event-history-timeline-graph [data-timeline-bottom-entry-offset="-24"]',
-        )
-        .first(),
-    ).toBeAttached();
-    const movingY = (await existing.boundingBox())?.y;
     await expect(appended).toBeVisible();
-    await expect(rowStack).not.toHaveClass(/timeline-rows-entering/);
-    const positions = await insertionPositions;
+    const {
+      positions,
+      hiddenCounts,
+      entryHorizontalOffsets,
+      entryTopPositions,
+    } = await insertionSamples;
 
     const finalExistingY = (await existing.boundingBox())?.y;
     for (let index = 1; index < positions.length; index++) {
@@ -238,9 +276,13 @@ test.describe('Timeline live completion', () => {
         -1,
       );
     }
-    expect(movingY).toBeLessThan(finalExistingY ?? 0);
     expect(finalExistingY).toBeGreaterThan(initialY ?? 0);
     expect((await appended.boundingBox())?.y).toBeLessThan(finalExistingY ?? 0);
+    expect(Math.max(...hiddenCounts)).toBe(0);
+    expect(Math.max(...entryHorizontalOffsets.map(Math.abs))).toBeLessThan(0.1);
+    expect(
+      Math.max(...entryTopPositions) - Math.min(...entryTopPositions),
+    ).toBeLessThan(2);
   });
 
   test('keeps a long activity label visible while running and after completion', async ({

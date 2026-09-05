@@ -16,6 +16,52 @@ export const shouldAnimateTimelineRowEntries = ({
   totalGroupCount <= MAX_ANIMATED_TIMELINE_GROUPS &&
   layoutRowCount <= MAX_ANIMATED_TIMELINE_GROUPS;
 
+/**
+ * Only entries arriving from the live edge slide in from the right rail.
+ * Recursive history loading can add completed predecessor runs after the first
+ * paint; those are backfill, not live activity, and must render in place.
+ */
+export const getTimelineHorizontalEntryOffset = ({
+  isNew,
+  active,
+  entryStartPx,
+  rightRailPx,
+}: {
+  isNew: boolean;
+  active: boolean;
+  entryStartPx: number | undefined;
+  rightRailPx: number;
+}): number => {
+  if (!isNew || !active || entryStartPx === undefined) return 0;
+  return Math.max(0, rightRailPx - entryStartPx);
+};
+
+/**
+ * Activity rows only move vertically when the layout admits new history.
+ *
+ * Reading `getComputedStyle().translate` while an interrupted Web Animation is
+ * still contributing to the element can include that animation's old x value.
+ * Carrying the complete value into the replacement animation makes a completed
+ * activity sweep across the timeline. Frames intentionally retain both axes;
+ * plain rows explicitly discard x while preserving their current visual y.
+ */
+export const getTimelineEntryAnimationStartTranslate = ({
+  computedTranslate,
+  frame,
+}: {
+  computedTranslate: string;
+  frame: boolean;
+}): string | undefined => {
+  const normalized = computedTranslate.trim();
+  if (!normalized || normalized === 'none') return undefined;
+  if (frame) return normalized;
+
+  const components = normalized.split(/\s+/);
+  const y = components.length > 1 ? Number.parseFloat(components.at(-1)!) : 0;
+  if (!Number.isFinite(y)) return undefined;
+  return `0px ${y}px`;
+};
+
 export const getTimelineRowEntryOffsets = (
   previousKeys: string[],
   currentKeys: string[],
@@ -25,24 +71,7 @@ export const getTimelineRowEntryOffsets = (
   const previousIndex = new Map(
     previousKeys.map((key, index) => [key, index] as const),
   );
-  const currentKeySet = new Set(currentKeys);
-  const removedIndices = previousKeys.flatMap((key, index) =>
-    currentKeySet.has(key) ? [] : [index],
-  );
-  const previousExistingIndex = new Array<number>(currentKeys.length);
-  const nextExistingIndex = new Array<number>(currentKeys.length);
-  let existingIndex = Number.NEGATIVE_INFINITY;
-  for (let index = 0; index < currentKeys.length; index += 1) {
-    previousExistingIndex[index] = existingIndex;
-    existingIndex = previousIndex.get(currentKeys[index]) ?? existingIndex;
-  }
-  existingIndex = Number.POSITIVE_INFINITY;
-  for (let index = currentKeys.length - 1; index >= 0; index -= 1) {
-    nextExistingIndex[index] = existingIndex;
-    existingIndex = previousIndex.get(currentKeys[index]) ?? existingIndex;
-  }
   const offsets = new Map<string, number>();
-  let nextExistingOffsetPx = -rowHeightPx;
 
   for (let index = currentKeys.length - 1; index >= 0; index--) {
     const key = currentKeys[index];
@@ -51,20 +80,7 @@ export const getTimelineRowEntryOffsets = (
       const offsetPx =
         (oldIndex - index) * rowHeightPx +
         (previousVisualOffsetsPx.get(key) ?? 0);
-      nextExistingOffsetPx = offsetPx;
       if (offsetPx) offsets.set(key, offsetPx);
-    } else {
-      const removedIndex = removedIndices.find(
-        (candidate) =>
-          candidate > previousExistingIndex[index] &&
-          candidate < nextExistingIndex[index],
-      );
-      offsets.set(
-        key,
-        removedIndex === undefined
-          ? nextExistingOffsetPx
-          : (removedIndex - index) * rowHeightPx,
-      );
     }
   }
 

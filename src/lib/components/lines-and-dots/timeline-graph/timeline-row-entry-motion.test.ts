@@ -1,11 +1,86 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  getTimelineEntryAnimationStartTranslate,
   getTimelineFrameBoundaryOffset,
+  getTimelineHorizontalEntryOffset,
   getTimelineRowEntryOffsets,
   MAX_ANIMATED_TIMELINE_GROUPS,
   shouldAnimateTimelineRowEntries,
 } from './timeline-row-entry-motion';
+
+describe('getTimelineEntryAnimationStartTranslate', () => {
+  it('removes a stale horizontal offset from an interrupted row animation', () => {
+    expect(
+      getTimelineEntryAnimationStartTranslate({
+        computedTranslate: '2410.1px -24px',
+        frame: false,
+      }),
+    ).toBe('0px -24px');
+  });
+
+  it('preserves the current vertical row position', () => {
+    expect(
+      getTimelineEntryAnimationStartTranslate({
+        computedTranslate: '0px -48px',
+        frame: false,
+      }),
+    ).toBe('0px -48px');
+  });
+
+  it('preserves both axes for a frame entering from the right rail', () => {
+    expect(
+      getTimelineEntryAnimationStartTranslate({
+        computedTranslate: '1400px -24px',
+        frame: true,
+      }),
+    ).toBe('1400px -24px');
+  });
+
+  it('does not animate an element without a translate', () => {
+    expect(
+      getTimelineEntryAnimationStartTranslate({
+        computedTranslate: 'none',
+        frame: false,
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe('getTimelineHorizontalEntryOffset', () => {
+  it('slides a new live entry inward from the right rail', () => {
+    expect(
+      getTimelineHorizontalEntryOffset({
+        isNew: true,
+        active: true,
+        entryStartPx: 100,
+        rightRailPx: 1_500,
+      }),
+    ).toBe(1_400);
+  });
+
+  it('renders historical backfill in place even when its key is newly loaded', () => {
+    expect(
+      getTimelineHorizontalEntryOffset({
+        isNew: true,
+        active: false,
+        entryStartPx: 100,
+        rightRailPx: 1_500,
+      }),
+    ).toBe(0);
+  });
+
+  it('does not move an existing live entry', () => {
+    expect(
+      getTimelineHorizontalEntryOffset({
+        isNew: false,
+        active: true,
+        entryStartPx: 100,
+        rightRailPx: 1_500,
+      }),
+    ).toBe(0);
+  });
+});
 
 describe('shouldAnimateTimelineRowEntries', () => {
   it('keeps entry motion for bounded histories and layouts', () => {
@@ -34,7 +109,7 @@ describe('shouldAnimateTimelineRowEntries', () => {
 });
 
 describe('getTimelineRowEntryOffsets', () => {
-  it('slides a batch in from above while preserving existing row positions', () => {
+  it('keeps new rows at their final y while preserving existing row positions', () => {
     expect(
       getTimelineRowEntryOffsets(
         ['existing-1', 'existing-2'],
@@ -45,8 +120,6 @@ describe('getTimelineRowEntryOffsets', () => {
       new Map([
         ['existing-2', -48],
         ['existing-1', -48],
-        ['new-2', -48],
-        ['new-1', -48],
       ]),
     );
   });
@@ -62,8 +135,6 @@ describe('getTimelineRowEntryOffsets', () => {
       new Map([
         ['below-2', -48],
         ['below-1', -48],
-        ['new-2', -48],
-        ['new-1', -48],
       ]),
     );
   });
@@ -82,7 +153,6 @@ describe('getTimelineRowEntryOffsets', () => {
     ).toEqual(
       new Map([
         ['existing', -36],
-        ['new-2', -36],
         ['new-1', -12],
       ]),
     );
@@ -110,7 +180,7 @@ describe('getTimelineRowEntryOffsets', () => {
         ['replacement', 'existing'],
         24,
       ),
-    ).toEqual(new Map([['replacement', 0]]));
+    ).toEqual(new Map());
   });
 
   it('expands replacement rows downward from the row they replace', () => {
@@ -120,14 +190,7 @@ describe('getTimelineRowEntryOffsets', () => {
         ['above', 'spacing', 'header', 'child-row', 'below'],
         24,
       ),
-    ).toEqual(
-      new Map([
-        ['below', -48],
-        ['child-row', -48],
-        ['header', -24],
-        ['spacing', 0],
-      ]),
-    );
+    ).toEqual(new Map([['below', -48]]));
   });
 });
 

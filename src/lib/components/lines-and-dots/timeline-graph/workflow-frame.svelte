@@ -21,9 +21,9 @@
     bandTop: number;
     bandHeight: number;
     entryOffsetPx?: number;
+    entryOffsetXPx?: number;
     entryKey?: string;
     bottomEntryOffsetPx?: number;
-    entryPending?: boolean;
   }
 
   let {
@@ -41,9 +41,9 @@
     bandTop,
     bandHeight,
     entryOffsetPx = 0,
+    entryOffsetXPx = 0,
     entryKey,
     bottomEntryOffsetPx = 0,
-    entryPending = false,
   }: Props = $props();
 
   const bandBottom = $derived(bandTop + bandHeight);
@@ -135,13 +135,18 @@
 
 <div
   class="pointer-events-none absolute inset-0"
-  class:timeline-frame-entering={entryOffsetPx !== 0}
-  class:timeline-frame-entry-pending={entryPending}
+  class:timeline-frame-entering={entryOffsetPx !== 0 || entryOffsetXPx !== 0}
   data-timeline-entry-offset={entryOffsetPx || undefined}
   data-timeline-entry-key={entryKey}
+  data-timeline-entry-motion={entryOffsetPx !== 0 || entryOffsetXPx !== 0
+    ? true
+    : undefined}
   data-timeline-frame-entry
   data-timeline-bottom-entry-offset={bottomEntryOffsetPx || undefined}
   style:--timeline-row-entry-offset={`${entryOffsetPx}px`}
+  style:--timeline-row-entry-x-offset={entryOffsetXPx
+    ? `calc(${entryOffsetXPx}px + var(--timeline-frame-offset, 0px))`
+    : '0px'}
   style:--workflow-header-radius={`${RADIUS}px`}
 >
   {#if paint === 'foreground'}
@@ -288,11 +293,8 @@
 
 <style lang="postcss">
   .timeline-frame-entering {
-    translate: 0 var(--timeline-row-entry-offset);
-  }
-
-  .timeline-frame-entry-pending {
-    visibility: hidden;
+    translate: var(--timeline-row-entry-x-offset)
+      var(--timeline-row-entry-offset);
   }
 
   .timeline-frame-boundary-entering {

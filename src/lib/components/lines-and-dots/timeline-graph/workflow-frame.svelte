@@ -121,9 +121,7 @@
       : `${Math.max(0, geometry.labelMaxWidthPx - labelWidthAdjustment)}px`,
   );
   const displayLabel = $derived(
-    kind === 'chain'
-      ? workflowType || label
-      : `${translate('common.run-id')}: ${label}`,
+    `${translate(kind === 'chain' ? 'common.workflow-id' : 'common.run-id')}: ${label}${kind === 'chain' && workflowType ? ` · ${workflowType}` : ''}`,
   );
   const drawHeader = $derived(
     drawTop && (kind === 'run' || headerKind === 'synthetic'),

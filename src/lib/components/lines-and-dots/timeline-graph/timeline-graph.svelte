@@ -2952,6 +2952,9 @@
                         connectorColor={slot.row.childEdge
                           ? workflowFrameColor
                           : undefined}
+                        displayNamePrefix={slot.row.childEdge
+                          ? `${translate('common.workflow-id')}: ${slot.row.childEdge.reference.workflowId}`
+                          : undefined}
                         labelLeadingOffsetPx={slot.row.childEdge &&
                         childControl?.fitsAfter
                           ? 34

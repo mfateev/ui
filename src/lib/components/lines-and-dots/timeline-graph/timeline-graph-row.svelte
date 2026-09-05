@@ -76,6 +76,7 @@
     fanOutShortBoundaryMarkers?: boolean;
     continuousConnector?: boolean;
     connectorColor?: string;
+    displayNamePrefix?: string;
     onBeforeSelect?: () => void;
   };
 
@@ -96,6 +97,7 @@
     fanOutShortBoundaryMarkers = false,
     continuousConnector = false,
     connectorColor,
+    displayNamePrefix,
     onBeforeSelect,
   }: Props = $props();
 
@@ -122,10 +124,15 @@
   const lazyActivityAttempt = $derived(
     'activityAttempt' in group ? group.activityAttempt : undefined,
   );
-  const displayName = $derived(
+  const baseDisplayName = $derived(
     compiledDisplayName ??
       materializedGroup?.displayName ??
       getEventGroupDisplayName(group.initialEvent as never),
+  );
+  const displayName = $derived(
+    displayNamePrefix
+      ? `${displayNamePrefix} · ${baseDisplayName}`
+      : baseDisplayName,
   );
 
   // Reactive (not untrack) so a re-pointed pooled row relabels for its new group.

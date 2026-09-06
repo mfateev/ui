@@ -1,4 +1,37 @@
+import type { WorkflowEvent } from '$lib/types/events';
+import {
+  isActivityTaskCanceledEvent,
+  isActivityTaskCompletedEvent,
+  isActivityTaskFailedEvent,
+  isActivityTaskScheduledEvent,
+  isActivityTaskTimedOutEvent,
+} from '$lib/utilities/is-event-type';
+
 import { intersectPixelRanges } from './viewport-geometry';
+
+export function isTimelineGroupLivePending({
+  active,
+  groupPending,
+  resolvedTerminal,
+  initialEvent,
+  lastEvent,
+}: {
+  active: boolean;
+  groupPending: boolean;
+  resolvedTerminal: boolean;
+  initialEvent: WorkflowEvent;
+  lastEvent: WorkflowEvent;
+}): boolean {
+  if (!active || resolvedTerminal) return false;
+  if (groupPending) return true;
+  if (!isActivityTaskScheduledEvent(initialEvent)) return false;
+  return !(
+    isActivityTaskCompletedEvent(lastEvent) ||
+    isActivityTaskFailedEvent(lastEvent) ||
+    isActivityTaskCanceledEvent(lastEvent) ||
+    isActivityTaskTimedOutEvent(lastEvent)
+  );
+}
 
 export interface TimelineRowConnector {
   startPx: number;

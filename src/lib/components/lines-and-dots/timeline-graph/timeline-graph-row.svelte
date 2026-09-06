@@ -53,6 +53,7 @@
     getTimelineDotAlignment,
     getTimelineDotRole,
     getTimelineRowGeometry,
+    isTimelineGroupLivePending,
     isTimelineLabelVisible,
     mergeTimelineRowConnectors,
   } from './timeline-row-geometry';
@@ -108,7 +109,13 @@
       resolvedStatus !== 'Paused',
   );
   const isLivePending = $derived(
-    active && group.isPending && !resolvedTerminal,
+    isTimelineGroupLivePending({
+      active,
+      groupPending: group.isPending,
+      resolvedTerminal,
+      initialEvent: group.initialEvent,
+      lastEvent: group.lastEvent,
+    }),
   );
   const pendingActivity = $derived(active ? group?.pendingActivity : undefined);
   const materializedGroup = $derived('eventList' in group ? group : undefined);
@@ -511,7 +518,7 @@
         {@const alignment = getTimelineDotAlignment({
           index,
           eventCount: group.eventCount,
-          pending: group.isPending && !resolvedTerminal,
+          pending: (group.isPending || isLivePending) && !resolvedTerminal,
           boundarySpanPx,
           markerSizePx: 2 * RADIUS + DOT_STROKE,
           boundaryEndIndex: terminalMarkerIndex,
@@ -522,7 +529,7 @@
           index,
           eventCount: group.eventCount,
           pointCount: points.length,
-          pending: group.isPending,
+          pending: group.isPending || isLivePending,
           livePending: isLivePending,
           hasPauseTime: Boolean(pauseTime),
           active,

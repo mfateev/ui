@@ -156,7 +156,31 @@ test.describe('Timeline live completion', () => {
     await expect(completedButton).toBeVisible();
   });
 
-  test('slides existing rows aside without sweeping a streamed activity horizontally', async ({
+  test('renders a history-open activity from the live edge before pending metadata arrives', async ({
+    page,
+  }) => {
+    const scheduledOnly = [
+      atLiveTime(makeWorkflowStarted(1)),
+      atLiveTime(makeActivityScheduled(2, 'DeployNetwork')),
+    ];
+    await mockWorkflowApis(page, runningWorkflow);
+    await page.route(EVENT_HISTORY_API, (route) =>
+      route.fulfill({ json: historyPage(scheduledOnly) }),
+    );
+    await page.route(EVENT_HISTORY_API_REVERSE, (route) =>
+      route.fulfill({ json: historyPage([...scheduledOnly].reverse()) }),
+    );
+
+    await page.goto(`${timelineUrl}?sort=descending`);
+
+    const activity = page.getByRole('button', {
+      name: /^Event DeployNetwork:/,
+    });
+    await expect(activity).toBeVisible();
+    await expect(activity.locator('.tl-line--live')).toHaveCount(1);
+  });
+
+  test('slides a streamed activity in from the right rail while moving existing rows aside', async ({
     page,
   }) => {
     await mockWorkflowApis(page, runningWorkflow);
@@ -200,12 +224,21 @@ test.describe('Timeline live completion', () => {
             positions: number[];
             hiddenCounts: number[];
             entryHorizontalOffsets: number[];
+            frameGrowthClipInsets: number[];
+            entryLeftPositions: number[];
             entryTopPositions: number[];
+            graphWidth: number;
+            graphRight: number;
           }>((resolve) => {
             const positions: number[] = [];
             const hiddenCounts: number[] = [];
             const entryHorizontalOffsets: number[] = [];
+            const frameGrowthClipInsets: number[] = [];
+            const entryLeftPositions: number[] = [];
             const entryTopPositions: number[] = [];
+            const graphBounds = element.getBoundingClientRect();
+            const graphWidth = graphBounds.width;
+            const graphRight = graphBounds.right;
             let appendedFirstSeenAt: number | null = null;
             const sample = () => {
               const existing = [...element.querySelectorAll('button')].find(
@@ -235,7 +268,28 @@ test.describe('Timeline live completion', () => {
                 entryHorizontalOffsets.push(
                   translate === 'none' ? 0 : Number.parseFloat(translate),
                 );
+                entryLeftPositions.push(
+                  appendedRow.getBoundingClientRect().left,
+                );
                 entryTopPositions.push(appendedRow.getBoundingClientRect().top);
+                const clipInset = Math.max(
+                  0,
+                  ...[
+                    ...element.querySelectorAll<HTMLElement>(
+                      '[data-timeline-frame-growth-clip]',
+                    ),
+                  ].map((growthClip) => {
+                    const clipPath = getComputedStyle(growthClip).clipPath;
+                    return clipPath === 'none'
+                      ? 0
+                      : Number.parseFloat(
+                          clipPath.match(
+                            /inset\(0px 0px ([\d.]+)px(?: 0px)?\)/,
+                          )?.[1] ?? '0',
+                        );
+                  }),
+                );
+                frameGrowthClipInsets.push(clipInset);
               }
               if (
                 appendedFirstSeenAt !== null &&
@@ -247,7 +301,11 @@ test.describe('Timeline live completion', () => {
                   positions,
                   hiddenCounts,
                   entryHorizontalOffsets,
+                  frameGrowthClipInsets,
+                  entryLeftPositions,
                   entryTopPositions,
+                  graphWidth,
+                  graphRight,
                 });
                 return;
               }
@@ -267,7 +325,11 @@ test.describe('Timeline live completion', () => {
       positions,
       hiddenCounts,
       entryHorizontalOffsets,
+      frameGrowthClipInsets,
+      entryLeftPositions,
       entryTopPositions,
+      graphWidth,
+      graphRight,
     } = await insertionSamples;
 
     const finalExistingY = (await existing.boundingBox())?.y;
@@ -279,7 +341,27 @@ test.describe('Timeline live completion', () => {
     expect(finalExistingY).toBeGreaterThan(initialY ?? 0);
     expect((await appended.boundingBox())?.y).toBeLessThan(finalExistingY ?? 0);
     expect(Math.max(...hiddenCounts)).toBe(0);
-    expect(Math.max(...entryHorizontalOffsets.map(Math.abs))).toBeLessThan(0.1);
+    expect(Math.max(...entryHorizontalOffsets)).toBeGreaterThan(
+      graphWidth * 0.95,
+    );
+    expect(Math.max(...entryLeftPositions)).toBeGreaterThanOrEqual(
+      graphRight - 1,
+    );
+    expect(entryHorizontalOffsets.at(-1)).toBeLessThan(1);
+    expect(Math.max(...frameGrowthClipInsets)).toBeGreaterThanOrEqual(20);
+    expect(frameGrowthClipInsets.at(-1)).toBeLessThan(1);
+    for (let index = 1; index < entryHorizontalOffsets.length; index++) {
+      expect(
+        entryHorizontalOffsets[index] - entryHorizontalOffsets[index - 1],
+      ).toBeLessThanOrEqual(1);
+    }
+    const maximumEntryOffset = Math.max(...entryHorizontalOffsets);
+    const maximumFrameGrowth = Math.max(...frameGrowthClipInsets);
+    for (let index = 0; index < entryHorizontalOffsets.length; index++) {
+      const entryProgress = entryHorizontalOffsets[index] / maximumEntryOffset;
+      const frameProgress = frameGrowthClipInsets[index] / maximumFrameGrowth;
+      expect(Math.abs(entryProgress - frameProgress)).toBeLessThan(0.08);
+    }
     expect(
       Math.max(...entryTopPositions) - Math.min(...entryTopPositions),
     ).toBeLessThan(2);

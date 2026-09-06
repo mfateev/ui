@@ -4,6 +4,7 @@
   import type { DotColors } from '../colors';
   import { DOT_STROKE, GUTTER, RADIUS } from './constants';
   import { alignedDotBox } from './primitives';
+  import type { TimelineFrameGrowthMotion } from './timeline-row-entry-motion';
   import type { WorkflowFrameGeometry } from './workflow-frame-geometry';
 
   interface Props {
@@ -24,6 +25,7 @@
     entryOffsetXPx?: number;
     entryKey?: string;
     bottomEntryOffsetPx?: number;
+    growthMotion?: TimelineFrameGrowthMotion;
   }
 
   let {
@@ -44,7 +46,15 @@
     entryOffsetXPx = 0,
     entryKey,
     bottomEntryOffsetPx = 0,
+    growthMotion = undefined,
   }: Props = $props();
+
+  const frameBottomEntryOffsetPx = $derived(
+    growthMotion?.bottomOffsetPx ?? bottomEntryOffsetPx,
+  );
+  const frameGrowthClipPath = $derived(
+    growthMotion ? `inset(0 0 ${growthMotion.clipInsetPx}px 0)` : undefined,
+  );
 
   const bandBottom = $derived(bandTop + bandHeight);
   const paintTop = $derived(Math.max(geometry.topPx, bandTop));
@@ -141,8 +151,11 @@
   data-timeline-entry-motion={entryOffsetPx !== 0 || entryOffsetXPx !== 0
     ? true
     : undefined}
+  data-timeline-horizontal-entry={entryOffsetXPx !== 0 ? true : undefined}
   data-timeline-frame-entry
-  data-timeline-bottom-entry-offset={bottomEntryOffsetPx || undefined}
+  data-timeline-frame-bottom-px={geometry.bottomPx}
+  data-timeline-frame-growth-clip-inset={growthMotion?.clipInsetPx}
+  data-timeline-bottom-entry-offset={frameBottomEntryOffsetPx || undefined}
   style:--timeline-row-entry-offset={`${entryOffsetPx}px`}
   style:--timeline-row-entry-x-offset={entryOffsetXPx
     ? `calc(${entryOffsetXPx}px + var(--timeline-frame-offset, 0px))`
@@ -169,6 +182,7 @@
     >
       {#if paint === 'background'}
         <div
+          data-timeline-frame-growth-clip
           class:frame-live-reveal={live}
           class="pointer-events-none absolute rounded"
           style:left="{geometry.horizontal.startPx}px"
@@ -178,6 +192,7 @@
           style:height="{paintHeight}px"
           style:background={frameBackground}
           style:--frame-committed-width="{horizontalWidth}px"
+          style:clip-path={frameGrowthClipPath}
         ></div>
       {:else}
         {#if drawHeader}
@@ -201,14 +216,16 @@
         {/if}
         {#if drawBottom}
           <div
-            class:timeline-frame-boundary-entering={bottomEntryOffsetPx !== 0}
+            class:timeline-frame-boundary-entering={frameBottomEntryOffsetPx !==
+              0}
             class:frame-edge-chain={kind === 'chain'}
             class:frame-dashed={live && kind === 'run'}
             class:tl-line--animate={live && kind === 'run'}
             class:tl-line--dashed={live && kind === 'run'}
             class:tl-line--live={live}
             class="frame-edge pointer-events-none absolute"
-            data-timeline-entry-offset={bottomEntryOffsetPx || undefined}
+            data-timeline-frame-growth-boundary
+            data-timeline-entry-offset={frameBottomEntryOffsetPx || undefined}
             data-timeline-entry-key={entryKey
               ? `${entryKey}:bottom`
               : undefined}
@@ -220,7 +237,7 @@
             style:--frame-color={color}
             style:--tl-line-color={color}
             style:--tl-live-committed-width="{horizontalWidth}px"
-            style:--timeline-frame-boundary-offset={`${bottomEntryOffsetPx}px`}
+            style:--timeline-frame-boundary-offset={`${frameBottomEntryOffsetPx}px`}
           ></div>
         {/if}
         {#if geometry.drawStartSide}
@@ -228,10 +245,12 @@
             class:frame-side-chain={kind === 'chain'}
             class:frame-side-dashed={live && kind === 'run'}
             class="frame-side frame-side-start pointer-events-none absolute"
+            data-timeline-frame-growth-clip
             style:left="{geometry.horizontal.startPx}px"
             style:top="{paintTop}px"
             style:height="{sidePaintHeight}px"
             style:--frame-color={color}
+            style:clip-path={frameGrowthClipPath}
           ></div>
         {/if}
         {#if geometry.drawEndSide}
@@ -239,10 +258,12 @@
             class:frame-side-chain={kind === 'chain'}
             class:frame-side-dashed={live && kind === 'run'}
             class="frame-side frame-side-end pointer-events-none absolute"
+            data-timeline-frame-growth-clip
             style:left="{geometry.horizontal.endPx}px"
             style:top="{paintTop}px"
             style:height="{sidePaintHeight}px"
             style:--frame-color={color}
+            style:clip-path={frameGrowthClipPath}
           ></div>
         {/if}
         {#if showLabel && drawHeader}

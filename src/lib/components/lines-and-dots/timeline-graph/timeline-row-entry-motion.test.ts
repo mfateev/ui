@@ -2,19 +2,64 @@ import { describe, expect, it } from 'vitest';
 
 import {
   getTimelineEntryAnimationStartTranslate,
+  getTimelineEntryVisualYOffset,
   getTimelineFrameBoundaryOffset,
+  getTimelineFrameGrowthMotion,
   getTimelineHorizontalEntryOffset,
   getTimelineRowEntryOffsets,
   MAX_ANIMATED_TIMELINE_GROUPS,
   shouldAnimateTimelineRowEntries,
 } from './timeline-row-entry-motion';
 
+describe('getTimelineEntryVisualYOffset', () => {
+  it('does not reinterpret an X-only live-edge offset as vertical motion', () => {
+    expect(getTimelineEntryVisualYOffset('375.277px')).toBe(0);
+  });
+
+  it('preserves a real vertical FLIP offset from a two-axis translate', () => {
+    expect(getTimelineEntryVisualYOffset('182px -48px')).toBe(-48);
+  });
+
+  it('returns zero when no translate is applied', () => {
+    expect(getTimelineEntryVisualYOffset('none')).toBe(0);
+  });
+});
+
+describe('getTimelineFrameGrowthMotion', () => {
+  it('holds new frame geometry at its previous painted bottom', () => {
+    expect(
+      getTimelineFrameGrowthMotion({
+        previousBottomPx: 587,
+        currentBottomPx: 611,
+      }),
+    ).toEqual({ bottomOffsetPx: -24, clipInsetPx: 24 });
+  });
+
+  it('does not manufacture growth motion when a frame is unchanged', () => {
+    expect(
+      getTimelineFrameGrowthMotion({
+        previousBottomPx: 611,
+        currentBottomPx: 611,
+      }),
+    ).toBeNull();
+  });
+
+  it('leaves frame contraction to the committed layout', () => {
+    expect(
+      getTimelineFrameGrowthMotion({
+        previousBottomPx: 611,
+        currentBottomPx: 587,
+      }),
+    ).toBeNull();
+  });
+});
+
 describe('getTimelineEntryAnimationStartTranslate', () => {
   it('removes a stale horizontal offset from an interrupted row animation', () => {
     expect(
       getTimelineEntryAnimationStartTranslate({
         computedTranslate: '2410.1px -24px',
-        frame: false,
+        preserveHorizontal: false,
       }),
     ).toBe('0px -24px');
   });
@@ -23,16 +68,16 @@ describe('getTimelineEntryAnimationStartTranslate', () => {
     expect(
       getTimelineEntryAnimationStartTranslate({
         computedTranslate: '0px -48px',
-        frame: false,
+        preserveHorizontal: false,
       }),
     ).toBe('0px -48px');
   });
 
-  it('preserves both axes for a frame entering from the right rail', () => {
+  it('preserves both axes for an entry moving in from the right rail', () => {
     expect(
       getTimelineEntryAnimationStartTranslate({
         computedTranslate: '1400px -24px',
-        frame: true,
+        preserveHorizontal: true,
       }),
     ).toBe('1400px -24px');
   });
@@ -41,22 +86,21 @@ describe('getTimelineEntryAnimationStartTranslate', () => {
     expect(
       getTimelineEntryAnimationStartTranslate({
         computedTranslate: 'none',
-        frame: false,
+        preserveHorizontal: false,
       }),
     ).toBeUndefined();
   });
 });
 
 describe('getTimelineHorizontalEntryOffset', () => {
-  it('slides a new live entry inward from the right rail', () => {
+  it('starts a new live entry one complete clipped graph beyond its final position', () => {
     expect(
       getTimelineHorizontalEntryOffset({
         isNew: true,
         active: true,
-        entryStartPx: 100,
-        rightRailPx: 1_500,
+        viewportWidthPx: 1_500,
       }),
-    ).toBe(1_400);
+    ).toBe(1_500);
   });
 
   it('renders historical backfill in place even when its key is newly loaded', () => {
@@ -64,8 +108,7 @@ describe('getTimelineHorizontalEntryOffset', () => {
       getTimelineHorizontalEntryOffset({
         isNew: true,
         active: false,
-        entryStartPx: 100,
-        rightRailPx: 1_500,
+        viewportWidthPx: 1_500,
       }),
     ).toBe(0);
   });
@@ -75,8 +118,7 @@ describe('getTimelineHorizontalEntryOffset', () => {
       getTimelineHorizontalEntryOffset({
         isNew: false,
         active: true,
-        entryStartPx: 100,
-        rightRailPx: 1_500,
+        viewportWidthPx: 1_500,
       }),
     ).toBe(0);
   });

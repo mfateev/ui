@@ -77,10 +77,13 @@
   } from './timeline-progressive-rows';
   import {
     getTimelineEntryAnimationStartTranslate,
+    getTimelineEntryVisualYOffset,
     getTimelineFrameBoundaryOffset,
+    getTimelineFrameGrowthMotion,
     getTimelineHorizontalEntryOffset,
     getTimelineRowEntryOffsets,
     shouldAnimateTimelineRowEntries,
+    type TimelineFrameGrowthMotion,
   } from './timeline-row-entry-motion';
   import {
     TIMELINE_ROW_HEIGHT_GRACE_MS,
@@ -1191,6 +1194,9 @@
   let previousLayoutKeys: string[] | null = null;
   let rowEntryOffsets = $state.raw(new Map<string, number>());
   let rowEntryNewKeys = $state.raw(new Set<string>());
+  let frameGrowthMotions = $state.raw(
+    new Map<string, TimelineFrameGrowthMotion>(),
+  );
   let rowEntryAnimating = $state(false);
   let rowEntryFrame = 0;
   let rowStackEl: HTMLUListElement | null = null;
@@ -1233,6 +1239,7 @@
     rowEntryAnimating = false;
     rowEntryOffsets = new Map();
     rowEntryNewKeys = new Set();
+    frameGrowthMotions = new Map();
   };
 
   const mountedRowTops = (originY: number): Map<string, number> => {
@@ -1660,10 +1667,50 @@
       const key = element.dataset.timelineEntryKey;
       if (!key) continue;
       const translate = getComputedStyle(element).translate;
-      const y = Number.parseFloat(translate.split(/\s+/).at(-1) ?? '0');
-      if (Number.isFinite(y)) offsets.set(key, y);
+      offsets.set(key, getTimelineEntryVisualYOffset(translate));
     }
     return offsets;
+  };
+
+  const currentFrameVisualBottoms = (): Map<string, number> => {
+    // Capture the old painted edge during the pre-effect. A frame may already
+    // be midway through a previous growth animation, so include the boundary's
+    // compositor translate rather than falling back to logical geometry.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const bottoms = new Map<string, number>();
+    for (const frame of containerEl?.querySelectorAll<HTMLElement>(
+      '[data-timeline-frame-entry][data-timeline-entry-key]',
+    ) ?? []) {
+      const key = frame.dataset.timelineEntryKey;
+      const logicalBottom = Number(frame.dataset.timelineFrameBottomPx);
+      if (!key || !Number.isFinite(logicalBottom)) continue;
+      const boundary = frame.querySelector<HTMLElement>(
+        '[data-timeline-frame-growth-boundary]',
+      );
+      const visualOffset = boundary
+        ? getTimelineEntryVisualYOffset(getComputedStyle(boundary).translate)
+        : 0;
+      bottoms.set(key, logicalBottom + visualOffset);
+    }
+    return bottoms;
+  };
+
+  const nextFrameBottoms = (): Map<string, number> => {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const bottoms = new Map<string, number>();
+    for (const frame of presentedChainFrameLayouts) {
+      bottoms.set(frame.span.headerKey, frame.geometry.bottomPx);
+    }
+    for (const frame of presentedRunFrameLayouts) {
+      bottoms.set(
+        `${timelineRunKey(
+          frame.candidate.workflowKey ?? '',
+          frame.candidate.runId,
+        )}:frame-header`,
+        frame.geometry.bottomPx,
+      );
+    }
+    return bottoms;
   };
 
   $effect.pre(() => {
@@ -1709,6 +1756,18 @@
     const previousKeySet = new Set(previousKeys);
     const addedKeys = currentKeys.filter((key) => !previousKeySet.has(key));
     const visualOffsets = currentEntryVisualOffsets();
+    const previousFrameVisualBottoms = currentFrameVisualBottoms();
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const growthMotions = new Map<string, TimelineFrameGrowthMotion>();
+    for (const [key, currentBottomPx] of nextFrameBottoms()) {
+      const previousBottomPx = previousFrameVisualBottoms.get(key);
+      if (previousBottomPx === undefined) continue;
+      const motion = getTimelineFrameGrowthMotion({
+        previousBottomPx,
+        currentBottomPx,
+      });
+      if (motion) growthMotions.set(key, motion);
+    }
     const offsets = getTimelineRowEntryOffsets(
       previousKeys,
       currentKeys,
@@ -1723,6 +1782,7 @@
       ...[...rowEntryNewKeys].filter((key) => currentKeys.includes(key)),
       ...addedKeys,
     ]);
+    frameGrowthMotions = growthMotions;
     rowEntryGeneration += 1;
     const generation = rowEntryGeneration;
     cancelAnimationFrame(rowEntryFrame);
@@ -1748,25 +1808,71 @@
               (rowEntryDeadlineMs ?? performance.now()) - performance.now(),
             )
           : 1200;
-        const animations = elements.flatMap((element) => {
+        const easing = entryWasAnimating
+          ? 'linear'
+          : 'cubic-bezier(0.22, 1, 0.36, 1)';
+        const timing: KeyframeAnimationOptions = {
+          duration: durationMs,
+          easing,
+          fill: 'both',
+        };
+        const translateAnimations = elements.flatMap((element) => {
+          const computedTranslate = getComputedStyle(element).translate;
           const initialTranslate = getTimelineEntryAnimationStartTranslate({
-            computedTranslate: getComputedStyle(element).translate,
-            frame: element.hasAttribute('data-timeline-frame-entry'),
+            computedTranslate,
+            preserveHorizontal: element.hasAttribute(
+              'data-timeline-horizontal-entry',
+            ),
           });
           if (initialTranslate === undefined) return [];
           return [
             element.animate(
               [{ translate: initialTranslate }, { translate: '0 0' }],
-              {
-                duration: durationMs,
-                easing: entryWasAnimating
-                  ? 'linear'
-                  : 'cubic-bezier(0.22, 1, 0.36, 1)',
-                fill: 'both',
-              },
+              timing,
             ),
           ];
         });
+        const frameGrowthAnimations = Array.from(
+          containerEl?.querySelectorAll<HTMLElement>(
+            '[data-timeline-frame-entry][data-timeline-entry-key]',
+          ) ?? [],
+        ).flatMap((frame) => {
+          const clipInsetPx = Number(
+            frame.dataset.timelineFrameGrowthClipInset,
+          );
+          if (!Number.isFinite(clipInsetPx) || clipInsetPx <= 0) return [];
+          const clipAnimations = Array.from(
+            frame.querySelectorAll<HTMLElement>(
+              '[data-timeline-frame-growth-clip]',
+            ),
+          ).map((paint) =>
+            paint.animate(
+              [
+                {
+                  clipPath: getComputedStyle(paint).clipPath,
+                },
+                { clipPath: 'inset(0 0 0px 0)' },
+              ],
+              timing,
+            ),
+          );
+          const boundary = frame.querySelector<HTMLElement>(
+            '[data-timeline-frame-growth-boundary]',
+          );
+          const boundaryAnimations = boundary
+            ? [
+                boundary.animate(
+                  [
+                    { translate: getComputedStyle(boundary).translate },
+                    { translate: '0 0' },
+                  ],
+                  timing,
+                ),
+              ]
+            : [];
+          return [...clipAnimations, ...boundaryAnimations];
+        });
+        const animations = [...translateAnimations, ...frameGrowthAnimations];
         if (!animations.length) {
           finishRowEntry();
           return;
@@ -1797,16 +1903,11 @@
     rowEntryOffsets.get(`${runKey}:frame-header`) ?? 0;
   const workflowFrameEntryOffset = (headerKey: string): number =>
     rowEntryOffsets.get(headerKey) ?? 0;
-  const horizontalEntryOffset = (
-    entryKey: string,
-    entryStartPx: number | undefined,
-    active: boolean,
-  ): number => {
+  const horizontalEntryOffset = (entryKey: string, active: boolean): number => {
     return getTimelineHorizontalEntryOffset({
       isNew: rowEntryNewKeys.has(entryKey),
       active,
-      entryStartPx,
-      rightRailPx: canvasWidth - GUTTER - RADIUS / 4,
+      viewportWidthPx: canvasWidth,
     });
   };
   const frameBottomEntryOffset = ({
@@ -2739,10 +2840,10 @@
                 entryOffsetPx={workflowFrameEntryOffset(frame.span.headerKey)}
                 entryOffsetXPx={horizontalEntryOffset(
                   frame.span.headerKey,
-                  frame.geometry.horizontal?.startPx,
                   frame.candidate.live,
                 )}
                 entryKey={frame.span.headerKey}
+                growthMotion={frameGrowthMotions.get(frame.span.headerKey)}
                 bottomEntryOffsetPx={frameBottomEntryOffset({
                   topKey: frame.span.headerKey,
                   rowEnd: frame.span.rowEnd,
@@ -2773,13 +2874,18 @@
                     frame.candidate.workflowKey ?? '',
                     frame.candidate.runId,
                   )}:frame-header`,
-                  frame.geometry.horizontal?.startPx,
                   frame.candidate.live,
                 )}
                 entryKey={`${timelineRunKey(
                   frame.candidate.workflowKey ?? '',
                   frame.candidate.runId,
                 )}:frame-header`}
+                growthMotion={frameGrowthMotions.get(
+                  `${timelineRunKey(
+                    frame.candidate.workflowKey ?? '',
+                    frame.candidate.runId,
+                  )}:frame-header`,
+                )}
                 bottomEntryOffsetPx={frameBottomEntryOffset({
                   topKey: `${timelineRunKey(
                     frame.candidate.workflowKey ?? '',
@@ -2844,10 +2950,10 @@
                 entryOffsetPx={workflowFrameEntryOffset(frame.span.headerKey)}
                 entryOffsetXPx={horizontalEntryOffset(
                   frame.span.headerKey,
-                  frame.geometry.horizontal?.startPx,
                   frame.candidate.live,
                 )}
                 entryKey={frame.span.headerKey}
+                growthMotion={frameGrowthMotions.get(frame.span.headerKey)}
                 bottomEntryOffsetPx={frameBottomEntryOffset({
                   topKey: frame.span.headerKey,
                   rowEnd: frame.span.rowEnd,
@@ -2885,13 +2991,18 @@
                     frame.candidate.workflowKey ?? '',
                     frame.candidate.runId,
                   )}:frame-header`,
-                  frame.geometry.horizontal?.startPx,
                   frame.candidate.live,
                 )}
                 entryKey={`${timelineRunKey(
                   frame.candidate.workflowKey ?? '',
                   frame.candidate.runId,
                 )}:frame-header`}
+                growthMotion={frameGrowthMotions.get(
+                  `${timelineRunKey(
+                    frame.candidate.workflowKey ?? '',
+                    frame.candidate.runId,
+                  )}:frame-header`,
+                )}
                 bottomEntryOffsetPx={frameBottomEntryOffset({
                   topKey: `${timelineRunKey(
                     frame.candidate.workflowKey ?? '',
@@ -2924,18 +3035,27 @@
                 slot?.row.kind === 'group'
                   ? projectX(slot.row.entry.group.initialEvent.eventTime)
                   : undefined}
+              {@const entryOffsetXPx =
+                slot?.row.kind === 'group'
+                  ? horizontalEntryOffset(rowKey, slot.row.entry.active)
+                  : 0}
               <li
                 class="absolute left-0 right-0 top-0 {slot?.row.kind ===
                   'group' && slot.row.childEdge
                   ? 'z-30'
                   : ''}"
-                class:timeline-row-entering={entryOffsetPx !== 0}
+                class:timeline-row-entering={entryOffsetPx !== 0 ||
+                  entryOffsetXPx !== 0}
                 class:timeline-row-animating={rowEntryAnimating}
                 data-timeline-key={rowKey || undefined}
                 data-timeline-entry-offset={entryOffsetPx || undefined}
                 data-timeline-entry-key={rowKey || undefined}
                 data-timeline-entry-start-x={entryStartXPx}
-                data-timeline-entry-motion={entryOffsetPx !== 0
+                data-timeline-entry-motion={entryOffsetPx !== 0 ||
+                entryOffsetXPx !== 0
+                  ? true
+                  : undefined}
+                data-timeline-horizontal-entry={entryOffsetXPx !== 0
                   ? true
                   : undefined}
                 aria-hidden={!slotActive || undefined}
@@ -2946,6 +3066,9 @@
                 style:height="{ROW_HEIGHT}px"
                 style:contain="layout"
                 style:--timeline-row-entry-offset={`${entryOffsetPx}px`}
+                style:--timeline-row-entry-x-offset={entryOffsetXPx
+                  ? `calc(${entryOffsetXPx}px + var(--timeline-frame-offset, 0px))`
+                  : '0px'}
                 style:transform={slot
                   ? `translateY(${getY(slot.index) - ROW_HEIGHT / 2 + shiftFor(slot.index)}px)`
                   : undefined}
@@ -3116,7 +3239,8 @@
   }
 
   .timeline-row-entering {
-    translate: 0 var(--timeline-row-entry-offset);
+    translate: var(--timeline-row-entry-x-offset)
+      var(--timeline-row-entry-offset);
   }
 
   @media (prefers-reduced-motion: reduce) {

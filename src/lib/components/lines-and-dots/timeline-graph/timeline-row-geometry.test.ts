@@ -4,9 +4,60 @@ import {
   getTimelineDotAlignment,
   getTimelineDotRole,
   getTimelineRowGeometry,
+  isTimelineGroupLivePending,
   isTimelineLabelVisible,
   mergeTimelineRowConnectors,
 } from './timeline-row-geometry';
+
+describe('isTimelineGroupLivePending', () => {
+  const event = (eventType: string) =>
+    ({
+      eventType,
+      [`${eventType[0].toLowerCase()}${eventType.slice(1)}EventAttributes`]: {},
+    }) as never;
+
+  it('keeps a scheduled activity live while Describe metadata is late', () => {
+    const scheduled = event('ActivityTaskScheduled');
+    expect(
+      isTimelineGroupLivePending({
+        active: true,
+        groupPending: false,
+        resolvedTerminal: false,
+        initialEvent: scheduled,
+        lastEvent: scheduled,
+      }),
+    ).toBe(true);
+  });
+
+  it('keeps a started activity live until a terminal history event arrives', () => {
+    expect(
+      isTimelineGroupLivePending({
+        active: true,
+        groupPending: false,
+        resolvedTerminal: false,
+        initialEvent: event('ActivityTaskScheduled'),
+        lastEvent: event('ActivityTaskStarted'),
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    'ActivityTaskCompleted',
+    'ActivityTaskFailed',
+    'ActivityTaskCanceled',
+    'ActivityTaskTimedOut',
+  ])('closes the live connector for %s', (eventType) => {
+    expect(
+      isTimelineGroupLivePending({
+        active: true,
+        groupPending: false,
+        resolvedTerminal: false,
+        initialEvent: event('ActivityTaskScheduled'),
+        lastEvent: event(eventType),
+      }),
+    ).toBe(false);
+  });
+});
 
 describe('mergeTimelineRowConnectors', () => {
   it('renders a multi-event workflow as one continuous segment', () => {

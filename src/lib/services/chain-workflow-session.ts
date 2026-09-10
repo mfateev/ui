@@ -38,6 +38,7 @@ export type TimelineRun = {
   activeTimeRanges?: readonly TimelineActiveTimeRange[];
   active: boolean;
   successorRunId?: string;
+  sourceState?: 'sealed' | 'mutable' | 'closing-unsealed';
 };
 
 export type TimelineActiveTimeRange = {

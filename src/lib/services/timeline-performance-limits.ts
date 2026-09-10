@@ -1,5 +1,5 @@
 export type TimelinePerformanceLimits = {
-  successorDiscoveryRuns: number;
+  chainDiscoveryRuns: number;
   intervalRunJobs: number;
   intervalHttpRequests: number;
   intervalRuns: number;
@@ -12,7 +12,7 @@ export type TimelinePerformanceLimits = {
 };
 
 export const DEFAULT_TIMELINE_PERFORMANCE_LIMITS: TimelinePerformanceLimits = {
-  successorDiscoveryRuns: 10_000,
+  chainDiscoveryRuns: 100,
   intervalRunJobs: 4,
   intervalHttpRequests: 8,
   intervalRuns: 256,

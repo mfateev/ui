@@ -49,6 +49,7 @@
     DEFAULT_TIMELINE_DISPLAY_MODE,
     expandedDurationPerViewportMs,
     fixedWindowScaleDurationMs,
+    timelineWorldStartTimeMs,
   } from './timeline-display-mode';
   import { TimelineEntryWindowIndex } from './timeline-entry-window-index';
   import { shouldMoveFocusToTimeline } from './timeline-focus';
@@ -76,6 +77,12 @@
     shouldBatchTimelineRows,
   } from './timeline-progressive-rows';
   import {
+    assertTimelineRenderSnapshot,
+    createTimelineProjectionSnapshot,
+    StableTimelineBlockIdentities,
+    type TimelineRenderSnapshot,
+  } from './timeline-render-snapshot';
+  import {
     getTimelineEntryAnimationStartTranslate,
     getTimelineEntryVisualYOffset,
     getTimelineFrameBoundaryOffset,
@@ -95,7 +102,6 @@
     getTimelineGroupEntry,
     type TimelineGroupEntry,
   } from './timeline-run-entries';
-  import { TimelineSceneDoubleBuffer } from './timeline-scene-double-buffer';
   import {
     getTimelineSegmentedScrollModel,
     physicalYForLogicalRow,
@@ -162,6 +168,7 @@
     instrumentPerformance?: boolean;
     modelLoading?: boolean;
     sceneGeneration?: object;
+    chainIndexId?: object;
     disableVirtualization?: boolean;
   }
 
@@ -189,6 +196,7 @@
     instrumentPerformance = false,
     modelLoading = false,
     sceneGeneration,
+    chainIndexId,
     disableVirtualization = false,
   }: Props = $props();
 
@@ -421,6 +429,7 @@
     timelineWidth +
       (displayMode === 'fixed-window' ? TIMELINE_MOTION_OVERSCAN_PX : 0),
   );
+  let fixedWindowDurationMs = $state(DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS);
   const timeline = new Timeline({
     getFirstEventTime: () => firstEventTime,
     getWorkflow: () => workflow,
@@ -431,7 +440,14 @@
     getLoading: () => timelineLoading,
     getShouldCollapseByDefault: () => $collapseIdleTime === 'on',
     getStartTimeMs: () =>
-      Math.min(chainStartTimeMs ?? aggregateStartTimeMs, aggregateStartTimeMs),
+      timelineWorldStartTimeMs({
+        displayMode,
+        aggregateStartTimeMs,
+        aggregateEndTimeMs,
+        knownChainStartTimeMs: chainStartTimeMs,
+        fixedWindowDurationMs,
+        live: aggregateHasLive,
+      }),
     getEndTimeMs: () => aggregateEndTimeMs,
     getEndUnbounded: () => aggregateHasLive,
   });
@@ -448,7 +464,6 @@
   let playbackOriginTimeMs = 0;
   let playbackStartedAtMs = 0;
   let windowLayoutRevision = $state(0);
-  let fixedWindowDurationMs = $state(DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS);
   let windowDurationCustomized = $state(false);
   const durationPerViewportMs = $derived(
     displayMode === 'fixed-window'
@@ -491,6 +506,28 @@
     timeline,
     getViewportWidthPx: () => timelineWidth,
     getExpandedDurationPerViewportMs: () => scaleDurationPerViewportMs,
+  });
+  let projectionPublicationRevision = 0;
+  const projectionInputs = $derived.by(() => {
+    const domain = fixedWindowTimeRange ?? {
+      startTimeMs: timeline.workflowTimespan.startTimeMs,
+      endTimeMs: timeline.workflowTimespan.endTimeMs,
+    };
+    return Object.freeze({
+      viewId: Object.freeze({}),
+      widthPx: timelineWidth,
+      domain: Object.freeze({ ...domain }),
+      segments: scale.segments,
+      expandedPxPerMs: scale.expandedPxPerMs,
+    });
+  });
+  const projectionSnapshot = $derived.by(() => {
+    const inputs = projectionInputs;
+    projectionPublicationRevision += 1;
+    return createTimelineProjectionSnapshot({
+      revision: projectionPublicationRevision,
+      ...inputs,
+    });
   });
 
   const renderedVisibleRange = $derived({
@@ -843,15 +880,6 @@
     return () => cancelAnimationFrame(animationFrame);
   });
 
-  const projectX = (time: ValidTime | undefined | null): number => {
-    if (!time) return GUTTER;
-    return (
-      scale.project(validTimeToDate(time).getTime()) -
-      viewport.offsetPx +
-      GUTTER
-    );
-  };
-
   const getChildControlPlacement = (
     entry: TimelineGroupEntry,
   ): { x: number; fitsAfter: boolean } => {
@@ -861,7 +889,7 @@
         : entry.group.isPending
           ? new Date(entry.runEndTimeMs).toISOString()
           : entry.group.lastEvent.eventTime;
-    const endX = projectX(controlEndTime);
+    const endX = rendered.axis.projectX(controlEndTime);
     const controlWidth = 20;
     const fitsAfter = endX + 34 <= canvasWidth - GUTTER;
     return {
@@ -917,7 +945,7 @@
         group: entry.group,
         currentTimeMs: nowMs,
         retainedEndTimeMs: entry.active ? undefined : entry.runEndTimeMs,
-        project: (timeMs) => scale.project(timeMs),
+        project: projectionSnapshot.project,
         visibleRange: renderedVisibleRange,
         visibleTimeRange: fixedWindowTimeRange,
       }),
@@ -989,7 +1017,7 @@
               endPx: Number.POSITIVE_INFINITY,
             }
           : renderedVisibleRange,
-      project: (timeMs) => scale.project(timeMs),
+      project: projectionSnapshot.project,
       liveEndTimeMs: timeline.workflowTimespan.endTimeMs,
       rootKnownChainStartRunId: knownChainStartRunId,
       visibleTimeRange: fixedWindowTimeRange,
@@ -1017,54 +1045,21 @@
   type BufferedTimelineScene = {
     frameCandidates: RecursiveFrameCandidates;
     containmentLayout: TimelineContainmentLayout;
+    generation: object | undefined;
   };
+  const sourceSceneGeneration = $derived.by(() => {
+    const intervalGeneration = sceneGeneration;
+    const tree = workflowTree;
+    const versions = allWorkflowRuns.map((run) => run.groups);
+    return Object.freeze({ intervalGeneration, tree, versions });
+  });
   const nextBufferedScene = $derived<BufferedTimelineScene>({
     frameCandidates: nextFrameCandidates,
     containmentLayout: nextContainmentLayout,
+    generation: sourceSceneGeneration,
   });
-  let bufferedScene = $state.raw<BufferedTimelineScene | null>(null);
-  let observedSceneBufferScope = '';
-  let observedIntervalSceneGeneration: object | undefined;
-  let commitNextSceneImmediately = false;
-  const sceneDoubleBuffer =
-    new TimelineSceneDoubleBuffer<BufferedTimelineScene>({
-      delayMs: 1_100,
-      keys: ({ containmentLayout, frameCandidates }) => [
-        ...containmentLayout
-          .rows(0, containmentLayout.rowCount)
-          .map((row) => `row:${row.key}`),
-        ...frameCandidates.runFrames.map((frame) => `run:${frame.key}`),
-        ...frameCandidates.chainFrames.map((frame) => `chain:${frame.key}`),
-      ],
-      onCommit: (scene) => (bufferedScene = scene),
-      shouldWait: () => recursiveSession.requestCount > 0,
-    });
-
-  $effect.pre(() => {
-    const next = nextBufferedScene;
-    const scope = `${rowPresentationScope}:${windowLayoutRevision}`;
-    const sameScope = scope === observedSceneBufferScope;
-    const sameGeneration = sceneGeneration === observedIntervalSceneGeneration;
-    observedSceneBufferScope = scope;
-    observedIntervalSceneGeneration = sceneGeneration;
-    const deferStructuralChange =
-      sameScope &&
-      sameGeneration &&
-      !commitNextSceneImmediately &&
-      reverseSort &&
-      aggregateHasLive &&
-      !timelineLoading &&
-      shouldAnimateTimelineRowEntries({
-        totalGroupCount: filteredEntryCount,
-        layoutRowCount: next.containmentLayout.rowCount,
-      });
-    commitNextSceneImmediately = false;
-    untrack(() => sceneDoubleBuffer.publish(next, deferStructuralChange));
-  });
-
-  onDestroy(() => sceneDoubleBuffer.dispose());
-
-  const presentedScene = $derived(bufferedScene ?? nextBufferedScene);
+  const presentedScene = $derived(nextBufferedScene);
+  const presentedSceneGeneration = $derived(presentedScene.generation);
   const frameCandidates = $derived(presentedScene.frameCandidates);
   const participatingRunFrames = $derived(frameCandidates.runFrames);
   const containmentLayout = $derived(presentedScene.containmentLayout);
@@ -1072,19 +1067,28 @@
   let presentedLayoutRowCount = $state(0);
   let rowPresentationBatching = $state(false);
   let observedRowPresentationScope = '';
+  let observedRowPresentationGeneration: object | undefined;
+  let hasObservedRowPresentationGeneration = false;
+  let rowPresentationRevision = $state(0);
   let presentNextChildToggleImmediately = false;
 
   $effect(() => {
     const availableRows = availableLayoutRowCount;
     const scope = rowPresentationScope;
+    const generationChanged =
+      hasObservedRowPresentationGeneration &&
+      observedRowPresentationGeneration !== presentedSceneGeneration;
+    observedRowPresentationGeneration = presentedSceneGeneration;
+    hasObservedRowPresentationGeneration = true;
     if (presentNextChildToggleImmediately) {
       presentNextChildToggleImmediately = false;
       presentedLayoutRowCount = availableRows;
       rowPresentationBatching = false;
-    } else if (scope !== observedRowPresentationScope) {
+    } else if (scope !== observedRowPresentationScope || generationChanged) {
       observedRowPresentationScope = scope;
       presentedLayoutRowCount = initialTimelinePaintRows(availableRows);
       rowPresentationBatching = presentedLayoutRowCount < availableRows;
+      rowPresentationRevision = untrack(() => rowPresentationRevision) + 1;
     } else if (presentedLayoutRowCount > availableRows) {
       presentedLayoutRowCount = availableRows;
       rowPresentationBatching = false;
@@ -1144,7 +1148,7 @@
     return parts.join('|');
   });
   const presentationSceneIdentity = $derived.by(() => {
-    const base = sceneGeneration ?? containmentLayout;
+    const base = presentedSceneGeneration ?? containmentLayout;
     const scope = [
       reverseSort,
       $eventStatusFilter,
@@ -1186,12 +1190,15 @@
     shouldAnimateTimelineRowEntries({
       totalGroupCount: filteredEntryCount,
       layoutRowCount,
+      runCount: workflowRuns.length,
     })
       ? containmentLayout.rows(0, layoutRowCount)
       : [],
   );
   const layoutRowKey = (row: TimelineLayoutRow): string => row.key;
   let previousLayoutKeys: string[] | null = null;
+  let previousRowEntrySceneGeneration: object | undefined;
+  let hasObservedRowEntrySceneGeneration = false;
   let rowEntryOffsets = $state.raw(new Map<string, number>());
   let rowEntryNewKeys = $state.raw(new Set<string>());
   let frameGrowthMotions = $state.raw(
@@ -1205,6 +1212,7 @@
   let rowEntryGeneration = 0;
   let rowEntryDeadlineMs: number | null = null;
   let previousRowPresentationScope = '';
+  let previousRowPresentationRevision = -1;
   let previousRowPresentationWasBatching = false;
   let suppressRowEntryAfterChildToggleUntilMs = 0;
   const CHILD_TOGGLE_SETTLE_MS = 1_100;
@@ -1600,7 +1608,6 @@
     pendingLoadedChildToggleAnimation = null;
     mountedChildToggleAnimations.forEach((animation) => animation.cancel());
     mountedChildToggleAnimations = [];
-    commitNextSceneImmediately = true;
     presentNextChildToggleImmediately = true;
     suppressRowEntryAfterChildToggleUntilMs =
       performance.now() + CHILD_TOGGLE_SETTLE_MS + 1200;
@@ -1609,7 +1616,6 @@
   };
 
   const toggleChild = (edgeKey: string) => {
-    flushSync(() => sceneDoubleBuffer.flush());
     const edgeBeforeToggle = childEdgeForKey(edgeKey);
     const expanding = edgeBeforeToggle?.expansion === 'collapsed';
     const stageUnloadedExpansion =
@@ -1628,7 +1634,6 @@
     pendingLoadedChildToggleAnimation = null;
     mountedChildToggleAnimations.forEach((animation) => animation.cancel());
     mountedChildToggleAnimations = [];
-    commitNextSceneImmediately = true;
     presentNextChildToggleImmediately = true;
     suppressRowEntryAfterChildToggleUntilMs =
       performance.now() + CHILD_TOGGLE_SETTLE_MS + 1200;
@@ -1717,6 +1722,11 @@
     const currentKeys = animationLayoutRows.map(layoutRowKey);
     const previousKeys = previousLayoutKeys;
     previousLayoutKeys = currentKeys;
+    const sceneReplaced =
+      hasObservedRowEntrySceneGeneration &&
+      previousRowEntrySceneGeneration !== presentedSceneGeneration;
+    previousRowEntrySceneGeneration = presentedSceneGeneration;
+    hasObservedRowEntrySceneGeneration = true;
     if (suppressRowEntryAfterChildToggleUntilMs) {
       if (recursiveSession.requestCount > 0) {
         suppressRowEntryAfterChildToggleUntilMs =
@@ -1730,15 +1740,22 @@
       return;
     }
     const initialRowPresentation =
+      sceneReplaced ||
+      rowPresentationRevision !== previousRowPresentationRevision ||
       rowPresentationScope !== previousRowPresentationScope ||
       rowPresentationBatching ||
       previousRowPresentationWasBatching;
+    previousRowPresentationRevision = rowPresentationRevision;
     previousRowPresentationScope = rowPresentationScope;
     previousRowPresentationWasBatching = rowPresentationBatching;
 
     if (
       previousKeys === null ||
       initialRowPresentation ||
+      // In a chain, frame boundaries are the visual grouping contract. A
+      // per-row FLIP can temporarily move activities outside the run and
+      // chain frames when several runs arrive in one asynchronous commit.
+      workflowRuns.length > 1 ||
       timelineLoading ||
       recursiveSession.requestCount > 0 ||
       !reverseSort ||
@@ -2520,28 +2537,36 @@
       const incomingChild = incomingChildHeaderByWorkflowKey.get(
         candidate.workflowKey ?? '',
       );
+      const candidateStartWorldPx = projectionSnapshot.project(
+        candidate.startTimeMs,
+      );
+      const candidateEndWorldPx = projectionSnapshot.project(
+        candidate.live
+          ? timeline.workflowTimespan.endTimeMs
+          : candidate.endTimeMs,
+      );
       const relationshipStartWorldPx = incomingChild?.parentEntry.group
         .initialEvent.eventTime
-        ? scale.project(
+        ? projectionSnapshot.project(
             validTimeToDate(
               incomingChild.parentEntry.group.initialEvent.eventTime,
             ).getTime(),
           )
-        : candidate.startWorldPx;
+        : candidateStartWorldPx;
       const isFirstChildRun = incomingChild?.firstRunId === candidate.runId;
       const startWorldPx = isFirstChildRun
         ? Math.max(
             relationshipStartWorldPx,
-            Math.min(candidate.startWorldPx, relationshipStartWorldPx + 12),
+            Math.min(candidateStartWorldPx, relationshipStartWorldPx + 12),
           )
-        : candidate.startWorldPx;
+        : candidateStartWorldPx;
       return [
         {
           candidate,
           span,
           geometry: getWorkflowFrameGeometry({
             startWorldPx,
-            endWorldPx: candidate.endWorldPx,
+            endWorldPx: candidateEndWorldPx,
             viewportOffsetPx: viewport.offsetPx,
             viewportWidthPx: renderedViewportWidthPx,
             gutterPx: GUTTER,
@@ -2562,14 +2587,22 @@
       const span = workflowSpanByKey.get(workflowKey);
       if (!vertical || !span) return [];
       const incomingChild = incomingChildHeaderByWorkflowKey.get(workflowKey);
+      const candidateStartWorldPx = projectionSnapshot.project(
+        candidate.startTimeMs,
+      );
+      const candidateEndWorldPx = projectionSnapshot.project(
+        candidate.live
+          ? timeline.workflowTimespan.endTimeMs
+          : candidate.endTimeMs,
+      );
       const relationshipStartWorldPx = incomingChild?.parentEntry.group
         .initialEvent.eventTime
-        ? scale.project(
+        ? projectionSnapshot.project(
             validTimeToDate(
               incomingChild.parentEntry.group.initialEvent.eventTime,
             ).getTime(),
           )
-        : candidate.startWorldPx;
+        : candidateStartWorldPx;
       const relationshipEndTimeMs = incomingChild?.parentEntry.group.lastEvent
         .eventTime
         ? validTimeToDate(
@@ -2578,13 +2611,13 @@
         : undefined;
       const relationshipEndWorldPx =
         relationshipEndTimeMs === undefined
-          ? candidate.endWorldPx
-          : scale.project(relationshipEndTimeMs);
+          ? candidateEndWorldPx
+          : projectionSnapshot.project(relationshipEndTimeMs);
       const startWorldPx = Math.min(
         relationshipStartWorldPx,
-        candidate.startWorldPx,
+        candidateStartWorldPx,
       );
-      const endWorldPx = Math.max(relationshipEndWorldPx, candidate.endWorldPx);
+      const endWorldPx = Math.max(relationshipEndWorldPx, candidateEndWorldPx);
       return [
         {
           candidate,
@@ -2621,30 +2654,159 @@
       : chainFrameLayouts,
   );
 
-  let sceneRevision = $state(0);
-  let projectionRevision = $state(0);
-  let observedSceneIdentity: object | null = null;
-  let observedProjectionKey = '';
-
-  $effect(() => {
-    const identity = presentationSceneIdentity;
-    if (identity === observedSceneIdentity) return;
-    observedSceneIdentity = identity;
-    sceneRevision += 1;
+  type PresentationRow = (typeof presentationRows)[number];
+  type RunFrameLayout = (typeof presentedRunFrameLayouts)[number];
+  type ChainFrameLayout = (typeof presentedChainFrameLayouts)[number];
+  type AxisRender = Readonly<{
+    startTime: string;
+    viewportOffsetPx: number;
+    projectX: (time: ValidTime | undefined | null) => number;
+  }>;
+  type CommittedTimelineRender = TimelineRenderSnapshot<
+    TimelineContainmentLayout,
+    RecursiveFrameCandidates,
+    PresentationRow,
+    RunFrameLayout,
+    ChainFrameLayout,
+    AxisRender
+  >;
+  const sourceBlockIds = new StableTimelineBlockIdentities();
+  let renderRequestEpoch = 0;
+  const renderCandidate = $derived.by<CommittedTimelineRender>(() => {
+    const generationId = presentedSceneGeneration ?? presentationSceneIdentity;
+    const projection = projectionSnapshot;
+    const viewId = projection.viewId;
+    const activeChunks = presentationChunks.filter(({ active }) => active);
+    const activeRows = presentationRows.filter(({ chunkKey }) =>
+      activePresentationChunkKeys.has(chunkKey),
+    );
+    const activeSourceBlockIds = activeChunks.map(({ key }) => {
+      return sourceBlockIds.get(key);
+    });
+    const parkedBlockIds = presentationChunks
+      .filter(({ active }) => !active)
+      .map(({ key }) => {
+        return sourceBlockIds.get(key);
+      });
+    const block = Object.freeze({
+      id: Object.freeze({}),
+      sourceBlockIds: Object.freeze(activeSourceBlockIds),
+      viewId,
+      projectionId: projection.id,
+      rowStart: renderedWindowStart,
+      rowEnd: renderedWindowEnd,
+      rows: Object.freeze(activeRows),
+      runFrames: Object.freeze([...presentedRunFrameLayouts]),
+      chainFrames: Object.freeze([...presentedChainFrameLayouts]),
+    });
+    const scene = Object.freeze({
+      generationId,
+      publicationRevision: rowPresentationRevision,
+      chainIndexId,
+      layout: containmentLayout,
+      frames: frameCandidates,
+      orderedRunSources: Object.freeze(
+        allWorkflowRuns.map((run) =>
+          Object.freeze({
+            runId: run.runId,
+            version: run.groups,
+            state: run.sourceState ?? (run.active ? 'mutable' : 'sealed'),
+          }),
+        ),
+      ),
+      readiness: rowPresentationComplete
+        ? ('complete' as const)
+        : ('initial-blocks' as const),
+    });
+    const view = Object.freeze({
+      id: viewId,
+      sceneGenerationId: generationId,
+      scenePublicationRevision: rowPresentationRevision,
+      intent: Object.freeze({
+        mode: displayMode,
+        windowState: displayMode === 'fixed-window' ? windowMode : undefined,
+        windowDurationMs:
+          displayMode === 'fixed-window' ? fixedWindowDurationMs : undefined,
+        anchorTimeMs: frozenAnchorTimeMs ?? undefined,
+        reverseSort,
+        filters: Object.freeze({
+          eventTypes: Object.freeze([...$eventTypeFilter]),
+          failedOrPending: $eventStatusFilter,
+        }),
+        expandedEdges: new Set(
+          workflowNodes.flatMap((node) =>
+            [...node.childrenByGroupKey.values()]
+              .filter(({ expansion }) => expansion === 'expanded')
+              .map(({ key }) => key),
+          ),
+        ),
+      }),
+      domain: projection.domain,
+      rows: Object.freeze([...presentationRows]),
+    });
+    const presentation = Object.freeze({
+      revision: presentationController.counters.updates,
+      sceneGenerationId: generationId,
+      viewId,
+      projectionId: projection.id,
+      activeBlocks: Object.freeze([block]),
+      parkedBlockIds: Object.freeze(parkedBlockIds),
+      focusedRowId: focusedGroupId ?? undefined,
+      selectedRowId: $activeGroups[0],
+    });
+    const projectX = (time: ValidTime | undefined | null): number => {
+      if (!time) return GUTTER;
+      return (
+        projection.project(validTimeToDate(time).getTime()) -
+        viewport.offsetPx +
+        GUTTER
+      );
+    };
+    const snapshot = Object.freeze({
+      id: Object.freeze({}),
+      requestEpoch: ++renderRequestEpoch,
+      scene,
+      view,
+      projection,
+      presentation,
+      axis: Object.freeze({
+        startTime,
+        viewportOffsetPx: viewport.offsetPx,
+        projectX,
+      }),
+      transition: 'snap' as const,
+    });
+    assertTimelineRenderSnapshot(snapshot);
+    return snapshot;
   });
-
-  $effect(() => {
-    const key = [
-      canvasWidth,
-      viewport.offsetPx,
-      displayMode,
-      collapsedSegmentCount,
-      windowLayoutRevision,
-    ].join(':');
-    if (key === observedProjectionKey) return;
-    observedProjectionKey = key;
-    projectionRevision += 1;
+  let committedRender = $state.raw<CommittedTimelineRender | null>(null);
+  $effect.pre(() => {
+    const candidate = renderCandidate;
+    if (
+      committedRender &&
+      committedRender.scene.generationId !== candidate.scene.generationId
+    ) {
+      finishRowEntry();
+      mountedChildToggleAnimations.forEach((animation) => animation.cancel());
+      mountedChildToggleAnimations = [];
+    }
+    committedRender = candidate;
   });
+  const rendered = $derived(committedRender ?? renderCandidate);
+  const renderedPresentationRows = $derived(rendered.view.rows);
+  const renderedActiveChunkKeys = $derived(
+    new Set(
+      rendered.presentation.activeBlocks.flatMap((block) =>
+        block.rows.map(({ chunkKey }) => chunkKey),
+      ),
+    ),
+  );
+  const renderedRunFrameLayouts = $derived(
+    rendered.presentation.activeBlocks.flatMap((block) => block.runFrames),
+  );
+  const renderedChainFrameLayouts = $derived(
+    rendered.presentation.activeBlocks.flatMap((block) => block.chainFrames),
+  );
 
   const performanceTracker = new TimelinePerformanceTracker();
   let performanceUpdateStartedAt = 0;
@@ -2714,7 +2876,7 @@
   role="region"
   aria-label={translate('workflows.timeline-tab')}
   data-display-mode={displayMode}
-  data-viewport-offset={viewport.offsetPx}
+  data-viewport-offset={rendered.axis.viewportOffsetPx}
   data-viewport-following={viewport.isFollowing}
   data-live-paused={$pauseLiveUpdates}
   class:timeline-motion-active={shouldAnimateTimeline}
@@ -2730,9 +2892,10 @@
   data-logical-point-count={totalTimelinePointCount}
   data-available-row-count={availableLayoutRowCount}
   data-row-presentation-complete={rowPresentationComplete}
-  data-scene-revision={sceneRevision}
-  data-projection-revision={projectionRevision}
-  data-presentation-revision={presentationController.counters.updates}
+  data-render-id={rendered.requestEpoch}
+  data-scene-revision={rendered.scene.publicationRevision}
+  data-projection-revision={rendered.projection.revision}
+  data-presentation-revision={rendered.presentation.revision}
   data-scene-ready={rowPresentationComplete &&
     recursiveSession.requestCount === 0 &&
     !modelLoading}
@@ -2821,8 +2984,11 @@
         <div class="timeline-viewport-clip absolute inset-0">
           <div
             class="timeline-motion-layer pointer-events-none absolute inset-0"
+            data-render-id={rendered.requestEpoch}
+            data-projection-revision={rendered.projection.revision}
+            data-presentation-revision={rendered.presentation.revision}
           >
-            {#each presentedChainFrameLayouts as frame (frame.candidate.key)}
+            {#each renderedChainFrameLayouts as frame (frame.candidate.key)}
               <WorkflowFrame
                 geometry={frame.geometry}
                 label={frame.candidate.label}
@@ -2850,7 +3016,7 @@
                 })}
               />
             {/each}
-            {#each presentedRunFrameLayouts as frame (frame.candidate.key)}
+            {#each renderedRunFrameLayouts as frame (frame.candidate.key)}
               <WorkflowFrame
                 geometry={frame.geometry}
                 label={frame.candidate.label}
@@ -2896,31 +3062,41 @@
               />
             {/each}
           </div>
-          <TimelineAxis
-            x1={GUTTER - RADIUS / 4}
-            x2={canvasWidth - GUTTER + RADIUS / 4}
-            gutter={GUTTER}
-            {timelineHeight}
-            bandTop={virtualizeRows ? layerBandTop : 0}
-            bandHeight={virtualizeRows ? layerBandHeight : timelineHeight}
-            {startTime}
-            {scale}
-            viewportOffsetPx={viewport.offsetPx}
-          />
+          <div
+            class="contents"
+            data-render-id={rendered.requestEpoch}
+            data-projection-revision={rendered.projection.revision}
+            data-presentation-revision={rendered.presentation.revision}
+          >
+            <TimelineAxis
+              x1={GUTTER - RADIUS / 4}
+              x2={canvasWidth - GUTTER + RADIUS / 4}
+              gutter={GUTTER}
+              {timelineHeight}
+              bandTop={virtualizeRows ? layerBandTop : 0}
+              bandHeight={virtualizeRows ? layerBandHeight : timelineHeight}
+              startTime={rendered.axis.startTime}
+              scale={rendered.projection}
+              viewportOffsetPx={rendered.axis.viewportOffsetPx}
+            />
+          </div>
           {#if !timelineLoading}
             <!-- Anchor's left provides the gutter offset for the layer's 0-based coords. -->
             <div
               class="timeline-motion-layer absolute top-0"
               style:left="{GUTTER}px"
+              data-render-id={rendered.requestEpoch}
+              data-projection-revision={rendered.projection.revision}
+              data-presentation-revision={rendered.presentation.revision}
             >
               <TimelineCollapsedLayer
-                {scale}
+                scale={rendered.projection}
                 {timelineHeight}
                 bandTop={layerBandTop}
                 bandHeight={layerBandHeight}
                 {readOnly}
-                viewportOffsetPx={viewport.offsetPx}
-                viewportWidthPx={timelineWidth}
+                viewportOffsetPx={rendered.axis.viewportOffsetPx}
+                viewportWidthPx={rendered.projection.widthPx}
                 onToggle={toggleSegment}
               />
             </div>
@@ -2928,8 +3104,11 @@
 
           <div
             class="timeline-motion-layer pointer-events-none absolute inset-0 z-20"
+            data-render-id={rendered.requestEpoch}
+            data-projection-revision={rendered.projection.revision}
+            data-presentation-revision={rendered.presentation.revision}
           >
-            {#each presentedChainFrameLayouts as frame (frame.candidate.key)}
+            {#each renderedChainFrameLayouts as frame (frame.candidate.key)}
               <WorkflowFrame
                 geometry={frame.geometry}
                 label={frame.candidate.label}
@@ -2960,7 +3139,7 @@
                 })}
               />
             {/each}
-            {#each presentedRunFrameLayouts as frame (frame.candidate.key)}
+            {#each renderedRunFrameLayouts as frame (frame.candidate.key)}
               <WorkflowFrame
                 geometry={frame.geometry}
                 label={frame.candidate.label}
@@ -3020,20 +3199,23 @@
              opt back in with pointer-events:auto. -->
           <ul
             class="pointer-events-none absolute inset-0 m-0 list-none p-0"
+            data-render-id={rendered.requestEpoch}
+            data-projection-revision={rendered.projection.revision}
+            data-presentation-revision={rendered.presentation.revision}
             class:timeline-rows-entering={rowEntryOffsets.size > 0 ||
               rowEntryNewKeys.size > 0}
             class:timeline-rows-animating={rowEntryAnimating}
             bind:this={rowStackEl}
           >
-            {#each presentationRows as slot, slotIndex (slot.row.key)}
-              {@const slotActive = activePresentationChunkKeys.has(
-                slot.chunkKey,
-              )}
+            {#each renderedPresentationRows as slot, slotIndex (slot.row.key)}
+              {@const slotActive = renderedActiveChunkKeys.has(slot.chunkKey)}
               {@const rowKey = slot ? layoutRowKey(slot.row) : ''}
               {@const entryOffsetPx = rowEntryOffsets.get(rowKey) ?? 0}
               {@const entryStartXPx =
                 slot?.row.kind === 'group'
-                  ? projectX(slot.row.entry.group.initialEvent.eventTime)
+                  ? rendered.axis.projectX(
+                      slot.row.entry.group.initialEvent.eventTime,
+                    )
                   : undefined}
               {@const entryOffsetXPx =
                 slot?.row.kind === 'group'
@@ -3092,7 +3274,7 @@
                         group={timelineEntry.group}
                         timelineKey={timelineEntry.timelineKey}
                         {canvasWidth}
-                        project={projectX}
+                        project={rendered.axis.projectX}
                         {readOnly}
                       />
                     {:else}
@@ -3101,7 +3283,7 @@
                         timelineKey={timelineEntry.timelineKey}
                         eventCount={timelineEntry.group.eventCount}
                         {canvasWidth}
-                        project={projectX}
+                        project={rendered.axis.projectX}
                         {readOnly}
                         active={timelineEntry?.active ?? true}
                         resolvedStatus={timelineEntry?.resolvedStatus}

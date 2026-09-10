@@ -46,9 +46,25 @@ describe('timeline frame visibility', () => {
 
     expect(frames[0]).toMatchObject({
       runId: 'active',
-      endWorldPx: 100,
+      startTimeMs: 20,
+      endTimeMs: 100,
       live: true,
       endBoundaryKnown: false,
+    });
+  });
+
+  it('retains source times so a buffered frame can use the current projection', () => {
+    const frames = getParticipatingRunFrames({
+      runs: [run('buffered', 20, 40)],
+      visibleRange: { startPx: 150, endPx: 450 },
+      project: (timeMs) => timeMs * 10,
+      liveEndTimeMs: 100,
+    });
+
+    expect(frames[0]).toMatchObject({
+      runId: 'buffered',
+      startTimeMs: 20,
+      endTimeMs: 40,
     });
   });
 
@@ -81,9 +97,9 @@ describe('timeline frame visibility', () => {
 
     expect(chain).toMatchObject({
       label: 'workflow',
-      startWorldPx: 40,
+      startTimeMs: 40,
       startBoundaryKnown: true,
-      endWorldPx: 90,
+      endTimeMs: 90,
       live: true,
     });
   });
@@ -104,8 +120,8 @@ describe('timeline frame visibility', () => {
     });
 
     expect(chain).toMatchObject({
-      startWorldPx: 20,
-      endWorldPx: 40,
+      startTimeMs: 20,
+      endTimeMs: 40,
       startBoundaryKnown: true,
       endBoundaryKnown: true,
     });
@@ -130,7 +146,7 @@ describe('timeline frame visibility', () => {
     expect(chain).toMatchObject({
       status: 'Completed',
       live: false,
-      endWorldPx: 40,
+      endTimeMs: 40,
       endBoundaryKnown: true,
     });
   });

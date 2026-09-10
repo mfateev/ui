@@ -148,6 +148,16 @@ describe('shouldAnimateTimelineRowEntries', () => {
       }),
     ).toBe(false);
   });
+
+  it('disables entry motion when run and chain frames must stay aligned', () => {
+    expect(
+      shouldAnimateTimelineRowEntries({
+        totalGroupCount: 20,
+        layoutRowCount: 20,
+        runCount: 2,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('getTimelineRowEntryOffsets', () => {

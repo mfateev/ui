@@ -1,12 +1,17 @@
 <script lang="ts">
   import type { TimelineWindowMode } from '$lib/components/lines-and-dots/timeline-graph/timeline-window-controls';
   import { translate } from '$lib/i18n/translate';
+  import type { ChainBoundary } from '$lib/services/workflow-chain-index';
   import type { WorkflowChainOverviewRun } from '$lib/services/workflow-chain-overview';
 
   import { binTimelineContinuations } from './timeline-continuation-bins';
 
   interface Props {
-    runs: WorkflowChainOverviewRun[];
+    segments: readonly Readonly<{
+      runs: readonly WorkflowChainOverviewRun[];
+      before: ChainBoundary;
+      after: ChainBoundary;
+    }>[];
     windowStartTimeMs?: number;
     windowEndTimeMs?: number;
     windowDurationMs?: number;
@@ -21,7 +26,7 @@
   }
 
   let {
-    runs,
+    segments,
     windowStartTimeMs,
     windowEndTimeMs,
     windowDurationMs,
@@ -31,7 +36,10 @@
     onWindowResize,
   }: Props = $props();
 
+  const runs = $derived(segments.flatMap((segment) => [...segment.runs]));
+
   type DragMode = 'move' | 'resize-start' | 'resize-end';
+  const MINIMUM_WINDOW_WIDTH_PERCENT = 2.5;
 
   let trackElement = $state<HTMLDivElement>();
   let overviewElement = $state<HTMLDivElement>();
@@ -45,6 +53,11 @@
   let visualWindowLeft = 0;
   let visualWindowWidth = 0.4;
   let trackWidth = $state(1);
+  const minimumVisualWindowWidth = (): number =>
+    Math.min(
+      100,
+      Math.max(MINIMUM_WINDOW_WIDTH_PERCENT, (24 / trackWidth) * 100),
+    );
 
   const chainEndIsLive = $derived(
     runs.at(-1)?.status === 'Running' ||
@@ -74,17 +87,48 @@
       : (windowEndTimeMs ?? endTimeMs),
   );
   const windowRight = $derived(position(visualWindowEndTimeMs));
-  const windowWidth = $derived(Math.max(0.4, windowRight - windowLeft));
+  const windowWidth = $derived(
+    Math.max(minimumVisualWindowWidth(), windowRight - windowLeft),
+  );
   const displayedWindowLeft = $derived(dragLeft ?? windowLeft);
   const displayedWindowWidth = $derived(dragWidth ?? windowWidth);
-  const continuationBins = $derived(
-    binTimelineContinuations({
-      runs,
-      startTimeMs: startTimeMs ?? 0,
-      durationMs,
-      widthPx: trackWidth,
+  const continuationSegments = $derived(
+    segments.map((segment) =>
+      binTimelineContinuations({
+        runs: [...segment.runs],
+        startTimeMs: startTimeMs ?? 0,
+        durationMs,
+        widthPx: trackWidth,
+      }),
+    ),
+  );
+  const continuationCount = $derived(
+    continuationSegments.reduce((count, bins) => count + bins.totalCount, 0),
+  );
+  const continuationBinCount = $derived(
+    continuationSegments.reduce((count, bins) => count + bins.binCount, 0),
+  );
+  const gaps = $derived(
+    segments.slice(0, -1).flatMap((segment, index) => {
+      const left = segment.runs.at(-1);
+      const right = segments[index + 1]?.runs[0];
+      if (!left || !right) return [];
+      return [
+        {
+          key: `${left.runId}:${right.runId}`,
+          left: position(left.endTimeMs),
+          width: Math.max(
+            0.4,
+            position(right.startTimeMs) - position(left.endTimeMs),
+          ),
+          before: segment.after.kind,
+          after: segments[index + 1].before.kind,
+        },
+      ];
     }),
   );
+  const leadingBoundary = $derived(segments[0]?.before);
+  const trailingBoundary = $derived(segments.at(-1)?.after);
 
   $effect(() => {
     if (!trackElement) return;
@@ -153,7 +197,7 @@
           ),
         );
         visualWindowLeft = left;
-        visualWindowWidth = Math.max(0.4, right - left);
+        visualWindowWidth = Math.max(minimumVisualWindowWidth(), right - left);
         trackElement?.style.setProperty('--overview-window-left', `${left}%`);
         trackElement?.style.setProperty(
           '--overview-window-width',
@@ -180,7 +224,10 @@
   };
 
   const minimumWindowWidth = (): number =>
-    Math.min(100, Math.max(0.4, (1_000 / visualDurationMs) * 100));
+    Math.min(
+      100,
+      Math.max(minimumVisualWindowWidth(), (1_000 / visualDurationMs) * 100),
+    );
 
   const startDragging = (event: PointerEvent, mode: DragMode) => {
     if (!trackElement || (mode === 'move' ? !onWindowMove : !onWindowResize)) {
@@ -344,7 +391,7 @@
     bind:this={trackElement}
     class="relative h-5 rounded border border-subtle bg-subtle"
     role="group"
-    aria-label={`${translate('workflows.timeline-chain-overview-description')} ${continuationBins.totalCount} continuations, ${continuationBins.binCount} visible markers.`}
+    aria-label={`${translate('workflows.timeline-chain-overview-description')} ${continuationCount} continuations, ${continuationBinCount} visible markers.`}
     onpointermove={dragWindow}
     onpointerup={finishDragging}
     onpointercancel={cancelDragging}
@@ -361,65 +408,92 @@
           preserveAspectRatio="none"
           aria-hidden="true"
           data-testid="timeline-continuation-bins"
-          data-continuation-count={continuationBins.totalCount}
-          data-continuation-bin-count={continuationBins.binCount}
+          data-continuation-count={continuationCount}
+          data-continuation-bin-count={continuationBinCount}
         >
-          <path
-            d={continuationBins.path}
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1"
-            vector-effect="non-scaling-stroke"
-          />
+          {#each continuationSegments as bins, index (index)}
+            <path
+              d={bins.path}
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              vector-effect="non-scaling-stroke"
+            />
+          {/each}
         </svg>
       </div>
-      <div
-        class="absolute -inset-y-1 z-10 box-border touch-none rounded border-[3px] border-interactive bg-transparent shadow-sm"
-        style:left={dragMode === null
-          ? `var(--overview-window-left, ${displayedWindowLeft}%)`
-          : `${displayedWindowLeft}%`}
-        style:width={dragMode === null
-          ? `var(--overview-window-width, ${displayedWindowWidth}%)`
-          : `${displayedWindowWidth}%`}
-        data-testid="timeline-window-position"
-        data-window-start-time-ms={windowStartTimeMs}
-        data-window-end-time-ms={visualWindowEndTimeMs}
-        title={translate('workflows.timeline-current-window')}
-      >
-        <button
-          type="button"
-          class="absolute inset-0 z-10 touch-none bg-transparent p-0 {onWindowMove
-            ? 'cursor-grab active:cursor-grabbing'
-            : 'pointer-events-none'}"
-          aria-label={translate('workflows.timeline-move-window')}
-          data-testid="timeline-window-move"
-          onpointerdown={(event) => startDragging(event, 'move')}
-        ></button>
-        <button
-          type="button"
-          class="absolute -bottom-1.5 -left-2 -top-1.5 z-20 w-4 cursor-ew-resize touch-none bg-transparent p-0"
-          aria-label={translate('workflows.timeline-resize-window-start')}
-          data-testid="timeline-window-resize-start"
-          onpointerdown={(event) => startDragging(event, 'resize-start')}
-          onkeydown={(event) => resizeWithKeyboard(event, 'start')}
+      {#each gaps as gap (gap.key)}
+        <div
+          class="pointer-events-none absolute inset-y-0 border-x border-dashed border-warning bg-warning/10"
+          style:left="{gap.left}%"
+          style:width="{gap.width}%"
+          data-timeline-chain-gap={gap.key}
+          title={`Workflow history is unavailable (${gap.before}, ${gap.after})`}
+        ></div>
+      {/each}
+      {#if leadingBoundary && leadingBoundary.kind !== 'known-chain-start'}
+        <div
+          class="pointer-events-none absolute inset-y-0 left-0 w-1 border-r border-dashed border-warning bg-warning/20"
+          data-timeline-chain-boundary={leadingBoundary.kind}
+          title={`Earlier workflow history is ${leadingBoundary.kind}`}
+        ></div>
+      {/if}
+      {#if trailingBoundary && trailingBoundary.kind !== 'known-chain-end' && trailingBoundary.kind !== 'live-edge'}
+        <div
+          class="pointer-events-none absolute inset-y-0 right-0 w-1 border-l border-dashed border-warning bg-warning/20"
+          data-timeline-chain-boundary={trailingBoundary.kind}
+          title={`Later workflow history is ${trailingBoundary.kind}`}
+        ></div>
+      {/if}
+      {#if windowStartTimeMs !== undefined}
+        <div
+          class="absolute -inset-y-1 z-10 box-border touch-none rounded border-[3px] border-interactive bg-transparent shadow-sm"
+          style:left={dragMode === null
+            ? `var(--overview-window-left, ${displayedWindowLeft}%)`
+            : `${displayedWindowLeft}%`}
+          style:width={dragMode === null
+            ? `var(--overview-window-width, ${displayedWindowWidth}%)`
+            : `${displayedWindowWidth}%`}
+          data-testid="timeline-window-position"
+          data-window-start-time-ms={windowStartTimeMs}
+          data-window-end-time-ms={visualWindowEndTimeMs}
+          title={translate('workflows.timeline-current-window')}
         >
-          <span
-            class="absolute bottom-1 left-1/2 top-1 w-0.5 -translate-x-1/2 rounded bg-interactive"
-          ></span>
-        </button>
-        <button
-          type="button"
-          class="absolute -bottom-1.5 -right-2 -top-1.5 z-20 w-4 cursor-ew-resize touch-none bg-transparent p-0"
-          aria-label={translate('workflows.timeline-resize-window-end')}
-          data-testid="timeline-window-resize-end"
-          onpointerdown={(event) => startDragging(event, 'resize-end')}
-          onkeydown={(event) => resizeWithKeyboard(event, 'end')}
-        >
-          <span
-            class="absolute bottom-1 left-1/2 top-1 w-0.5 -translate-x-1/2 rounded bg-interactive"
-          ></span>
-        </button>
-      </div>
+          <button
+            type="button"
+            class="absolute inset-0 z-10 touch-none bg-transparent p-0 {onWindowMove
+              ? 'cursor-grab active:cursor-grabbing'
+              : 'pointer-events-none'}"
+            aria-label={translate('workflows.timeline-move-window')}
+            data-testid="timeline-window-move"
+            onpointerdown={(event) => startDragging(event, 'move')}
+          ></button>
+          <button
+            type="button"
+            class="absolute -bottom-1.5 -left-2 -top-1.5 z-20 w-4 cursor-ew-resize touch-none bg-transparent p-0"
+            aria-label={translate('workflows.timeline-resize-window-start')}
+            data-testid="timeline-window-resize-start"
+            onpointerdown={(event) => startDragging(event, 'resize-start')}
+            onkeydown={(event) => resizeWithKeyboard(event, 'start')}
+          >
+            <span
+              class="absolute bottom-1 left-1/2 top-1 w-0.5 -translate-x-1/2 rounded bg-interactive"
+            ></span>
+          </button>
+          <button
+            type="button"
+            class="absolute -bottom-1.5 -right-2 -top-1.5 z-20 w-4 cursor-ew-resize touch-none bg-transparent p-0"
+            aria-label={translate('workflows.timeline-resize-window-end')}
+            data-testid="timeline-window-resize-end"
+            onpointerdown={(event) => startDragging(event, 'resize-end')}
+            onkeydown={(event) => resizeWithKeyboard(event, 'end')}
+          >
+            <span
+              class="absolute bottom-1 left-1/2 top-1 w-0.5 -translate-x-1/2 rounded bg-interactive"
+            ></span>
+          </button>
+        </div>
+      {/if}
     {/if}
   </div>
 </div>

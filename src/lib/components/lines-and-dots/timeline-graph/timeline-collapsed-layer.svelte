@@ -6,10 +6,10 @@
   import { getCollapsedSegmentWindow } from './collapsed-segment-window';
   import { RADIUS, ROW_HEIGHT } from './constants';
 
-  import type { TimelineScale } from './timeline-scale.svelte';
+  import type { TimelineScaleProjection } from './timeline-scale.svelte';
 
   type Props = {
-    scale: TimelineScale;
+    scale: TimelineScaleProjection;
     timelineHeight: number;
     // Visible pixel band; the zigzag renders only across this range instead of
     // the full canvas height so Chromium never rasterizes a giant pattern fill.

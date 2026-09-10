@@ -10,6 +10,15 @@ export interface ScaledSegment {
   isCollapsible: boolean;
 }
 
+export type TimelineScaleProjection = Readonly<{
+  segments: readonly ScaledSegment[];
+  expandedPxPerMs: number;
+  liveEdgePxPerMs: number;
+  totalWorldWidthPx: number;
+  project: (timeMs: number) => number;
+  unproject: (worldPx: number) => number;
+}>;
+
 export const DEFAULT_COLLAPSED_WIDTH_PX = 48;
 export const DEFAULT_EXPANDED_DURATION_PER_VIEWPORT_MS = 60_000;
 

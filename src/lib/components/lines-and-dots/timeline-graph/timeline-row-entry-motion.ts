@@ -5,14 +5,19 @@ export const MAX_ANIMATED_TIMELINE_GROUPS = 1_000;
  * rebuilding its complete key list is unnecessary work and the settle delay can
  * starve a busy live window: new rows remain hidden while events keep arriving.
  * Large histories therefore update the virtual row pool without entry motion.
+ * Multi-run scenes also commit without per-row motion so activities cannot
+ * temporarily escape the run and chain frames that group them.
  */
 export const shouldAnimateTimelineRowEntries = ({
   totalGroupCount,
   layoutRowCount,
+  runCount = 1,
 }: {
   totalGroupCount: number;
   layoutRowCount: number;
+  runCount?: number;
 }): boolean =>
+  runCount <= 1 &&
   totalGroupCount <= MAX_ANIMATED_TIMELINE_GROUPS &&
   layoutRowCount <= MAX_ANIMATED_TIMELINE_GROUPS;
 

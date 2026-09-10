@@ -11,7 +11,7 @@ test.describe('Timeline display mode', () => {
     await mockWorkflowApis(page);
   });
 
-  test('fits full duration within the sliding-window view', async ({
+  test('keeps full duration separate from the sliding-window view', async ({
     page,
   }) => {
     await page.goto(timelineUrl);
@@ -25,8 +25,12 @@ test.describe('Timeline display mode', () => {
     await expect(fixedWindow).toHaveAttribute('aria-pressed', 'true');
     await expect(classic).toHaveAttribute('aria-pressed', 'false');
     await expect(timeline).toHaveAttribute('data-display-mode', 'fixed-window');
+    await expect(page.locator('[data-chain-load-generation]')).toHaveAttribute(
+      'data-chain-load-generation',
+      '1',
+    );
     await expect(page.getByTestId('timeline-chain-overview')).toBeVisible();
-    await expect(zoomControls.locator(':scope > *')).toHaveCount(4);
+    await expect(zoomControls.locator(':scope > *')).toHaveCount(3);
     expect(
       await zoomControls
         .locator(':scope > *')
@@ -34,7 +38,6 @@ test.describe('Timeline display mode', () => {
           controls.map((control) => control.getAttribute('data-testid')),
         ),
     ).toEqual([
-      'timeline-full-duration',
       'timeline-zoom-out',
       'timeline-window-duration',
       'timeline-zoom-in',
@@ -42,11 +45,39 @@ test.describe('Timeline display mode', () => {
 
     await fullDuration.click();
 
-    await expect(page).not.toHaveURL(/timeline_mode/);
-    await expect(fixedWindow).toHaveAttribute('aria-pressed', 'true');
+    await expect(page).toHaveURL(/timeline_mode=full-duration/);
+    await expect(fixedWindow).toHaveAttribute('aria-pressed', 'false');
     await expect(fullDuration).toHaveAttribute('aria-pressed', 'true');
-    await expect(timeline).toHaveAttribute('data-display-mode', 'fixed-window');
+    await expect(timeline).toHaveAttribute(
+      'data-display-mode',
+      'full-duration',
+    );
     await expect(page.getByTestId('timeline-chain-overview')).toBeVisible();
+    await expect(page.getByTestId('timeline-window-position')).toBeHidden();
+    await expect(zoomControls).toBeHidden();
+    expect(
+      await timeline.evaluate((element) => ({
+        renderIds: new Set(
+          [...element.querySelectorAll('[data-render-id]')].map((layer) =>
+            layer.getAttribute('data-render-id'),
+          ),
+        ).size,
+        projectionRevisions: new Set(
+          [...element.querySelectorAll('[data-projection-revision]')].map(
+            (layer) => layer.getAttribute('data-projection-revision'),
+          ),
+        ).size,
+        presentationRevisions: new Set(
+          [...element.querySelectorAll('[data-presentation-revision]')].map(
+            (layer) => layer.getAttribute('data-presentation-revision'),
+          ),
+        ).size,
+      })),
+    ).toEqual({
+      renderIds: 1,
+      projectionRevisions: 1,
+      presentationRevisions: 1,
+    });
 
     await classic.click();
 
@@ -73,6 +104,7 @@ test.describe('Timeline display mode', () => {
       .getByRole('group');
     const position = page.getByTestId('timeline-window-position');
     const move = page.getByTestId('timeline-window-move');
+    await move.scrollIntoViewIfNeeded();
     await expect(move).toBeVisible();
 
     const trackBox = await track.boundingBox();

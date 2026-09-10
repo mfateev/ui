@@ -16,8 +16,14 @@ export type TimelineRunFrameCandidate = {
   label: string;
   status: WorkflowStatus;
   live: boolean;
-  startWorldPx: number;
-  endWorldPx: number;
+  /**
+   * Keep source times in the buffered scene, not projected pixels. The
+   * fixed-window scale continues moving while a structural scene update is
+   * deferred, so cached pixels would drift away from rows projected at paint
+   * time.
+   */
+  startTimeMs: number;
+  endTimeMs: number;
   startBoundaryKnown: boolean;
   endBoundaryKnown: boolean;
   workflowKey?: string;
@@ -56,13 +62,15 @@ export function getParticipatingRunFrames({
     ) {
       return [];
     }
-    const startWorldPx = project(run.startTimeMs);
-    const endWorldPx = project(endTimeMs);
-    const intersects = intersectPixelRanges(
-      { startPx: startWorldPx, endPx: endWorldPx },
-      visibleRange,
-    );
-    if (!intersects) return [];
+    if (!visibleTimeRange) {
+      const startWorldPx = project(run.startTimeMs);
+      const endWorldPx = project(endTimeMs);
+      const intersects = intersectPixelRanges(
+        { startPx: startWorldPx, endPx: endWorldPx },
+        visibleRange,
+      );
+      if (!intersects) return [];
+    }
     return [
       {
         kind: 'run' as const,
@@ -71,8 +79,8 @@ export function getParticipatingRunFrames({
         label: run.runId,
         status: run.status,
         live,
-        startWorldPx,
-        endWorldPx,
+        startTimeMs: run.startTimeMs,
+        endTimeMs,
         startBoundaryKnown: true,
         endBoundaryKnown: !live,
       },
@@ -165,7 +173,7 @@ export function getChainFrameCandidate({
   if (runs.length < (allowSingleRun ? 1 : 2) || participatingRuns.length === 0)
     return null;
   const orderedParticipatingRuns = [...participatingRuns].sort(
-    (a, b) => a.startWorldPx - b.startWorldPx || a.runId.localeCompare(b.runId),
+    (a, b) => a.startTimeMs - b.startTimeMs || a.runId.localeCompare(b.runId),
   );
   const firstParticipatingRun = orderedParticipatingRuns[0];
   const lastParticipatingRun = orderedParticipatingRuns.at(-1)!;
@@ -176,8 +184,8 @@ export function getChainFrameCandidate({
     label: workflowId,
     status: lastParticipatingRun.status,
     live,
-    startWorldPx: firstParticipatingRun.startWorldPx,
-    endWorldPx: lastParticipatingRun.endWorldPx,
+    startTimeMs: firstParticipatingRun.startTimeMs,
+    endTimeMs: lastParticipatingRun.endTimeMs,
     startBoundaryKnown: true,
     endBoundaryKnown: !live,
   };

@@ -8,6 +8,30 @@ import {
 export const DEFAULT_TIMELINE_DISPLAY_MODE: TimelineDisplayMode =
   'full-duration';
 
+export function timelineWorldStartTimeMs({
+  displayMode,
+  aggregateStartTimeMs,
+  aggregateEndTimeMs,
+  knownChainStartTimeMs,
+  fixedWindowDurationMs,
+  live,
+}: {
+  displayMode: TimelineDisplayMode;
+  aggregateStartTimeMs: number;
+  aggregateEndTimeMs: number;
+  knownChainStartTimeMs?: number;
+  fixedWindowDurationMs: number;
+  live: boolean;
+}): number {
+  const knownStartTimeMs = Math.min(
+    knownChainStartTimeMs ?? aggregateStartTimeMs,
+    aggregateStartTimeMs,
+  );
+  if (displayMode !== 'fixed-window' || !live) return knownStartTimeMs;
+
+  return Math.min(knownStartTimeMs, aggregateEndTimeMs - fixedWindowDurationMs);
+}
+
 export function expandedDurationPerViewportMs({
   displayMode,
   viewportWidthPx,

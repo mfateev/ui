@@ -12,7 +12,7 @@
     screenToTimelineWorld,
   } from './timeline-axis-geometry';
 
-  import type { TimelineScale } from './timeline-scale.svelte';
+  import type { TimelineScaleProjection } from './timeline-scale.svelte';
 
   type Props = {
     x1: number;
@@ -22,7 +22,7 @@
     bandTop?: number;
     bandHeight?: number;
     startTime: string | Timestamp;
-    scale: TimelineScale;
+    scale: TimelineScaleProjection;
     viewportOffsetPx: number;
   };
   let {

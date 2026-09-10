@@ -56,9 +56,14 @@
   import { TimelineIntervalLoader } from '$lib/services/timeline-interval-loader';
   import type { TimelineRunModel } from '$lib/services/timeline-run-model';
   import {
-    loadWorkflowChainOverview,
-    mergeWorkflowChainOverviewRuns,
-    reconcileWorkflowChainOverviewProgress,
+    appendTrustedChainTransition,
+    type ChainIndexSnapshot,
+    chainRunEndTimeMs,
+    selectChainIndexInterval,
+  } from '$lib/services/workflow-chain-index';
+  import {
+    loadWorkflowChainIndex,
+    workflowChainIndexOverviewSegments,
     type WorkflowChainOverviewRun,
   } from '$lib/services/workflow-chain-overview';
   import { clearActives } from '$lib/stores/active-events';
@@ -86,10 +91,40 @@
       ? validTimeToDate(eventBuffer.firstEvent.eventTime).toISOString()
       : undefined,
   );
-  const workflowId = $derived(workflow?.id);
-  const firstRunId = $derived(
-    workflow?.firstExecutionRunId || workflowRunCtx.chainRunId,
-  );
+  const workflowId = $derived(workflow?.id || page.params.workflow);
+  type ChainScopeIdentity = Readonly<{
+    namespace: string;
+    workflowId: string;
+    firstRunId: string;
+  }>;
+  let chainScopeIdentity = $state.raw<ChainScopeIdentity | null>(null);
+  $effect(() => {
+    const scopeNamespace = namespace;
+    const scopeWorkflowId = workflowId;
+    const authoritativeFirstRunId = workflow?.firstExecutionRunId;
+    const routeRunId = workflowRunCtx.chainRunId;
+    if (!scopeWorkflowId || !routeRunId) {
+      chainScopeIdentity = null;
+      return;
+    }
+    const existing = untrack(() => chainScopeIdentity);
+    const sameWorkflow =
+      existing?.namespace === scopeNamespace &&
+      existing.workflowId === scopeWorkflowId;
+    const nextFirstRunId =
+      authoritativeFirstRunId ||
+      (sameWorkflow ? existing.firstRunId : routeRunId);
+    if (sameWorkflow && existing.firstRunId === nextFirstRunId) {
+      return;
+    }
+    chainScopeIdentity = Object.freeze({
+      namespace: scopeNamespace,
+      workflowId: scopeWorkflowId,
+      firstRunId: nextFirstRunId,
+    });
+  });
+  const firstRunId = $derived(chainScopeIdentity?.firstRunId);
+  const currentRunId = $derived(workflow?.runId || page.params.run);
 
   const urlParams = $derived(parseEventFilterParams(page.url));
   $effect(() => {
@@ -113,13 +148,19 @@
     page.url.searchParams.get('timeline_instrumentation') === 'on',
   );
   const requestedDisplayMode = $derived(urlParams.timelineDisplayMode);
-  const displayMode = $derived(
-    requestedDisplayMode === 'full-duration'
-      ? 'fixed-window'
-      : requestedDisplayMode,
+  const displayMode = $derived(requestedDisplayMode);
+  type IntervalRenderCommit = Readonly<{
+    id: object;
+    requestEpoch: number;
+    chainIndexId: object;
+    runs: readonly TimelineRun[];
+    releases: readonly (() => void)[];
+    truncated: boolean;
+  }>;
+  let committedInterval = $state.raw<IntervalRenderCommit | null>(null);
+  const intervalTimelineRuns = $derived(
+    committedInterval ? [...committedInterval.runs] : [],
   );
-  let intervalTimelineRuns = $state.raw<TimelineRun[]>([]);
-  let intervalSceneGeneration = $state.raw<object>({});
 
   const bufferGroups = $derived.by(() => {
     // The buffer owns its run identity. Never infer that identity from the
@@ -139,6 +180,7 @@
     const retained = workflowRunCtx.retainedRuns.map((run) => ({
       ...run,
       active: false,
+      sourceState: 'closing-unsealed' as const,
     }));
     if (!workflow) return [...intervalTimelineRuns, ...retained];
     const active: TimelineRun = {
@@ -152,6 +194,7 @@
         0,
       ),
       active: true,
+      sourceState: 'mutable',
     };
     const renderable = getRenderableTimelineRuns({
       retainedRuns: retained,
@@ -170,7 +213,7 @@
         (run) => !localRuns.some(({ runId }) => runId === run.runId),
       ),
       ...localRuns,
-    ].sort((a, b) => a.startTimeMs - b.startTimeMs);
+    ];
   });
 
   const classicGroups = $derived(
@@ -228,34 +271,34 @@
   let timeline = $state<Timeline | ClassicTimeline>();
   let timelineWindowControls = $state<TimelineWindowControls>();
   let timelinePerformanceStats = $state<TimelinePerformanceStats>();
-  let chainOverviewRuns = $state<WorkflowChainOverviewRun[]>([]);
+  let chainIndex = $state.raw<ChainIndexSnapshot | null>(null);
+  const chainOverviewSegments = $derived(
+    chainIndex ? workflowChainIndexOverviewSegments(chainIndex) : [],
+  );
+  const chainOverviewRuns = $derived(
+    chainOverviewSegments.flatMap((segment) => [...segment.runs]),
+  );
   let chainOverviewLoading = $state(false);
-  let legacyFullDurationFitKey = '';
   let chainLoadGeneration = 0;
+  let chainLoadDiagnostic = $state(0);
+  let chainOverviewController: AbortController | null = null;
+  let inFlightChainScan: {
+    key: string;
+    promise: Promise<ChainIndexSnapshot | null>;
+  } | null = null;
   const intervalLoader = new TimelineIntervalLoader();
   let intervalLoadGeneration = 0;
   let intervalLoading = $state(false);
-  let intervalModelReleases: (() => void)[] = [];
-  let intervalTruncated = $state(false);
+  let navigationEpoch = 0;
+  let navigationController: AbortController | null = null;
   let initialClosedWindowLoadKey = '';
-
-  $effect(() => {
-    if (requestedDisplayMode !== 'full-duration') {
-      legacyFullDurationFitKey = '';
-      return;
-    }
-    const fitKey = `${workflowId}:${firstRunId}`;
-    if (
-      !timelineWindowControls ||
-      chainOverviewLoading ||
-      chainOverviewRuns.length === 0 ||
-      legacyFullDurationFitKey === fitKey
-    ) {
-      return;
-    }
-    timelineWindowControls.fitToFullDuration();
-    void tick().then(() => loadCurrentTimelineWindow());
-    legacyFullDurationFitKey = fitKey;
+  const timelineAtChainBeginning = $derived.by(() => {
+    const chainStartTimeMs = chainOverviewRuns[0]?.startTimeMs;
+    if (chainStartTimeMs === undefined || !timelineWindowControls) return false;
+    return (
+      timelineWindowControls.atBeginning &&
+      timelineWindowControls.windowStartTimeMs <= chainStartTimeMs + 1
+    );
   });
 
   $effect(() => {
@@ -281,101 +324,173 @@
   });
 
   const releaseIntervalModels = () => {
-    for (const release of intervalModelReleases) release();
-    intervalModelReleases = [];
+    const interval = untrack(() => committedInterval);
+    for (const release of interval?.releases ?? []) release();
+    committedInterval = null;
   };
 
   onDestroy(() => {
+    chainOverviewController?.abort();
+    navigationController?.abort();
     releaseIntervalModels();
     intervalLoader.dispose();
   });
 
+  const scanChainOverview = ({
+    scanNamespace,
+    scanWorkflowId,
+    scanFirstRunId,
+    scanCurrentRunId,
+    reset,
+  }: {
+    scanNamespace: string;
+    scanWorkflowId: string;
+    scanFirstRunId: string;
+    scanCurrentRunId: string;
+    reset: boolean;
+  }): Promise<ChainIndexSnapshot | null> => {
+    const key = `${scanNamespace}:${scanWorkflowId}:${scanFirstRunId}:${scanCurrentRunId}`;
+    if (
+      !reset &&
+      inFlightChainScan?.key === key &&
+      !chainOverviewController?.signal.aborted
+    ) {
+      return inFlightChainScan.promise;
+    }
+    chainOverviewController?.abort();
+    const controller = new AbortController();
+    chainOverviewController = controller;
+    const generation = ++chainLoadGeneration;
+    chainLoadDiagnostic = generation;
+    if (reset) chainIndex = null;
+    chainOverviewLoading = true;
+
+    const promise = (async () => {
+      try {
+        const snapshot = await loadWorkflowChainIndex({
+          namespace: scanNamespace,
+          workflowId: scanWorkflowId,
+          firstRunId: scanFirstRunId,
+          currentRunId: scanCurrentRunId,
+          signal: controller.signal,
+          generation,
+        });
+        if (controller.signal.aborted || generation !== chainLoadGeneration) {
+          return null;
+        }
+        chainIndex = snapshot;
+        return snapshot;
+      } catch (error: unknown) {
+        if (
+          !controller.signal.aborted &&
+          !(error instanceof DOMException && error.name === 'AbortError')
+        ) {
+          console.error('Unable to load the workflow chain overview.', error);
+        }
+        return null;
+      } finally {
+        if (generation === chainLoadGeneration) {
+          if (chainOverviewController === controller) {
+            chainOverviewController = null;
+          }
+          chainOverviewLoading = false;
+          if (inFlightChainScan?.key === key) inFlightChainScan = null;
+        }
+      }
+    })();
+    inFlightChainScan = { key, promise };
+    return promise;
+  };
+
+  const refreshChainOverview = () => {
+    if (!workflowId || !firstRunId || !currentRunId) {
+      return Promise.resolve(null);
+    }
+    return scanChainOverview({
+      scanNamespace: namespace,
+      scanWorkflowId: workflowId,
+      scanFirstRunId: firstRunId,
+      scanCurrentRunId: currentRunId,
+      reset: false,
+    });
+  };
+
   $effect(() => {
-    if (!workflowId || !firstRunId) {
+    const scanNamespace = namespace;
+    const scanWorkflowId = workflowId;
+    const scanFirstRunId = firstRunId;
+    const chainRouteRunId = workflowRunCtx.chainRunId;
+    const scanCurrentRunId = untrack(() => currentRunId);
+    if (
+      !scanWorkflowId ||
+      !scanFirstRunId ||
+      !chainRouteRunId ||
+      !scanCurrentRunId
+    ) {
+      chainOverviewController?.abort();
       intervalLoadGeneration += 1;
       intervalLoader.abort();
       releaseIntervalModels();
-      chainOverviewRuns = [];
-      intervalTimelineRuns = [];
-      intervalTruncated = false;
+      chainIndex = null;
       intervalLoading = false;
       chainOverviewLoading = false;
       return;
     }
 
-    const controller = new AbortController();
-    const generation = ++chainLoadGeneration;
     intervalLoadGeneration += 1;
     intervalLoader.abort();
-    chainOverviewRuns = [];
-    intervalTimelineRuns = [];
     releaseIntervalModels();
-    chainOverviewLoading = true;
+    intervalLoading = false;
+    void scanChainOverview({
+      scanNamespace,
+      scanWorkflowId,
+      scanFirstRunId,
+      scanCurrentRunId,
+      reset: true,
+    }).then((snapshot) => {
+      if (!snapshot || requestedDisplayMode !== 'full-duration') return;
+      const first = snapshot.segments[0]?.runs[0];
+      const last = snapshot.segments.at(-1)?.runs.at(-1);
+      if (!first || !last) return;
+      const endTimeMs = chainRunEndTimeMs(last, Date.now());
+      void loadTimelineInterval(
+        first.startTimeMs,
+        Math.max(1, endTimeMs - first.startTimeMs),
+        snapshot,
+      );
+    });
 
-    const loadChain = async () => {
-      try {
-        const runs = await loadWorkflowChainOverview({
-          namespace,
-          workflowId,
-          firstRunId,
-          signal: controller.signal,
-          generation,
-          onRun: (progress) => {
-            if (
-              controller.signal.aborted ||
-              progress.generation !== chainLoadGeneration ||
-              progress.firstRunId !== firstRunId
-            ) {
-              return;
-            }
-            reconcileWorkflowChainOverviewProgress(chainOverviewRuns, progress);
-          },
-        });
-        if (controller.signal.aborted || generation !== chainLoadGeneration) {
-          return;
-        }
-        if (chainOverviewRuns.length === 0 && runs.length > 0) {
-          chainOverviewRuns = runs;
-        }
-      } catch (error: unknown) {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          console.error('Unable to load the workflow chain overview.', error);
-        }
-      } finally {
-        if (!controller.signal.aborted) chainOverviewLoading = false;
-      }
-    };
-
-    void loadChain();
-
-    return () => controller.abort();
+    return () => chainOverviewController?.abort();
   });
 
   $effect(() => {
     const currentWorkflow = workflow;
     const retainedRuns = workflowRunCtx.retainedRuns;
     if (!currentWorkflow) return;
-    const existingRuns = untrack(() => chainOverviewRuns);
-
-    const updates: WorkflowChainOverviewRun[] = retainedRuns.map((run) => ({
-      runId: run.runId,
-      status: run.status,
-      startTimeMs: run.startTimeMs,
-      endTimeMs: run.endTimeMs,
-      nextRunId: run.successorRunId,
-      transitionToNext: run.transitionFromPrevious,
-    }));
-    updates.push({
-      runId: currentWorkflow.runId,
-      status: currentWorkflow.status,
-      startTimeMs: Date.parse(currentWorkflow.startTime),
-      endTimeMs:
-        Date.parse(currentWorkflow.endTime) ||
-        existingRuns.find(({ runId }) => runId === currentWorkflow.runId)
-          ?.endTimeMs ||
-        Date.now(),
+    const existing = untrack(() => chainIndex);
+    if (!existing || existing.currentRunId === currentWorkflow.runId) return;
+    const predecessor = retainedRuns.find(
+      (run) => run.successorRunId === currentWorkflow.runId,
+    );
+    if (!predecessor) return;
+    chainIndex = appendTrustedChainTransition({
+      index: existing,
+      predecessorRunId: predecessor.runId,
+      successor: {
+        runId: currentWorkflow.runId,
+        status: currentWorkflow.status,
+        startTimeMs: Date.parse(currentWorkflow.startTime),
+        end:
+          currentWorkflow.status === 'Running' ||
+          currentWorkflow.status === 'Paused'
+            ? { kind: 'live' }
+            : {
+                kind: 'closed',
+                timeMs: Date.parse(currentWorkflow.endTime),
+              },
+      },
+      transition: predecessor.transitionFromPrevious ?? 'continue-as-new',
     });
-    chainOverviewRuns = mergeWorkflowChainOverviewRuns(existingRuns, updates);
   });
 
   const handleTimelineInit = (t: Timeline | ClassicTimeline) => {
@@ -385,24 +500,13 @@
   const loadTimelineInterval = async (
     startTimeMs: number,
     durationMs = timelineWindowControls?.windowDurationMs,
+    exactIndex = chainIndex,
+    requestEpoch = ++navigationEpoch,
   ) => {
-    if (!workflowId || !timelineWindowControls) return;
+    if (!workflowId) return;
     const generation = ++intervalLoadGeneration;
     intervalLoader.abort();
     intervalLoading = true;
-
-    const endTimeMs = startTimeMs + (durationMs ?? 0);
-    const firstIndex = chainOverviewRuns.findIndex(
-      (run) => run.endTimeMs >= startTimeMs,
-    );
-    if (firstIndex < 0) return;
-    const lastIndex = chainOverviewRuns.findLastIndex(
-      (run) => run.startTimeMs <= endTimeMs,
-    );
-    const requestedRuns = chainOverviewRuns.slice(
-      Math.max(0, firstIndex - 1),
-      Math.min(chainOverviewRuns.length, Math.max(firstIndex, lastIndex) + 2),
-    );
 
     const toTimelineGroupCollection = (
       model: TimelineRunModel,
@@ -476,11 +580,37 @@
         ),
         activeTimeRanges: model.activeTimeRanges,
         active: false,
+        sourceState:
+          run.status === 'Running' || run.status === 'Paused'
+            ? ('closing-unsealed' as const)
+            : ('sealed' as const),
         successorRunId: run.nextRunId,
       };
     };
 
     try {
+      if (!exactIndex) return;
+      const endTimeMs = startTimeMs + (durationMs ?? 0);
+      const selection = selectChainIndexInterval({
+        index: exactIndex,
+        startTimeMs,
+        endTimeMs,
+        liveTimeMs: Date.now(),
+      });
+      const selectedSegment =
+        selection.segments.find((segment) =>
+          segment.runs.some(({ runId }) => runId === exactIndex.currentRunId),
+        ) ?? selection.segments[0];
+      if (!selectedSegment) return;
+      const requestedRuns: WorkflowChainOverviewRun[] =
+        selectedSegment.runs.map((run) => ({
+          runId: run.runId,
+          status: run.status,
+          startTimeMs: run.startTimeMs,
+          endTimeMs: chainRunEndTimeMs(run, Date.now()),
+          nextRunId: run.successorRunId,
+          transitionToNext: run.transitionToSuccessor,
+        }));
       const result = await intervalLoader.load({
         namespace,
         workflowId,
@@ -488,49 +618,52 @@
         startTimeMs,
         endTimeMs,
       });
-      if (generation !== intervalLoadGeneration) return;
+      if (
+        generation !== intervalLoadGeneration ||
+        requestEpoch !== navigationEpoch ||
+        exactIndex.id !== chainIndex?.id
+      ) {
+        return;
+      }
+      const order = new Map(
+        requestedRuns.map(({ runId }, index) => [runId, index]),
+      );
       const models = [...result.models].sort(
         (left, right) =>
-          left.run.startTimeMs - right.run.startTimeMs ||
-          left.run.runId.localeCompare(right.run.runId),
+          (order.get(left.run.runId) ?? Number.MAX_SAFE_INTEGER) -
+          (order.get(right.run.runId) ?? Number.MAX_SAFE_INTEGER),
       );
       const nextTimelineRuns: TimelineRun[] = [];
-      const previousTimelineRuns = untrack(() => intervalTimelineRuns);
-      let generationChecked = false;
-      let initialBlockPublished = false;
-      const publishProgress = () => {
-        if (!generationChecked) {
-          const previousIsStablePrefix = previousTimelineRuns.every(
-            ({ runId }, index) => models[index]?.run.runId === runId,
-          );
-          if (!previousIsStablePrefix) {
-            intervalSceneGeneration = {};
-          }
-          generationChecked = true;
-        }
-        intervalTimelineRuns = [...nextTimelineRuns];
-      };
       let sliceStartedAt = performance.now();
       for (const model of models) {
         nextTimelineRuns.push(toTimelineRun(model));
-        if (!initialBlockPublished) {
-          publishProgress();
-          initialBlockPublished = true;
-        }
         if (performance.now() - sliceStartedAt < 8) continue;
         await new Promise<void>((resolve) =>
           requestAnimationFrame(() => resolve()),
         );
-        if (generation !== intervalLoadGeneration) return;
+        if (
+          generation !== intervalLoadGeneration ||
+          requestEpoch !== navigationEpoch
+        ) {
+          return;
+        }
         sliceStartedAt = performance.now();
       }
-      const previousReleases = intervalModelReleases;
-      intervalModelReleases = models.map((model) => model.retain());
-      intervalTimelineRuns = nextTimelineRuns;
-      intervalTruncated = result.truncation.some(
-        ({ affectsSelectedWindow }) => affectsSelectedWindow,
-      );
-      for (const release of previousReleases) release();
+      const previous = untrack(() => committedInterval);
+      committedInterval = Object.freeze({
+        id: Object.freeze({}),
+        requestEpoch,
+        chainIndexId: exactIndex.id,
+        runs: Object.freeze(nextTimelineRuns),
+        releases: Object.freeze(models.map((model) => model.retain())),
+        truncated:
+          selection.segments.length > 1 ||
+          result.truncation.some(({ affectsSelectedWindow }) =>
+            Boolean(affectsSelectedWindow),
+          ),
+      });
+      await tick();
+      for (const release of previous?.releases ?? []) release();
     } finally {
       if (generation === intervalLoadGeneration) intervalLoading = false;
     }
@@ -561,12 +694,6 @@
     runTimelineWindowControl(
       direction === 'in' ? controls.zoomIn : controls.zoomOut,
     );
-  };
-
-  const fitTimelineWindowToFullDuration = () => {
-    const controls = timelineWindowControls;
-    if (!controls) return;
-    runTimelineWindowControl(controls.fitToFullDuration);
   };
 
   const moveTimelineWindow = (startTimeMs: number) => {
@@ -604,15 +731,77 @@
     );
   };
 
+  const beginNavigation = () => {
+    navigationController?.abort();
+    navigationController = new AbortController();
+    return {
+      epoch: ++navigationEpoch,
+      signal: navigationController.signal,
+    };
+  };
+
   const jumpTimelineToBeginning = () => {
-    timelineWindowControls?.jumpToBeginning();
-    const chainStartTimeMs = chainOverviewRuns[0]?.startTimeMs;
-    if (chainStartTimeMs === undefined) return;
-    void loadTimelineInterval(chainStartTimeMs).catch((error: unknown) => {
-      if (!(error instanceof DOMException && error.name === 'AbortError')) {
-        console.error('Unable to load the beginning of the timeline.', error);
-      }
-    });
+    const request = beginNavigation();
+    timelineWindowControls?.pause();
+    void refreshChainOverview()
+      .then(async (snapshot) => {
+        if (
+          !snapshot ||
+          request.signal.aborted ||
+          request.epoch !== navigationEpoch
+        ) {
+          return;
+        }
+        const earliestAvailable = snapshot.segments[0]?.runs[0];
+        if (!earliestAvailable) return;
+        await loadTimelineInterval(
+          earliestAvailable.startTimeMs,
+          timelineWindowControls?.windowDurationMs,
+          snapshot,
+          request.epoch,
+        );
+        if (request.signal.aborted || request.epoch !== navigationEpoch) return;
+        timelineWindowControls?.moveToTime(earliestAvailable.startTimeMs);
+        timelineWindowControls?.pause();
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.error('Unable to load the beginning of the timeline.', error);
+        }
+      });
+  };
+
+  const jumpTimelineToCurrent = () => {
+    const request = beginNavigation();
+    void refreshChainOverview()
+      .then(async (snapshot) => {
+        if (
+          !snapshot ||
+          request.signal.aborted ||
+          request.epoch !== navigationEpoch
+        ) {
+          return;
+        }
+        const current = snapshot.segments
+          .flatMap((segment) => segment.runs)
+          .find(({ runId }) => runId === snapshot.currentRunId);
+        if (!current) return;
+        const durationMs = timelineWindowControls?.windowDurationMs ?? 1;
+        const endTimeMs = chainRunEndTimeMs(current, Date.now());
+        await loadTimelineInterval(
+          endTimeMs - durationMs,
+          durationMs,
+          snapshot,
+          request.epoch,
+        );
+        if (request.signal.aborted || request.epoch !== navigationEpoch) return;
+        timelineWindowControls?.jumpToCurrent();
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.error('Unable to load the current timeline.', error);
+        }
+      });
   };
 
   const onToggleIdleTime = () => {
@@ -645,7 +834,12 @@
   this block). The controls bar sticks below the top-nav while the page scrolls
   the timeline past it; the timeline virtualizes itself from the visible page band.
 -->
-<div>
+<div
+  data-chain-load-generation={chainLoadDiagnostic}
+  data-chain-first-run-id={firstRunId}
+  data-chain-current-run-id={currentRunId}
+  data-chain-route-run-id={workflowRunCtx.chainRunId}
+>
   <div
     class="surface-background sticky top-0 z-[11] flex flex-wrap items-center justify-between gap-2 border-b border-subtle pb-2 md:top-[var(--top-nav-height)] md:pt-2 xl:gap-8"
   >
@@ -658,6 +852,14 @@
         role="group"
         aria-label={translate('workflows.timeline-view')}
       >
+        <ToggleButton
+          active={displayMode === 'full-duration'}
+          data-testid="timeline-full-duration"
+          onclick={() => onDisplayMode('full-duration')}
+          size="sm"
+        >
+          {translate('workflows.timeline-full-duration')}
+        </ToggleButton>
         <ToggleButton
           active={displayMode === 'fixed-window'}
           data-testid="timeline-fixed-window"
@@ -681,15 +883,6 @@
           aria-label={translate('workflows.timeline-zoom-controls')}
           data-testid="timeline-zoom-controls"
         >
-          <ToggleButton
-            active={timelineWindowControls.atFullDuration}
-            disabled={chainOverviewLoading}
-            data-testid="timeline-full-duration"
-            onclick={fitTimelineWindowToFullDuration}
-            size="sm"
-          >
-            {translate('workflows.timeline-full-duration')}
-          </ToggleButton>
           <ToggleButton
             LeadingIcon={IconHyphen}
             aria-label={translate('workflows.timeline-zoom-out')}
@@ -734,8 +927,7 @@
         >
           <ToggleButton
             LeadingIcon={IconArrowLeft}
-            disabled={chainOverviewLoading ||
-              timelineWindowControls.atBeginning}
+            disabled={chainOverviewLoading || timelineAtChainBeginning}
             data-testid="timeline-window-beginning"
             onclick={jumpTimelineToBeginning}
             size="sm"
@@ -764,7 +956,7 @@
             LeadingIcon={IconArrowRight}
             disabled={timelineWindowControls.atCurrent}
             data-testid="timeline-window-current"
-            onclick={timelineWindowControls.jumpToCurrent}
+            onclick={jumpTimelineToCurrent}
             size="sm"
           >
             {translate(
@@ -831,16 +1023,28 @@
   no scroll-offset bridge).
 -->
   {#if workflow}
-    {#if displayMode === 'fixed-window'}
+    {#if displayMode !== 'classic'}
       <TimelineChainOverview
-        runs={chainOverviewRuns}
+        segments={chainOverviewSegments}
         loading={chainOverviewLoading}
-        windowStartTimeMs={timelineWindowControls?.windowStartTimeMs}
-        windowEndTimeMs={timelineWindowControls?.windowEndTimeMs}
-        windowDurationMs={timelineWindowControls?.windowDurationMs}
-        windowMode={timelineWindowControls?.mode}
-        onWindowMove={moveTimelineWindow}
-        onWindowResize={resizeTimelineWindow}
+        windowStartTimeMs={displayMode === 'fixed-window'
+          ? timelineWindowControls?.windowStartTimeMs
+          : undefined}
+        windowEndTimeMs={displayMode === 'fixed-window'
+          ? timelineWindowControls?.windowEndTimeMs
+          : undefined}
+        windowDurationMs={displayMode === 'fixed-window'
+          ? timelineWindowControls?.windowDurationMs
+          : undefined}
+        windowMode={displayMode === 'fixed-window'
+          ? timelineWindowControls?.mode
+          : undefined}
+        onWindowMove={displayMode === 'fixed-window'
+          ? moveTimelineWindow
+          : undefined}
+        onWindowResize={displayMode === 'fixed-window'
+          ? resizeTimelineWindow
+          : undefined}
       />
       {#if instrumentTimelinePerformance}
         <div
@@ -881,7 +1085,8 @@
         disableVirtualization={disableTimelineVirtualization}
         instrumentPerformance={instrumentTimelinePerformance}
         modelLoading={intervalLoading}
-        sceneGeneration={intervalSceneGeneration}
+        sceneGeneration={committedInterval?.id}
+        chainIndexId={chainIndex?.id}
         loading={!historyCtx.fetchComplete}
         totalExpectedEvents={estimatedTotalGroups}
         descMinId={historyCtx.descMinId}
@@ -893,13 +1098,15 @@
           ? workflowRunCtx.chainRunId
           : workflow.runId}
         knownChainStartRunId={workflowRunCtx.chainRunId}
-        chainStartTimeMs={chainOverviewRuns[0]?.startTimeMs}
+        chainStartTimeMs={requestedDisplayMode === 'full-duration'
+          ? chainOverviewRuns[0]?.startTimeMs
+          : undefined}
         bind:windowControls={timelineWindowControls}
         bind:performanceStats={timelinePerformanceStats}
         {timelineRuns}
       />
     {/if}
-    {#if workflowRunCtx.truncation?.affectsVisibleInterval || intervalTruncated}
+    {#if workflowRunCtx.truncation?.affectsVisibleInterval || committedInterval?.truncated}
       <p class="text-muted mt-2 text-sm" role="status">
         {translate('workflows.chained-timeline-truncated')}
       </p>

@@ -4,6 +4,7 @@ import {
   DEFAULT_TIMELINE_DISPLAY_MODE,
   expandedDurationPerViewportMs,
   fixedWindowScaleDurationMs,
+  timelineWorldStartTimeMs,
 } from './timeline-display-mode';
 import { Timespan } from './timespan';
 import type { TimeSegment } from './types';
@@ -57,6 +58,52 @@ describe('expandedDurationPerViewportMs', () => {
         collapsedSegmentCount: 1,
       }),
     ).toBe(Number.POSITIVE_INFINITY);
+  });
+});
+
+describe('timelineWorldStartTimeMs', () => {
+  it('reserves a complete live window before predecessor runs arrive', () => {
+    expect(
+      timelineWorldStartTimeMs({
+        displayMode: 'fixed-window',
+        aggregateStartTimeMs: 50_000,
+        aggregateEndTimeMs: 60_000,
+        fixedWindowDurationMs: 60_000,
+        live: true,
+      }),
+    ).toBe(0);
+  });
+
+  it('preserves an earlier known chain start', () => {
+    expect(
+      timelineWorldStartTimeMs({
+        displayMode: 'fixed-window',
+        aggregateStartTimeMs: 50_000,
+        aggregateEndTimeMs: 60_000,
+        knownChainStartTimeMs: -120_000,
+        fixedWindowDurationMs: 60_000,
+        live: true,
+      }),
+    ).toBe(-120_000);
+  });
+
+  it('does not pad closed or full-duration timelines', () => {
+    const options = {
+      aggregateStartTimeMs: 50_000,
+      aggregateEndTimeMs: 60_000,
+      fixedWindowDurationMs: 60_000,
+      live: false,
+    };
+    expect(
+      timelineWorldStartTimeMs({ ...options, displayMode: 'fixed-window' }),
+    ).toBe(50_000);
+    expect(
+      timelineWorldStartTimeMs({
+        ...options,
+        displayMode: 'full-duration',
+        live: true,
+      }),
+    ).toBe(50_000);
   });
 });
 

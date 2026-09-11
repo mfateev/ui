@@ -74,7 +74,6 @@
     labelLeadingOffsetPx?: number;
     labelTrailingOffsetPx?: number;
     viewportEndOverscanPx?: number;
-    fanOutShortBoundaryMarkers?: boolean;
     continuousConnector?: boolean;
     connectorColor?: string;
     displayNamePrefix?: string;
@@ -95,7 +94,6 @@
     labelLeadingOffsetPx = 0,
     labelTrailingOffsetPx = 0,
     viewportEndOverscanPx = 0,
-    fanOutShortBoundaryMarkers = false,
     continuousConnector = false,
     connectorColor,
     displayNamePrefix,
@@ -522,7 +520,7 @@
           boundarySpanPx,
           markerSizePx: 2 * RADIUS + DOT_STROKE,
           boundaryEndIndex: terminalMarkerIndex,
-          fanOutShortBoundaryMarkers,
+          fanOutShortBoundaryMarkers: continuousConnector,
           startMarkerInsideConnector: continuousConnector,
           centerSingleMarker: effectiveCategory === 'signal',
         })}

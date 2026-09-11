@@ -3291,7 +3291,6 @@
                         viewportEndOverscanPx={displayMode === 'fixed-window'
                           ? TIMELINE_MOTION_OVERSCAN_PX
                           : 0}
-                        fanOutShortBoundaryMarkers={Boolean(slot.row.childEdge)}
                         continuousConnector={Boolean(slot.row.childEdge)}
                         connectorColor={slot.row.childEdge
                           ? workflowFrameColor

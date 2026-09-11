@@ -40,7 +40,6 @@
   const runs = $derived(segments.flatMap((segment) => [...segment.runs]));
 
   type DragMode = 'move' | 'resize-start' | 'resize-end';
-  const MINIMUM_WINDOW_WIDTH_PERCENT = 2.5;
 
   let trackElement = $state<HTMLDivElement>();
   let overviewElement = $state<HTMLDivElement>();
@@ -54,11 +53,6 @@
   let visualWindowLeft = 0;
   let visualWindowWidth = 0.4;
   let trackWidth = $state(1);
-  const minimumVisualWindowWidth = (): number =>
-    Math.min(
-      100,
-      Math.max(MINIMUM_WINDOW_WIDTH_PERCENT, (24 / trackWidth) * 100),
-    );
   const chainEndIsLive = $derived(
     runs.at(-1)?.status === 'Running' ||
       runs.at(-1)?.status === 'Paused' ||
@@ -87,9 +81,7 @@
       : (windowEndTimeMs ?? endTimeMs),
   );
   const windowRight = $derived(position(visualWindowEndTimeMs));
-  const windowWidth = $derived(
-    Math.max(minimumVisualWindowWidth(), windowRight - windowLeft),
-  );
+  const windowWidth = $derived(Math.max(0, windowRight - windowLeft));
   const displayedWindowLeft = $derived(
     dragLeft ?? clampTimelineOverviewWindowLeft(windowLeft, windowWidth),
   );
@@ -198,7 +190,7 @@
               100,
           ),
         );
-        visualWindowWidth = Math.max(minimumVisualWindowWidth(), right - left);
+        visualWindowWidth = Math.max(0, right - left);
         visualWindowLeft = clampTimelineOverviewWindowLeft(
           left,
           visualWindowWidth,
@@ -225,17 +217,11 @@
   const pointerPosition = (event: PointerEvent): number => {
     const bounds = trackElement?.getBoundingClientRect();
     if (!bounds?.width) return 0;
-    return Math.min(
-      100,
-      Math.max(0, ((event.clientX - bounds.left) / bounds.width) * 100),
-    );
+    return ((event.clientX - bounds.left) / bounds.width) * 100;
   };
 
   const minimumWindowWidth = (): number =>
-    Math.min(
-      100,
-      Math.max(minimumVisualWindowWidth(), (1_000 / visualDurationMs) * 100),
-    );
+    Math.min(100, (1_000 / visualDurationMs) * 100);
 
   const startDragging = (event: PointerEvent, mode: DragMode) => {
     if (!trackElement || (mode === 'move' ? !onWindowMove : !onWindowResize)) {
@@ -247,7 +233,11 @@
     dragLeft = visualWindowLeft;
     dragWidth = visualWindowWidth;
     dragPointerId = event.pointerId;
-    dragOffset = pointerPosition(event) - visualWindowLeft;
+    const pointer = pointerPosition(event);
+    dragOffset =
+      mode === 'resize-end'
+        ? pointer - (visualWindowLeft + visualWindowWidth)
+        : pointer - visualWindowLeft;
     dragFixedEdge =
       mode === 'resize-start'
         ? visualWindowLeft + visualWindowWidth
@@ -270,14 +260,11 @@
       finishDragging(event);
       return;
     }
-    const pointer = pointerPosition(event);
+    const pointer = pointerPosition(event) - dragOffset;
     const minimumWidth = minimumWindowWidth();
 
     if (dragMode === 'move') {
-      dragLeft = Math.min(
-        Math.max(0, pointer - dragOffset),
-        Math.max(0, 100 - dragWidth),
-      );
+      dragLeft = Math.min(Math.max(0, pointer), Math.max(0, 100 - dragWidth));
     } else if (dragMode === 'resize-start') {
       dragLeft = Math.min(
         Math.max(0, pointer),
@@ -455,7 +442,7 @@
       {/if}
       {#if windowStartTimeMs !== undefined}
         <div
-          class="absolute -inset-y-1 z-10 box-border touch-none rounded border-[3px] border-interactive bg-transparent shadow-sm"
+          class="outline-interactive absolute -inset-y-1 z-10 touch-none rounded bg-transparent shadow-sm outline outline-[3px]"
           style:left={dragMode === null
             ? `var(--overview-window-left, ${displayedWindowLeft}%)`
             : `${displayedWindowLeft}%`}
@@ -469,7 +456,7 @@
         >
           <button
             type="button"
-            class="absolute inset-0 z-10 touch-none bg-transparent p-0 {onWindowMove
+            class="absolute left-1/2 top-0 z-10 h-full w-[max(100%,24px)] -translate-x-1/2 touch-none bg-transparent p-0 {onWindowMove
               ? 'cursor-grab active:cursor-grabbing'
               : 'pointer-events-none'}"
             aria-label={translate('workflows.timeline-move-window')}
@@ -478,26 +465,26 @@
           ></button>
           <button
             type="button"
-            class="absolute -bottom-1.5 -left-2 -top-1.5 z-20 w-4 cursor-ew-resize touch-none bg-transparent p-0"
+            class="absolute -bottom-1.5 -top-1.5 right-full z-20 w-6 cursor-ew-resize touch-none bg-transparent p-0"
             aria-label={translate('workflows.timeline-resize-window-start')}
             data-testid="timeline-window-resize-start"
             onpointerdown={(event) => startDragging(event, 'resize-start')}
             onkeydown={(event) => resizeWithKeyboard(event, 'start')}
           >
             <span
-              class="absolute bottom-1 left-1/2 top-1 w-0.5 -translate-x-1/2 rounded bg-interactive"
+              class="absolute bottom-1 right-0 top-1 w-0.5 rounded bg-interactive"
             ></span>
           </button>
           <button
             type="button"
-            class="absolute -bottom-1.5 -right-2 -top-1.5 z-20 w-4 cursor-ew-resize touch-none bg-transparent p-0"
+            class="absolute -bottom-1.5 -top-1.5 left-full z-20 w-6 cursor-ew-resize touch-none bg-transparent p-0"
             aria-label={translate('workflows.timeline-resize-window-end')}
             data-testid="timeline-window-resize-end"
             onpointerdown={(event) => startDragging(event, 'resize-end')}
             onkeydown={(event) => resizeWithKeyboard(event, 'end')}
           >
             <span
-              class="absolute bottom-1 left-1/2 top-1 w-0.5 -translate-x-1/2 rounded bg-interactive"
+              class="absolute bottom-1 left-0 top-1 w-0.5 rounded bg-interactive"
             ></span>
           </button>
         </div>

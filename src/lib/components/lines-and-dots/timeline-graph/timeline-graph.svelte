@@ -547,8 +547,13 @@
   );
 
   const resetTimelineMotion = () => {
-    viewportMotion.reset(viewport.offsetPx);
-    liveEdgeMotion.reset(scale.totalWorldWidthPx);
+    // The committed geometry represents the coarse `nowMs` sample, which may
+    // be almost one second behind the frame that follows a manual resize. Seed
+    // motion from that sample so a narrow window does not amplify the clock
+    // phase into a large negative compositor offset at the next commit.
+    const committedAtMs = untrack(() => nowMs);
+    viewportMotion.reset(viewport.offsetPx, committedAtMs);
+    liveEdgeMotion.reset(scale.totalWorldWidthPx, committedAtMs);
     containerEl?.style.setProperty('--timeline-frame-offset', '0px');
     containerEl?.style.setProperty('--timeline-live-edge-extension', '0px');
   };
@@ -844,14 +849,16 @@
       return;
     }
 
+    untrack(resetTimelineMotion);
     let animationFrame = 0;
     const renderFrame = (frameTimeMs: number) => {
+      const motionTimeMs = performance.timeOrigin + frameTimeMs;
       // Two seconds of normal clock motion may be preserved. Anything larger
       // is a coordinate-system rebase (handoff, backfill, or retention prune)
       // and must snap rather than becoming a long-lived visual offset.
       const snapThresholdPx = Math.max(scale.liveEdgePxPerMs * 2_000, 1);
       const frameOffsetPx = viewportMotion.nextFrame({
-        nowMs: frameTimeMs,
+        nowMs: motionTimeMs,
         committedOffsetPx: viewport.offsetPx,
         expandedPxPerMs: scale.liveEdgePxPerMs,
         animate: true,
@@ -859,7 +866,7 @@
         snapThresholdPx,
       });
       const liveEdgeExtensionPx = liveEdgeMotion.nextFrame({
-        nowMs: frameTimeMs,
+        nowMs: motionTimeMs,
         committedOffsetPx: scale.totalWorldWidthPx,
         expandedPxPerMs: scale.liveEdgePxPerMs,
         animate: true,

@@ -539,6 +539,102 @@ test.describe('Timeline live completion', () => {
     );
   });
 
+  test('keeps a one-second live window stable across clock commits', async ({
+    page,
+  }) => {
+    await mockWorkflowApis(page, runningWorkflow);
+    await page.route(EVENT_HISTORY_API, (route) =>
+      route.fulfill({ json: historyPage(inProgress) }),
+    );
+    await page.route(EVENT_HISTORY_API_REVERSE, (route) =>
+      route.fulfill({ json: historyPage([...inProgress].reverse()) }),
+    );
+
+    await page.goto(timelineUrl);
+
+    const timeline = page.locator('#event-history-timeline-graph');
+    await timeline.scrollIntoViewIfNeeded();
+    await expect(timeline.locator('.tl-line--live').first()).toBeVisible();
+
+    // Put the final motion reset halfway between coarse one-second clock
+    // commits. This is where a stale reset origin used to produce the largest
+    // backwards jump once the scale reached one viewport per second.
+    await timeline.evaluate(
+      (element) =>
+        new Promise<void>((resolve) => {
+          const initialOffset = element.getAttribute('data-viewport-offset');
+          const waitForCommit = () => {
+            if (
+              element.getAttribute('data-viewport-offset') !== initialOffset
+            ) {
+              setTimeout(resolve, 500);
+            } else {
+              requestAnimationFrame(waitForCommit);
+            }
+          };
+          requestAnimationFrame(waitForCommit);
+        }),
+    );
+
+    const zoomIn = page.getByTestId('timeline-zoom-in');
+    for (const duration of ['30s', '15s', '5s', '1s']) {
+      await zoomIn.click();
+      await expect(page.getByTestId('timeline-window-duration')).toHaveText(
+        duration,
+      );
+    }
+
+    const liveEdgeRange = await timeline.evaluate(
+      (element) =>
+        new Promise<number>((resolve) => {
+          const positions: number[] = [];
+          const initialOffset = element.getAttribute('data-viewport-offset');
+          let framesAfterCommit = 0;
+          const sample = () => {
+            const liveLine = element.querySelector<HTMLElement>(
+              '.frame-edge-chain-header.tl-line--live',
+            );
+            const rails = element.querySelectorAll<HTMLElement>(
+              '.timeline-height-rail',
+            );
+            if (liveLine && rails.length === 2) {
+              const committedWidth = Number.parseFloat(
+                getComputedStyle(liveLine).getPropertyValue(
+                  '--tl-live-committed-width',
+                ),
+              );
+              const extensionWidth = Number.parseFloat(
+                getComputedStyle(element).getPropertyValue(
+                  '--timeline-live-edge-extension',
+                ),
+              );
+              positions.push(
+                Math.min(
+                  liveLine.getBoundingClientRect().right,
+                  liveLine.getBoundingClientRect().left +
+                    committedWidth +
+                    extensionWidth,
+                ) - rails[1].getBoundingClientRect().left,
+              );
+            }
+            if (
+              element.getAttribute('data-viewport-offset') !== initialOffset
+            ) {
+              framesAfterCommit += 1;
+            }
+            if (framesAfterCommit >= 4) {
+              resolve(Math.max(...positions) - Math.min(...positions));
+            } else {
+              requestAnimationFrame(sample);
+            }
+          };
+          requestAnimationFrame(sample);
+        }),
+    );
+
+    expect(liveEdgeRange).toBeLessThan(1);
+  });
+
   test('freezes the viewport while paused and follows the latest edge after resume', async ({
     page,
   }) => {

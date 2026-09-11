@@ -96,6 +96,20 @@ describe('TimelineMotion', () => {
     expect(frame(motion, { nowMs: 10_000, committedOffsetPx: 105 })).toBe(0);
     expect(frame(motion, { nowMs: 10_250, committedOffsetPx: 105 })).toBe(2.5);
   });
+
+  it('seeds a reset from the clock sample represented by committed geometry', () => {
+    const motion = new TimelineMotion();
+
+    motion.reset(100, 750);
+
+    expect(frame(motion, { nowMs: 1_000 })).toBe(2.5);
+    expect(
+      frame(motion, {
+        nowMs: 1_500,
+        committedOffsetPx: 105,
+      }),
+    ).toBe(2.5);
+  });
 });
 
 describe('isTimelineCoordinateRebase', () => {

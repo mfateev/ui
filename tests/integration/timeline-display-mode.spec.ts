@@ -5,10 +5,21 @@ import { mockWorkflow } from '~/test-utilities/mocks/workflow';
 
 const { workflowId, runId } = mockWorkflow.workflowExecutionInfo.execution;
 const timelineUrl = `/namespaces/default/workflows/${workflowId}/${runId}/timeline`;
+const hourLongWorkflow = {
+  ...mockWorkflow,
+  workflowExecutionInfo: {
+    ...mockWorkflow.workflowExecutionInfo,
+    closeTime: '2022-04-28T06:30:19.427247101Z',
+    executionTime: '2022-04-28T05:30:19.427247101Z',
+    startTime: '2022-04-28T05:30:19.427247101Z',
+    status: 'Completed',
+  },
+  pendingActivities: [],
+};
 
 test.describe('Timeline display mode', () => {
   test.beforeEach(async ({ page }) => {
-    await mockWorkflowApis(page);
+    await mockWorkflowApis(page, hourLongWorkflow);
   });
 
   test('keeps full duration separate from the sliding-window view', async ({
@@ -38,9 +49,24 @@ test.describe('Timeline display mode', () => {
     const windowBox = await overviewWindow.boundingBox();
     expect(trackBox).not.toBeNull();
     expect(windowBox).not.toBeNull();
+    expect((windowBox?.width ?? 0) / (trackBox?.width ?? 1)).toBeLessThan(0.02);
     expect(windowBox?.x ?? 0).toBeGreaterThanOrEqual((trackBox?.x ?? 0) - 1);
     expect((windowBox?.x ?? 0) + (windowBox?.width ?? 0)).toBeLessThanOrEqual(
       (trackBox?.x ?? 0) + (trackBox?.width ?? 0) + 1,
+    );
+    const startHandleBox = await page
+      .getByTestId('timeline-window-resize-start')
+      .boundingBox();
+    const endHandleBox = await page
+      .getByTestId('timeline-window-resize-end')
+      .boundingBox();
+    expect(startHandleBox?.width).toBe(24);
+    expect(endHandleBox?.width).toBe(24);
+    expect(
+      (startHandleBox?.x ?? 0) + (startHandleBox?.width ?? 0),
+    ).toBeLessThanOrEqual((windowBox?.x ?? 0) + 1);
+    expect(endHandleBox?.x ?? 0).toBeGreaterThanOrEqual(
+      (windowBox?.x ?? 0) + (windowBox?.width ?? 0) - 1,
     );
     await expect(zoomControls.locator(':scope > *')).toHaveCount(3);
     expect(
@@ -176,5 +202,31 @@ test.describe('Timeline display mode', () => {
     const afterMoveBox = await position.boundingBox();
     expect(afterMoveBox?.x).toBeCloseTo(committedBox?.x ?? 0, 0);
     expect(afterMoveBox?.width).toBeCloseTo(committedBox?.width ?? 0, 0);
+  });
+
+  test('resizes the sliding window below the former visual minimum', async ({
+    page,
+  }) => {
+    await page.goto(timelineUrl);
+
+    const position = page.getByTestId('timeline-window-position');
+    const startHandle = page.getByTestId('timeline-window-resize-start');
+    await startHandle.scrollIntoViewIfNeeded();
+    await expect(startHandle).toBeVisible();
+    const initialBox = await position.boundingBox();
+    const handleBox = await startHandle.boundingBox();
+    expect(initialBox).not.toBeNull();
+    expect(handleBox).not.toBeNull();
+
+    const handleDragX = (handleBox?.x ?? 0) + 4;
+    const handleCenterY = (handleBox?.y ?? 0) + (handleBox?.height ?? 0) / 2;
+    await page.mouse.move(handleDragX, handleCenterY);
+    await page.mouse.down();
+    await page.mouse.move(handleDragX + 10, handleCenterY, { steps: 4 });
+    await page.mouse.up();
+
+    await expect
+      .poll(async () => (await position.boundingBox())?.width ?? 0)
+      .toBeLessThan((initialBox?.width ?? 0) * 0.75);
   });
 });

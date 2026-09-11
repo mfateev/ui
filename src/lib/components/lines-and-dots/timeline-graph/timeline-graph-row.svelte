@@ -369,6 +369,8 @@
   },
 )}
   {@const bounds = lineBox([leftX, spanCy], [rightX, spanCy])}
+  <!-- Live paint keeps one extra viewport available for compositor motion
+       between coarse clock commits. The clip still exposes only elapsed time. -->
   <div
     class="tl-line absolute z-0"
     class:tl-line--gradient={opts.gradient}
@@ -378,7 +380,7 @@
     class:tl-line--viewport-clipped-start={opts.viewportClippedStart}
     style:left="{bounds.left}px"
     style:top="{bounds.top}px"
-    style:width="{opts.liveEdge ? canvasWidth : bounds.width}px"
+    style:width="{opts.liveEdge ? canvasWidth * 2 : bounds.width}px"
     style:height="{bounds.height}px"
     style:--tl-line-color={color}
     style:--tl-live-committed-width="{bounds.width}px"

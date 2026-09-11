@@ -172,6 +172,8 @@
     ></div>
   {/if}
 
+  <!-- Live frame paint extends one viewport beyond the committed edge so the
+       compositor reveal cannot exhaust its backing box at one-second scales. -->
   {#if geometry.horizontal && paintHeight > 0}
     <div
       aria-hidden="true"
@@ -187,7 +189,7 @@
           class="pointer-events-none absolute rounded"
           style:left="{geometry.horizontal.startPx}px"
           style:top="{paintTop}px"
-          style:right={live ? '0' : undefined}
+          style:right={live ? '-100%' : undefined}
           style:width={live ? undefined : `${horizontalWidth}px`}
           style:height="{paintHeight}px"
           style:background={frameBackground}
@@ -207,7 +209,7 @@
             class="frame-edge pointer-events-none absolute"
             style:left="{geometry.horizontal.startPx}px"
             style:top="{geometry.topPx}px"
-            style:right={live ? '0' : undefined}
+            style:right={live ? '-100%' : undefined}
             style:width={live ? undefined : `${horizontalWidth}px`}
             style:--frame-color={color}
             style:--tl-line-color={color}
@@ -232,7 +234,7 @@
             style:left="{geometry.horizontal.startPx}px"
             style:top="{geometry.bottomPx}px"
             style:right={live
-              ? '0'
+              ? '-100%'
               : `calc(100% - ${geometry.horizontal.endPx}px)`}
             style:--frame-color={color}
             style:--tl-line-color={color}

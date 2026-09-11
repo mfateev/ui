@@ -1,10 +1,40 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  getTimelineChildControlPlacement,
   getTimelineChildToggleExitOffset,
   getTimelineChildToggleRowTops,
   isTimelineChildToggleOriginRow,
 } from './timeline-child-toggle-motion';
+
+describe('getTimelineChildControlPlacement', () => {
+  it('marks controls clamped to either viewport edge as pinned', () => {
+    expect(
+      getTimelineChildControlPlacement({
+        endX: 1080,
+        canvasWidth: 1104,
+        gutter: 32,
+      }),
+    ).toEqual({ x: 1052, fitsAfter: false, viewportPinned: true });
+    expect(
+      getTimelineChildControlPlacement({
+        endX: 20,
+        canvasWidth: 1104,
+        gutter: 32,
+      }),
+    ).toEqual({ x: 32, fitsAfter: true, viewportPinned: true });
+  });
+
+  it('leaves controls anchored inside the viewport on world-layer motion', () => {
+    expect(
+      getTimelineChildControlPlacement({
+        endX: 400,
+        canvasWidth: 1104,
+        gutter: 32,
+      }),
+    ).toEqual({ x: 380, fitsAfter: true, viewportPinned: false });
+  });
+});
 
 const setTop = (element: HTMLElement, top: number) => {
   vi.spyOn(element, 'getClientRects').mockReturnValue([

@@ -11,6 +11,7 @@
     edge: TimelineChildEdge;
     canvasWidth: number;
     anchorX?: number;
+    viewportPinned?: boolean;
     presentation?: 'control' | 'state';
     onToggle: (edgeKey: string) => void;
     onRetry: (edgeKey: string) => void;
@@ -20,6 +21,7 @@
     edge,
     canvasWidth,
     anchorX,
+    viewportPinned = false,
     presentation = 'control',
     onToggle,
     onRetry,
@@ -96,6 +98,7 @@
     variant="secondary"
     size="xs"
     class="pointer-events-auto absolute top-1/2 z-30 h-5 w-5 -translate-y-1/2 p-0"
+    data-viewport-pinned={viewportPinned || undefined}
     style={controlPosition}
     onclick={() => onToggle(edge.key)}
     aria-label={accessibleName}

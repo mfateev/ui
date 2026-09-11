@@ -36,6 +36,7 @@
     timelineRunKey,
   } from './recursive-timeline-model';
   import {
+    getTimelineChildControlPlacement,
     getTimelineChildToggleExitOffset,
     getTimelineChildToggleRowTops,
     isTimelineChildToggleOriginRow,
@@ -882,7 +883,7 @@
 
   const getChildControlPlacement = (
     entry: TimelineGroupEntry,
-  ): { x: number; fitsAfter: boolean } => {
+  ): { x: number; fitsAfter: boolean; viewportPinned: boolean } => {
     const controlEndTime =
       entry.group.isPending && entry.active
         ? new Date(timeline.workflowTimespan.endTimeMs).toISOString()
@@ -890,15 +891,11 @@
           ? new Date(entry.runEndTimeMs).toISOString()
           : entry.group.lastEvent.eventTime;
     const endX = rendered.axis.projectX(controlEndTime);
-    const controlWidth = 20;
-    const fitsAfter = endX + 34 <= canvasWidth - GUTTER;
-    return {
-      x: Math.max(
-        GUTTER,
-        Math.min(endX - controlWidth, canvasWidth - GUTTER - controlWidth),
-      ),
-      fitsAfter,
-    };
+    return getTimelineChildControlPlacement({
+      endX,
+      canvasWidth,
+      gutter: GUTTER,
+    });
   };
 
   const toggleSegment = (segmentKey: string) => {
@@ -3324,7 +3321,7 @@
                           : undefined}
                       />
                     {/if}
-                    {#if slot.row.childEdge}
+                    {#if slot.row.childEdge && !childControl?.viewportPinned}
                       <TimelineChildEdgeRow
                         edge={slot.row.childEdge}
                         {canvasWidth}
@@ -3334,6 +3331,19 @@
                       />
                     {/if}
                   </div>
+                  <!-- A clamped control must not inherit timeline motion. An
+                     inverse transform keeps its box still but re-rasters the
+                     small +/- glyph whenever the projection rebases. -->
+                  {#if slot.row.childEdge && childControl?.viewportPinned}
+                    <TimelineChildEdgeRow
+                      edge={slot.row.childEdge}
+                      {canvasWidth}
+                      anchorX={childControl.x}
+                      viewportPinned
+                      onToggle={toggleChild}
+                      onRetry={(edgeKey) => recursiveSession.retry(edgeKey)}
+                    />
+                  {/if}
                 {:else if slot?.row.kind === 'child-state'}
                   <TimelineChildEdgeRow
                     edge={slot.row.edge}

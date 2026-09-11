@@ -59,3 +59,24 @@ export const getTimelineChildToggleExitOffset = ({
   });
   return isOriginRow ? 0 : offsetPx;
 };
+
+export const getTimelineChildControlPlacement = ({
+  endX,
+  canvasWidth,
+  gutter,
+  controlWidth = 20,
+}: {
+  endX: number;
+  canvasWidth: number;
+  gutter: number;
+  controlWidth?: number;
+}): { x: number; fitsAfter: boolean; viewportPinned: boolean } => {
+  const minimumX = gutter;
+  const maximumX = canvasWidth - gutter - controlWidth;
+  const preferredX = endX - controlWidth;
+  return {
+    x: Math.max(minimumX, Math.min(preferredX, maximumX)),
+    fitsAfter: endX + 34 <= canvasWidth - gutter,
+    viewportPinned: preferredX <= minimumX || preferredX >= maximumX,
+  };
+};

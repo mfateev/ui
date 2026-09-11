@@ -94,10 +94,12 @@
       })}
     </span>
   {/if}
+  <!-- Override Button's transition-all: animating the projected left value
+     makes the control jump whenever the moving timeline layer rebases. -->
   <Button
     variant="secondary"
     size="xs"
-    class="pointer-events-auto absolute top-1/2 z-30 h-5 w-5 -translate-y-1/2 p-0"
+    class="pointer-events-auto absolute top-1/2 z-30 h-5 w-5 -translate-y-1/2 p-0 transition-colors"
     data-viewport-pinned={viewportPinned || undefined}
     style={controlPosition}
     onclick={() => onToggle(edge.key)}

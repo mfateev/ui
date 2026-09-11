@@ -267,6 +267,18 @@ describe('getTimelineDotRole', () => {
     ).toBe('pending');
   });
 
+  it('hides the live pending marker when the connector already conveys it', () => {
+    expect(
+      role(1, {
+        eventCount: 2,
+        pointCount: 2,
+        pending: true,
+        livePending: true,
+        showLivePendingMarker: false,
+      }),
+    ).toBeNull();
+  });
+
   it('preserves explicit pause markers', () => {
     expect(
       role(3, {

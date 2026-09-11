@@ -119,6 +119,7 @@ export function getTimelineDotRole({
   hasPauseTime,
   active,
   resolvedTerminal = false,
+  showLivePendingMarker = true,
 }: {
   index: number;
   eventCount: number;
@@ -128,6 +129,7 @@ export function getTimelineDotRole({
   hasPauseTime: boolean;
   active: boolean;
   resolvedTerminal?: boolean;
+  showLivePendingMarker?: boolean;
 }): TimelineDotRole | null {
   if (hasPauseTime && index === pointCount - 1 && index >= eventCount) {
     return 'pause';
@@ -136,7 +138,12 @@ export function getTimelineDotRole({
   if (resolvedTerminal && pointCount > eventCount && index === pointCount - 1) {
     return 'completion';
   }
-  if (livePending && !hasPauseTime && index === pointCount - 1) {
+  if (
+    showLivePendingMarker &&
+    livePending &&
+    !hasPauseTime &&
+    index === pointCount - 1
+  ) {
     return 'pending';
   }
   if (!pending && index === eventCount - 1) return 'completion';

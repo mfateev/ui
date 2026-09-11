@@ -534,6 +534,7 @@
           hasPauseTime: Boolean(pauseTime),
           active,
           resolvedTerminal,
+          showLivePendingMarker: !continuousConnector,
         })}
         {#if role}
           {@render dot(

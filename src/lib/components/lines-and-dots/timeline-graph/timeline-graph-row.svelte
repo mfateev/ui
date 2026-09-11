@@ -523,6 +523,7 @@
           markerSizePx: 2 * RADIUS + DOT_STROKE,
           boundaryEndIndex: terminalMarkerIndex,
           fanOutShortBoundaryMarkers,
+          startMarkerInsideConnector: continuousConnector,
           centerSingleMarker: effectiveCategory === 'signal',
         })}
         {@const role = getTimelineDotRole({

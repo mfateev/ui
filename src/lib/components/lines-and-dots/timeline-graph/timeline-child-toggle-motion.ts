@@ -65,17 +65,15 @@ export const getTimelineChildControlPlacement = ({
   canvasWidth,
   gutter,
   controlWidth = 20,
-  insideFrame = false,
 }: {
   endX: number;
   canvasWidth: number;
   gutter: number;
   controlWidth?: number;
-  insideFrame?: boolean;
 }): { x: number; fitsAfter: boolean; viewportPinned: boolean } => {
   const minimumX = gutter;
   const maximumX = canvasWidth - gutter - controlWidth;
-  const preferredX = endX - (insideFrame ? 0 : controlWidth);
+  const preferredX = endX - controlWidth;
   return {
     x: Math.max(minimumX, Math.min(preferredX, maximumX)),
     fitsAfter: endX + 34 <= canvasWidth - gutter,

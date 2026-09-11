@@ -75,6 +75,7 @@ export function getTimelineDotAlignment({
   markerSizePx,
   boundaryEndIndex = eventCount - 1,
   fanOutShortBoundaryMarkers = false,
+  startMarkerInsideConnector = false,
   centerSingleMarker = false,
 }: {
   index: number;
@@ -84,8 +85,10 @@ export function getTimelineDotAlignment({
   markerSizePx?: number;
   boundaryEndIndex?: number;
   fanOutShortBoundaryMarkers?: boolean;
+  startMarkerInsideConnector?: boolean;
   centerSingleMarker?: boolean;
 }): 'start' | 'center' | 'end' {
+  if (startMarkerInsideConnector && index === 0) return 'start';
   if (centerSingleMarker && eventCount === 1) return 'center';
   if (
     boundarySpanPx !== undefined &&

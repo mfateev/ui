@@ -147,6 +147,20 @@ describe('getTimelineDotAlignment', () => {
     ).toBe('center');
   });
 
+  it('keeps a child-workflow marker inside the beginning of its connector', () => {
+    expect(
+      getTimelineDotAlignment({
+        index: 0,
+        eventCount: 3,
+        pending: false,
+        boundarySpanPx: 6,
+        markerSizePx: 20,
+        fanOutShortBoundaryMarkers: true,
+        startMarkerInsideConnector: true,
+      }),
+    ).toBe('start');
+  });
+
   it('fans out a described completion beyond the history event count', () => {
     expect(
       getTimelineDotAlignment({

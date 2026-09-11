@@ -34,6 +34,17 @@ describe('getTimelineChildControlPlacement', () => {
       }),
     ).toEqual({ x: 380, fitsAfter: true, viewportPinned: false });
   });
+
+  it('places expanded controls on the inside of the workflow frame', () => {
+    expect(
+      getTimelineChildControlPlacement({
+        endX: 400,
+        canvasWidth: 1104,
+        gutter: 32,
+        insideFrame: true,
+      }),
+    ).toEqual({ x: 400, fitsAfter: true, viewportPinned: false });
+  });
 });
 
 const setTop = (element: HTMLElement, top: number) => {

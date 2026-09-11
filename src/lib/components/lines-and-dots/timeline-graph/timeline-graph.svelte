@@ -883,6 +883,7 @@
 
   const getChildControlPlacement = (
     entry: TimelineGroupEntry,
+    insideFrame: boolean,
   ): { x: number; fitsAfter: boolean; viewportPinned: boolean } => {
     const controlEndTime =
       entry.group.isPending && entry.active
@@ -895,6 +896,7 @@
       endX,
       canvasWidth,
       gutter: GUTTER,
+      insideFrame,
     });
   };
 
@@ -3261,7 +3263,10 @@
                 {#if slot?.row.kind === 'group'}
                   {@const timelineEntry = slot.row.entry}
                   {@const childControl = slot.row.childEdge
-                    ? getChildControlPlacement(timelineEntry)
+                    ? getChildControlPlacement(
+                        timelineEntry,
+                        slot.row.childEdge.expansion === 'expanded',
+                      )
                     : undefined}
                   <div class="timeline-motion-layer absolute inset-0">
                     {#if !('eventList' in timelineEntry.group) && timelineEntry.group.eventCount === 1 && !timelineEntry.group.isPending && timelineEntry.active === false}

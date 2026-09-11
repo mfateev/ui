@@ -445,13 +445,20 @@ export class RecursiveWorkflowSession {
         if (reservation) break;
       }
     }
+    const waitingForCapacity = this.queued.filter(
+      (task) => task.awaitingReservation,
+    ).length;
     const canWaitForCapacity =
       !reservation &&
       this.activeRequests >= this.limits.maximumConcurrentRequests &&
-      this.retained.nodes +
-        this.reserved.nodes +
-        this.queued.filter((task) => task.awaitingReservation).length <
-        this.limits.maximumNodes - 1;
+      this.retained.nodes + this.reserved.nodes + waitingForCapacity <
+        this.limits.maximumNodes - 1 &&
+      this.retained.runs + waitingForCapacity <
+        this.limits.maximumDescendantRuns &&
+      this.retained.groups + waitingForCapacity <
+        this.limits.maximumDescendantGroups &&
+      this.retained.events + waitingForCapacity <
+        this.limits.maximumDescendantEvents;
     if (!reservation && !canWaitForCapacity) {
       edge.expansion = 'collapsed';
       edge.load = { state: 'idle' };
@@ -567,6 +574,15 @@ export class RecursiveWorkflowSession {
           };
           task.awaitingReservation = false;
         } else {
+          if (this.activeRequests === 0) {
+            this.cancelTask(task);
+            for (const edge of task.edges) {
+              edge.expansion = 'collapsed';
+              this.counters.topologyTruncations += 1;
+              this.queueDescription(edge);
+            }
+            continue;
+          }
           const description = this.queuedDescriptions.shift();
           if (!description) return;
           this.activeRequests += 1;
@@ -589,6 +605,11 @@ export class RecursiveWorkflowSession {
   }
 
   private enqueueDescription(edge: TimelineChildEdge): void {
+    this.queueDescription(edge);
+    this.drain();
+  }
+
+  private queueDescription(edge: TimelineChildEdge): void {
     if (edge.execution) return;
     const key = childExecutionKey(edge.reference);
     const existing = this.descriptionsByExecutionKey.get(key);
@@ -604,7 +625,6 @@ export class RecursiveWorkflowSession {
     };
     this.descriptionsByExecutionKey.set(key, task);
     this.queuedDescriptions.push(task);
-    this.drain();
   }
 
   private async runDescription(task: DescribeTask): Promise<void> {

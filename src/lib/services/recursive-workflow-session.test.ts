@@ -742,6 +742,104 @@ describe('RecursiveWorkflowSession', () => {
     session.dispose();
   });
 
+  it('does not leave a child loading when queued capacity is exhausted', async () => {
+    let resolveFirst: ((result: LoadedChildWorkflow) => void) | undefined;
+    const loader = vi.fn(
+      ({ reference }: Parameters<typeof loadChildWorkflow>[0]) =>
+        new Promise<LoadedChildWorkflow>((resolve) => {
+          if (reference.workflowId === 'first') resolveFirst = resolve;
+        }),
+    );
+    const describer = vi
+      .fn()
+      .mockResolvedValue(workflow('second', 'second-run'));
+    const session = new RecursiveWorkflowSession({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1, 'first'), childGroup(2, 'second')])],
+      limits: {
+        ...DEFAULT_RECURSIVE_TIMELINE_LIMITS,
+        maximumNodes: 3,
+        maximumConcurrentRequests: 1,
+        maximumDescendantRuns: 1,
+        maximumRunsPerNode: 1,
+      },
+      loader,
+      describer,
+    });
+    const [firstEdge, secondEdge] = [
+      ...session.snapshot.childrenByGroupKey.values(),
+    ];
+
+    expect(firstEdge.load.state).toBe('loading');
+    expect(secondEdge.load.state).toBe('loading');
+    resolveFirst?.(loaded('first'));
+
+    await vi.waitFor(() => expect(firstEdge.load.state).toBe('loaded'));
+    await vi.waitFor(() => expect(session.requestCount).toBe(0));
+    expect(secondEdge.load.state).toBe('idle');
+    expect(secondEdge.expansion).toBe('collapsed');
+    expect(loader).toHaveBeenCalledOnce();
+    expect(describer).toHaveBeenCalledOnce();
+    session.dispose();
+  });
+
+  it('does not queue against a fully retained run budget', async () => {
+    const loader = vi.fn(
+      ({ reference }: Parameters<typeof loadChildWorkflow>[0]) =>
+        Promise.resolve(loaded(reference.workflowId)),
+    );
+    const describer = vi.fn(
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise<WorkflowExecution>((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true },
+          );
+        }),
+    );
+    const session = new RecursiveWorkflowSession({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1, 'first')])],
+      limits: {
+        ...DEFAULT_RECURSIVE_TIMELINE_LIMITS,
+        maximumNodes: 4,
+        maximumConcurrentRequests: 1,
+        maximumDescendantRuns: 1,
+        maximumRunsPerNode: 1,
+      },
+      loader,
+      describer,
+    });
+
+    await vi.waitFor(() => expect(session.requestCount).toBe(0));
+    session.syncRoot({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [
+        rootRun([
+          childGroup(1, 'first'),
+          childGroup(2, 'second'),
+          childGroup(3, 'third'),
+        ]),
+      ],
+    });
+    const [, secondEdge, thirdEdge] = [
+      ...session.snapshot.childrenByGroupKey.values(),
+    ];
+
+    expect(describer).toHaveBeenCalledOnce();
+    expect(secondEdge.load.state).toBe('idle');
+    expect(secondEdge.expansion).toBe('collapsed');
+    expect(thirdEdge.load.state).toBe('idle');
+    expect(thirdEdge.expansion).toBe('collapsed');
+    expect(loader).toHaveBeenCalledOnce();
+    session.dispose();
+    await vi.waitFor(() => expect(session.requestCount).toBe(0));
+  });
+
   it('drops stale Continue-As-New aliases outside run retention', async () => {
     const successorByRun = new Map([
       ['chain-1', 'chain-2'],

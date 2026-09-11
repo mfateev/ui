@@ -5,6 +5,7 @@
   import type { WorkflowChainOverviewRun } from '$lib/services/workflow-chain-overview';
 
   import { binTimelineContinuations } from './timeline-continuation-bins';
+  import { clampTimelineOverviewWindowLeft } from './timeline-positioning';
 
   interface Props {
     segments: readonly Readonly<{
@@ -58,7 +59,6 @@
       100,
       Math.max(MINIMUM_WINDOW_WIDTH_PERCENT, (24 / trackWidth) * 100),
     );
-
   const chainEndIsLive = $derived(
     runs.at(-1)?.status === 'Running' ||
       runs.at(-1)?.status === 'Paused' ||
@@ -90,7 +90,9 @@
   const windowWidth = $derived(
     Math.max(minimumVisualWindowWidth(), windowRight - windowLeft),
   );
-  const displayedWindowLeft = $derived(dragLeft ?? windowLeft);
+  const displayedWindowLeft = $derived(
+    dragLeft ?? clampTimelineOverviewWindowLeft(windowLeft, windowWidth),
+  );
   const displayedWindowWidth = $derived(dragWidth ?? windowWidth);
   const continuationSegments = $derived(
     segments.map((segment) =>
@@ -196,9 +198,15 @@
               100,
           ),
         );
-        visualWindowLeft = left;
         visualWindowWidth = Math.max(minimumVisualWindowWidth(), right - left);
-        trackElement?.style.setProperty('--overview-window-left', `${left}%`);
+        visualWindowLeft = clampTimelineOverviewWindowLeft(
+          left,
+          visualWindowWidth,
+        );
+        trackElement?.style.setProperty(
+          '--overview-window-left',
+          `${visualWindowLeft}%`,
+        );
         trackElement?.style.setProperty(
           '--overview-window-width',
           `${visualWindowWidth}%`,

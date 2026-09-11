@@ -4,6 +4,13 @@ export type GroupForPositioning = {
   initialEvent: { id: string };
 };
 
+export function clampTimelineOverviewWindowLeft(
+  leftPercent: number,
+  widthPercent: number,
+): number {
+  return Math.min(Math.max(0, leftPercent), Math.max(0, 100 - widthPercent));
+}
+
 // First index whose group came from the descending cursor (groups[0..descStart-1]
 // are ascending). Uses initialEvent.id (a real sequential event id), not group.id,
 // which for timer/signal events points at an earlier event and breaks sort order.

@@ -1,11 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  clampTimelineOverviewWindowLeft,
   getDescStart,
   getPendingBlockY,
   getRowY,
   getTotalForY,
 } from './timeline-positioning';
+
+describe('clampTimelineOverviewWindowLeft', () => {
+  it('shifts a minimum-width window left to stay inside the right edge', () => {
+    expect(clampTimelineOverviewWindowLeft(99.5, 2.5)).toBe(97.5);
+  });
+
+  it('preserves a window that already fits inside the track', () => {
+    expect(clampTimelineOverviewWindowLeft(40, 20)).toBe(40);
+  });
+
+  it('keeps a full-width window at the left edge', () => {
+    expect(clampTimelineOverviewWindowLeft(25, 100)).toBe(0);
+  });
+});
 
 // Real constants from TimelineConfig: height = baseRadius * 4 = 24, radius = baseRadius * 1.5 = 9
 const H = 24;

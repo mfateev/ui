@@ -30,6 +30,18 @@ test.describe('Timeline display mode', () => {
       '1',
     );
     await expect(page.getByTestId('timeline-chain-overview')).toBeVisible();
+    const overviewTrack = page
+      .getByTestId('timeline-chain-overview')
+      .getByRole('group');
+    const overviewWindow = page.getByTestId('timeline-window-position');
+    const trackBox = await overviewTrack.boundingBox();
+    const windowBox = await overviewWindow.boundingBox();
+    expect(trackBox).not.toBeNull();
+    expect(windowBox).not.toBeNull();
+    expect(windowBox?.x ?? 0).toBeGreaterThanOrEqual((trackBox?.x ?? 0) - 1);
+    expect((windowBox?.x ?? 0) + (windowBox?.width ?? 0)).toBeLessThanOrEqual(
+      (trackBox?.x ?? 0) + (trackBox?.width ?? 0) + 1,
+    );
     await expect(zoomControls.locator(':scope > *')).toHaveCount(3);
     expect(
       await zoomControls

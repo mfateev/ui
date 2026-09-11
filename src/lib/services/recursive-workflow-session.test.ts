@@ -191,6 +191,55 @@ describe('RecursiveWorkflowSession', () => {
     expect(edge.load.state).toBe('idle');
   });
 
+  it('clears loading state when a root update prunes child work', async () => {
+    let signal: AbortSignal | undefined;
+    let loadNumber = 0;
+    const loader = vi.fn(({ reference, signal: nextSignal }) => {
+      loadNumber += 1;
+      if (loadNumber > 1) {
+        return Promise.resolve(loaded(reference.workflowId));
+      }
+      return new Promise<LoadedChildWorkflow>((_resolve, reject) => {
+        signal = nextSignal;
+        nextSignal.addEventListener(
+          'abort',
+          () => reject(new DOMException('Aborted', 'AbortError')),
+          { once: true },
+        );
+      });
+    });
+    const session = new RecursiveWorkflowSession({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1)])],
+      loader,
+    });
+    const edge = [...session.snapshot.childrenByGroupKey.values()][0];
+
+    await vi.waitFor(() => expect(loader).toHaveBeenCalledOnce());
+    expect(edge.load.state).toBe('loading');
+    session.syncRoot({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([])],
+    });
+
+    expect(signal?.aborted).toBe(true);
+    expect(edge.load.state).toBe('idle');
+    session.syncRoot({
+      namespace: 'default',
+      workflow: workflow('root', 'root-run'),
+      runs: [rootRun([childGroup(1)])],
+    });
+
+    await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(session.requestCount).toBe(0));
+    const replacement = [...session.snapshot.childrenByGroupKey.values()][0];
+    expect(replacement.expansion).toBe('expanded');
+    expect(replacement.load.state).toBe('loaded');
+    session.dispose();
+  });
+
   it('loads a known Continue-As-New successor immediately', async () => {
     const first = loaded('child-1');
     first.run.successorRunId = 'child-1-successor';

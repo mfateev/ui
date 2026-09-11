@@ -1566,9 +1566,7 @@
     let edge = childEdgeForKey(pending.edgeKey);
     while (
       pendingLoadedChildToggleAnimation === pending &&
-      (edge?.load.state === 'idle' ||
-        edge?.load.state === 'evicted' ||
-        edge?.load.state === 'loading')
+      edge?.load.state === 'loading'
     ) {
       await new Promise(requestAnimationFrame);
       edge = childEdgeForKey(pending.edgeKey);

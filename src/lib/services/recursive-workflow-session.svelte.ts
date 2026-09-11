@@ -645,7 +645,11 @@ export class RecursiveWorkflowSession {
       this.counters.topologyResolutions += 1;
       committed = true;
     } catch (error) {
-      if (this.disposed || task.controller.signal.aborted) return;
+      if (this.disposed) return;
+      if (task.controller.signal.aborted) {
+        for (const edge of task.edges) this.resetLoadingEdge(task, edge);
+        return;
+      }
       const classified =
         error instanceof ChildWorkflowLoadError
           ? error
@@ -767,7 +771,10 @@ export class RecursiveWorkflowSession {
 
     for (const task of [...this.tasksByExecutionKey.values()]) {
       for (const edge of [...task.edges]) {
-        if (!reachableEdges.has(edge)) task.edges.delete(edge);
+        if (!reachableEdges.has(edge)) {
+          this.resetLoadingEdge(task, edge);
+          task.edges.delete(edge);
+        }
       }
       if (task.edges.size) continue;
       this.cancelTask(task);
@@ -787,6 +794,7 @@ export class RecursiveWorkflowSession {
   }
 
   private cancelTask(task: QueueTask): void {
+    for (const edge of task.edges) this.resetLoadingEdge(task, edge);
     task.controller.abort();
     const queuedIndex = this.queued.indexOf(task);
     if (queuedIndex >= 0) this.queued.splice(queuedIndex, 1);
@@ -796,6 +804,16 @@ export class RecursiveWorkflowSession {
     this.subtract(this.reserved, task.reservation);
     task.reservation = emptyReservation();
     task.awaitingReservation = false;
+  }
+
+  private resetLoadingEdge(task: QueueTask, edge: TimelineChildEdge): void {
+    if (
+      !task.refresh &&
+      edge.load.state === 'loading' &&
+      edge.load.requestKey === task.key
+    ) {
+      edge.load = { state: 'idle' };
+    }
   }
 
   private enqueueKnownSuccessors(task: QueueTask): void {

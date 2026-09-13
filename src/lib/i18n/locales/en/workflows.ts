@@ -388,6 +388,10 @@ export const Strings = {
   'timeline-jump-beginning': 'Jump to beginning',
   'timeline-chain-overview': 'Execution chain',
   'timeline-chain-loading': 'Loading execution chain…',
+  'timeline-chain-elapsed': '{{duration}} elapsed',
+  'timeline-chain-now': 'Now',
+  'timeline-chain-run-count_one': '1 run',
+  'timeline-chain-run-count_other': '{{count, number}} runs',
   'timeline-chain-overview-description':
     'Sliding window position in the complete execution chain',
   'timeline-current-window': 'Current sliding window',

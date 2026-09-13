@@ -3,7 +3,13 @@
   import { translate } from '$lib/i18n/translate';
   import type { ChainBoundary } from '$lib/services/workflow-chain-index';
   import type { WorkflowChainOverviewRun } from '$lib/services/workflow-chain-overview';
+  import { hourFormat, timeFormat } from '$lib/stores/time-format';
 
+  import {
+    formatTimelineChainDuration,
+    formatTimelineChainTickTime,
+    getTimelineChainTimeTicks,
+  } from './timeline-chain-time-axis';
   import { binTimelineContinuations } from './timeline-continuation-bins';
   import { clampTimelineOverviewWindowLeft } from './timeline-positioning';
 
@@ -53,6 +59,7 @@
   let visualWindowLeft = 0;
   let visualWindowWidth = 0.4;
   let trackWidth = $state(1);
+  let liveNowMs = $state(0);
   const chainEndIsLive = $derived(
     runs.at(-1)?.status === 'Running' ||
       runs.at(-1)?.status === 'Paused' ||
@@ -69,6 +76,26 @@
   });
   const durationMs = $derived(
     startTimeMs === undefined ? 0 : Math.max(1, endTimeMs - startTimeMs),
+  );
+  const displayedEndTimeMs = $derived(
+    chainEndIsLive ? Math.max(endTimeMs, liveNowMs) : endTimeMs,
+  );
+  const displayedDurationMs = $derived(
+    startTimeMs === undefined
+      ? 0
+      : Math.max(1, displayedEndTimeMs - startTimeMs),
+  );
+  const displayedDuration = $derived(
+    formatTimelineChainDuration(displayedDurationMs),
+  );
+  const timeTicks = $derived(
+    startTimeMs === undefined
+      ? []
+      : getTimelineChainTimeTicks({
+          startTimeMs,
+          endTimeMs: displayedEndTimeMs,
+          widthPx: trackWidth,
+        }),
   );
   const position = (timeMs: number): number =>
     startTimeMs === undefined
@@ -123,6 +150,18 @@
   );
   const leadingBoundary = $derived(segments[0]?.before);
   const trailingBoundary = $derived(segments.at(-1)?.after);
+
+  $effect(() => {
+    if (!chainEndIsLive) {
+      liveNowMs = 0;
+      return;
+    }
+
+    const updateLiveNow = () => (liveNowMs = Date.now());
+    updateLiveNow();
+    const interval = window.setInterval(updateLiveNow, 1_000);
+    return () => window.clearInterval(interval);
+  });
 
   $effect(() => {
     if (!trackElement) return;
@@ -376,12 +415,65 @@
     <span class="font-medium"
       >{translate('workflows.timeline-chain-overview')}</span
     >
-    {#if loading}
-      <span class="text-muted" role="status">
-        {translate('workflows.timeline-chain-loading')}
-      </span>
-    {/if}
+    <span class="text-muted flex items-center gap-2 tabular-nums">
+      {#if startTimeMs !== undefined}
+        <span data-testid="timeline-chain-duration">
+          {translate('workflows.timeline-chain-run-count', {
+            count: runs.length,
+          })}
+          ·
+          {translate('workflows.timeline-chain-elapsed', {
+            duration: displayedDuration,
+          })}
+        </span>
+      {/if}
+      {#if loading}
+        <span role="status">
+          {translate('workflows.timeline-chain-loading')}
+        </span>
+      {/if}
+    </span>
   </div>
+  {#if startTimeMs !== undefined}
+    <div
+      class="text-muted relative h-6 text-xs tabular-nums"
+      data-testid="timeline-chain-time-axis"
+    >
+      {#each timeTicks as tick (tick.positionPercent)}
+        <span
+          class="absolute bottom-1.5 whitespace-nowrap leading-none {tick.edge ===
+          'start'
+            ? ''
+            : tick.edge === 'end'
+              ? '-translate-x-full'
+              : '-translate-x-1/2'} {tick.edge === 'end' && chainEndIsLive
+            ? 'text-success'
+            : ''}"
+          style:left="{tick.positionPercent}%"
+          data-timeline-chain-time-ms={tick.timeMs}
+        >
+          {#if tick.edge === 'end' && chainEndIsLive}
+            {translate('workflows.timeline-chain-now')} ·
+          {/if}
+          {formatTimelineChainTickTime({
+            timeMs: tick.timeMs,
+            durationMs: displayedDurationMs,
+            timeFormat: $timeFormat,
+            hourFormat: $hourFormat,
+          })}
+          <span
+            class="absolute top-[calc(100%+2px)] h-1.5 w-px bg-current {tick.edge ===
+            'start'
+              ? 'left-0'
+              : tick.edge === 'end'
+                ? 'right-0'
+                : 'left-1/2'}"
+            aria-hidden="true"
+          ></span>
+        </span>
+      {/each}
+    </div>
+  {/if}
   <div
     bind:this={trackElement}
     class="relative h-5 rounded border border-subtle bg-subtle"

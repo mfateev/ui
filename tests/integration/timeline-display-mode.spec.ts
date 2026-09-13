@@ -41,14 +41,24 @@ test.describe('Timeline display mode', () => {
       '1',
     );
     await expect(page.getByTestId('timeline-chain-overview')).toBeVisible();
+    await expect(page.getByTestId('timeline-chain-duration')).toContainText(
+      '1 run · 1h elapsed',
+    );
+    const chainTimeAxis = page.getByTestId('timeline-chain-time-axis');
+    await expect(chainTimeAxis).toBeVisible();
     const overviewTrack = page
       .getByTestId('timeline-chain-overview')
       .getByRole('group');
     const overviewWindow = page.getByTestId('timeline-window-position');
     const trackBox = await overviewTrack.boundingBox();
+    const chainTimeAxisBox = await chainTimeAxis.boundingBox();
     const windowBox = await overviewWindow.boundingBox();
     expect(trackBox).not.toBeNull();
+    expect(chainTimeAxisBox).not.toBeNull();
     expect(windowBox).not.toBeNull();
+    expect(
+      (chainTimeAxisBox?.y ?? 0) + (chainTimeAxisBox?.height ?? 0),
+    ).toBeLessThanOrEqual(trackBox?.y ?? 0);
     expect((windowBox?.width ?? 0) / (trackBox?.width ?? 1)).toBeLessThan(0.02);
     expect(windowBox?.x ?? 0).toBeGreaterThanOrEqual((trackBox?.x ?? 0) - 1);
     expect((windowBox?.x ?? 0) + (windowBox?.width ?? 0)).toBeLessThanOrEqual(
